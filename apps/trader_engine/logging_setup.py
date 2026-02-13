@@ -33,6 +33,11 @@ _SENSITIVE_KEY_PATTERNS = (
     "webhook",
 )
 _DISCORD_WEBHOOK_RE = re.compile(r"https://discord\.com/api/webhooks/\S+", re.IGNORECASE)
+_ASSIGN_SECRET_RE = re.compile(
+    r"(?i)\b(api[_-]?key|api[_-]?secret|secret|token|password|authorization)\b\s*([=:])\s*([^\s,;]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[^\s,;]+")
+_AWS_KEY_RE = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -49,8 +54,9 @@ def _redact(value: Any, *, key: str | None = None) -> Any:
         return [_redact(v) for v in value]
     if isinstance(value, str):
         s = _DISCORD_WEBHOOK_RE.sub(_REDACTED, value)
-        if ("Bearer " in s) or ("AKIA" in s):
-            return _REDACTED
+        s = _ASSIGN_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", s)
+        s = _BEARER_RE.sub(f"Bearer {_REDACTED}", s)
+        s = _AWS_KEY_RE.sub(_REDACTED, s)
         return s
     return value
 
@@ -82,7 +88,9 @@ class JsonFormatter(logging.Formatter):
             "msg": _redact(record.getMessage()),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = _redact(self.formatException(record.exc_info))
+        if record.stack_info:
+            payload["stack_info"] = _redact(record.stack_info)
         # Include extra fields if present.
         for k, v in record.__dict__.items():
             if k.startswith("_"):
@@ -119,6 +127,20 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=True)
 
 
+class RedactingTextFormatter(logging.Formatter):
+    """Plain-text formatter that applies the same redaction policy as JSON logs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        safe = logging.makeLogRecord(dict(record.__dict__))
+        safe.msg = _redact(record.getMessage())
+        safe.args = ()
+        if safe.exc_info:
+            safe.exc_text = str(_redact(self.formatException(safe.exc_info)))
+        if safe.stack_info:
+            safe.stack_info = str(_redact(safe.stack_info))
+        return super().format(safe)
+
+
 def setup_logging(cfg: LoggingConfig) -> None:
     os.makedirs(cfg.log_dir, exist_ok=True)
 
@@ -133,7 +155,7 @@ def setup_logging(cfg: LoggingConfig) -> None:
     if cfg.json:
         console_formatter: logging.Formatter = json_formatter
     else:
-        console_formatter = logging.Formatter(
+        console_formatter = RedactingTextFormatter(
             fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )

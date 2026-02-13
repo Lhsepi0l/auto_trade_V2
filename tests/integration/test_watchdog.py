@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping
 
@@ -7,7 +8,10 @@ import pytest
 
 from apps.trader_engine.domain.enums import EngineState
 from apps.trader_engine.domain.models import RiskConfig
+from apps.trader_engine.services.execution_service import ExecutionRejected
 from apps.trader_engine.services.watchdog_service import WatchdogService
+from apps.trader_engine.storage.db import close, connect, migrate
+from apps.trader_engine.storage.repositories import TrailingStateRepo
 from tests.fixtures.fake_exchange import FakeBinanceRest
 from tests.fixtures.fake_notifier import FakeNotifier
 
@@ -37,8 +41,21 @@ class _Execution:
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
 
-    def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+    async def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
         self.calls.append({"symbol": symbol, "reason": reason})
+        return {"symbol": symbol, "reason": reason, "closed": True}
+
+
+class _FailThenSuccessExecution:
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+        self._failed_once = False
+
+    async def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+        self.calls.append({"symbol": symbol, "reason": reason})
+        if not self._failed_once:
+            self._failed_once = True
+            raise ExecutionRejected("simulated_close_failure")
         return {"symbol": symbol, "reason": reason, "closed": True}
 
 
@@ -215,3 +232,100 @@ async def test_watchdog_trailing_atr_mode_known_atr_pct_triggers_once(monkeypatc
     assert len(exe.calls) == 1
     assert exe.calls[0]["reason"] == "TRAILING_ATR"
     assert "distance_pct=1.200000" in str(wd.metrics.last_trailing_reason or "")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_watchdog_trailing_close_failure_retries_after_cooldown() -> None:
+    ex = FakeBinanceRest()
+    ex.positions["BTCUSDT"] = {"position_amt": 0.1, "entry_price": 100.0, "unrealized_pnl": 0.0}
+    exe = _FailThenSuccessExecution()
+    wd = WatchdogService(
+        client=ex,  # type: ignore[arg-type]
+        engine=_Engine(),
+        risk=_RiskCfg(
+            _cfg(
+                shock_1m_pct=0.5,
+                shock_from_entry_pct=0.5,
+                trail_grace_minutes=0,
+                trail_arm_pnl_pct=1.2,
+                trail_distance_pnl_pct=0.8,
+                trailing_enabled=True,
+                trailing_mode="PCT",
+            )
+        ),  # type: ignore[arg-type]
+        execution=exe,  # type: ignore[arg-type]
+        notifier=None,
+        trailing_retry_base_sec=0.1,
+        trailing_retry_max_sec=0.1,
+    )
+
+    for m in [101.3, 102.0, 101.1]:
+        ex.set_book("BTCUSDT", bid=m - 0.05, ask=m + 0.05, mark=m)
+        await wd.tick_once()
+
+    assert len(exe.calls) == 1
+    ex.set_book("BTCUSDT", bid=100.95, ask=101.05, mark=101.0)
+    await wd.tick_once()
+    assert len(exe.calls) == 1
+
+    await asyncio.sleep(0.55)
+    await wd.tick_once()
+    assert len(exe.calls) == 2
+    assert exe.calls[0]["reason"] == "TRAILING_PCT"
+    assert exe.calls[1]["reason"] == "TRAILING_PCT"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_watchdog_trailing_state_survives_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    db = connect(str(tmp_path / "watchdog_trailing.sqlite3"))
+    migrate(db)
+    try:
+        trailing_repo = TrailingStateRepo(db)
+        ex = FakeBinanceRest()
+        ex.positions["BTCUSDT"] = {"position_amt": 0.1, "entry_price": 100.0, "unrealized_pnl": 0.0}
+        cfg = _cfg(
+            shock_1m_pct=0.5,
+            shock_from_entry_pct=0.5,
+            trail_grace_minutes=0,
+            trail_arm_pnl_pct=1.2,
+            trail_distance_pnl_pct=0.8,
+            trailing_enabled=True,
+            trailing_mode="PCT",
+        )
+
+        wd1 = WatchdogService(
+            client=ex,  # type: ignore[arg-type]
+            engine=_Engine(),
+            risk=_RiskCfg(cfg),  # type: ignore[arg-type]
+            execution=_Execution(),  # type: ignore[arg-type]
+            notifier=None,
+            trailing_state_repo=trailing_repo,
+        )
+        for m in [101.3, 102.0]:
+            ex.set_book("BTCUSDT", bid=m - 0.05, ask=m + 0.05, mark=m)
+            await wd1.tick_once()
+
+        before = wd1._trailing  # type: ignore[attr-defined]
+        assert before is not None
+        assert before.armed is True
+        assert before.peak_pnl_pct >= 2.0
+
+        wd2 = WatchdogService(
+            client=ex,  # type: ignore[arg-type]
+            engine=_Engine(),
+            risk=_RiskCfg(cfg),  # type: ignore[arg-type]
+            execution=_Execution(),  # type: ignore[arg-type]
+            notifier=None,
+            trailing_state_repo=trailing_repo,
+        )
+        ex.set_book("BTCUSDT", bid=101.45, ask=101.55, mark=101.5)
+        await wd2.tick_once()
+        after = wd2._trailing  # type: ignore[attr-defined]
+        assert after is not None
+        assert after.armed is True
+        assert abs(after.entry_ts - before.entry_ts) < 1e-9
+        assert abs(after.peak_pnl_pct - before.peak_pnl_pct) < 1e-9
+    finally:
+        close(db)

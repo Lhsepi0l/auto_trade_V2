@@ -72,8 +72,8 @@ class RiskConfigService:
             # Forward-fill any newly added config fields/columns with model defaults.
             try:
                 self._risk_config_repo.upsert(cfg)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("risk_config_forward_fill_failed", extra={"err": type(e).__name__}, exc_info=True)
         return cfg
 
     def apply_preset(self, name: RiskPresetName) -> RiskConfig:
@@ -136,6 +136,23 @@ class RiskConfigService:
         if key in {RiskConfigKey.max_exposure_pct, RiskConfigKey.max_position_notional_usdt}:
             if value.lower() in {"", "none", "null"}:
                 return None
+        if key == RiskConfigKey.max_exposure_pct:
+            txt = value.strip()
+            if txt.endswith("%"):
+                raw = txt[:-1].strip()
+                try:
+                    return float(raw) / 100.0
+                except Exception as e:
+                    raise ValueError("invalid_percent_for_max_exposure_pct") from e
+            try:
+                ratio = float(txt)
+            except Exception as e:
+                raise ValueError("invalid_float_for_max_exposure_pct") from e
+            # Prevent ambiguous percent-like input ("20"). Require either ratio (0..1)
+            # or an explicit percent suffix ("20%").
+            if ratio > 1.0:
+                raise ValueError("invalid_ratio_or_percent_suffix_for_max_exposure_pct")
+            return ratio
 
         if key == RiskConfigKey.capital_mode:
             v = value.strip().upper()

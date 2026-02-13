@@ -17,6 +17,7 @@ from apps.trader_engine.services.notifier_service import Notifier
 from apps.trader_engine.services.oplog import OperationalLogger
 from apps.trader_engine.services.reconcile_service import ReconcileService
 from apps.trader_engine.services.risk_config_service import RiskConfigService
+from apps.trader_engine.storage.repositories import OrderRecordRepo, TrailingStateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,9 @@ class TrailingPositionState:
     entry_ts: float
     peak_pnl_pct: float
     armed: bool
-    close_sent: bool
+    close_state: str
+    last_close_attempt_ts: float
+    attempt_count: int
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,10 @@ class WatchdogService:
         oplog: Optional[OperationalLogger] = None,
         market_data: Optional[MarketDataService] = None,
         reconcile: Optional[ReconcileService] = None,
+        order_records: Optional[OrderRecordRepo] = None,
+        trailing_state_repo: Optional[TrailingStateRepo] = None,
+        trailing_retry_base_sec: float = 3.0,
+        trailing_retry_max_sec: float = 10.0,
     ) -> None:
         self._client = client
         self._engine = engine
@@ -80,6 +87,10 @@ class WatchdogService:
         self._oplog = oplog
         self._market_data = market_data
         self._reconcile = reconcile
+        self._order_records = order_records
+        self._trailing_state_repo = trailing_state_repo
+        self._trailing_retry_base_sec = max(float(trailing_retry_base_sec), 0.5)
+        self._trailing_retry_max_sec = max(float(trailing_retry_max_sec), self._trailing_retry_base_sec)
 
         self._task: Optional[asyncio.Task[None]] = None
         self._stop = asyncio.Event()
@@ -143,6 +154,7 @@ class WatchdogService:
         # No action when no position exists (metrics still keep last seen values).
         if not pos:
             self._trailing = None
+            self._clear_trailing_state()
             self._metrics.last_peak_pnl_pct = None
             self._metrics.last_trailing_distance_pct = None
             self._metrics.last_checked_at = _iso_now()
@@ -158,6 +170,7 @@ class WatchdogService:
         position_amt = float((row or {}).get("position_amt") or 0.0)
         if abs(position_amt) <= 0.0:
             self._trailing = None
+            self._clear_trailing_state()
             self._metrics.last_peak_pnl_pct = None
             self._metrics.last_trailing_distance_pct = None
             self._metrics.last_checked_at = _iso_now()
@@ -271,7 +284,7 @@ class WatchdogService:
             except Exception:
                 logger.exception("oplog_watchdog_shock_failed")
         try:
-            await asyncio.to_thread(self._execution.close_position, symbol, reason="WATCHDOG_SHOCK")
+            await self._execution.close_position(symbol, reason="WATCHDOG_SHOCK")
         except ExecutionRejected as e:
             await self._notify({"kind": "FAIL", "symbol": symbol, "error": e.message})
         except Exception as e:  # noqa: BLE001
@@ -292,7 +305,7 @@ class WatchdogService:
             return
         if not bool(getattr(cfg, "trailing_enabled", True)):
             return
-        if tr.close_sent:
+        if str(tr.close_state).upper() in {"SENT", "DONE"}:
             return
         if entry_price <= 0.0 or mark <= 0.0:
             return
@@ -306,11 +319,13 @@ class WatchdogService:
         if pnl_pct > tr.peak_pnl_pct:
             tr.peak_pnl_pct = pnl_pct
             self._metrics.last_peak_pnl_pct = float(tr.peak_pnl_pct)
+            self._persist_trailing_state()
 
         arm_pct = float(getattr(cfg, "trail_arm_pnl_pct", 1.2) or 0.0)
         if not tr.armed and pnl_pct >= arm_pct:
             tr.armed = True
             tr.peak_pnl_pct = max(tr.peak_pnl_pct, pnl_pct)
+            self._persist_trailing_state()
             if self._oplog:
                 try:
                     self._oplog.log_event(
@@ -342,7 +357,13 @@ class WatchdogService:
         if pnl_pct > trigger_level:
             return
 
-        tr.close_sent = True
+        cooldown_sec = min(self._trailing_retry_base_sec * (2 ** max(tr.attempt_count, 0)), self._trailing_retry_max_sec)
+        if tr.last_close_attempt_ts > 0.0 and (now_ts - tr.last_close_attempt_ts) < cooldown_sec:
+            return
+        tr.last_close_attempt_ts = float(now_ts)
+        tr.attempt_count = int(tr.attempt_count) + 1
+        self._persist_trailing_state()
+
         kind = "TRAILING_ATR" if mode == "ATR" else "TRAILING_PCT"
         reason = f"{kind}:pnl_pct={pnl_pct:.6f},peak_pnl_pct={tr.peak_pnl_pct:.6f},distance_pct={dist_pct:.6f}"
         self._metrics.last_trailing_reason = reason
@@ -356,10 +377,16 @@ class WatchdogService:
             except Exception:
                 logger.exception("oplog_trailing_trigger_failed")
         try:
-            await asyncio.to_thread(self._execution.close_position, symbol, reason=kind)
+            await self._execution.close_position(symbol, reason=kind)
+            tr.close_state = "SENT"
+            self._persist_trailing_state()
         except ExecutionRejected as e:
+            tr.close_state = "IDLE"
+            self._persist_trailing_state()
             await self._notify({"kind": "FAIL", "symbol": symbol, "error": e.message})
         except Exception as e:  # noqa: BLE001
+            tr.close_state = "IDLE"
+            self._persist_trailing_state()
             await self._notify({"kind": "FAIL", "symbol": symbol, "error": f"{type(e).__name__}: {e}"})
 
     def _resolve_trailing_distance_pct(
@@ -404,15 +431,14 @@ class WatchdogService:
     def _sync_trailing_state(self, *, symbol: str, side: str, entry_price: float, now_ts: float) -> None:
         tr = self._trailing
         if tr is None:
-            self._trailing = TrailingPositionState(
+            self._trailing = self._load_or_bootstrap_trailing_state(
                 symbol=symbol,
                 side=side,
                 entry_price=float(entry_price),
-                entry_ts=float(now_ts),
-                peak_pnl_pct=0.0,
-                armed=False,
-                close_sent=False,
+                now_ts=float(now_ts),
             )
+            self._persist_trailing_state()
+            self._cleanup_trailing_state(symbol=symbol)
             return
         changed = (
             tr.symbol != symbol
@@ -420,15 +446,102 @@ class WatchdogService:
             or abs(float(tr.entry_price) - float(entry_price)) > 1e-12
         )
         if changed:
-            self._trailing = TrailingPositionState(
+            self._trailing = self._load_or_bootstrap_trailing_state(
                 symbol=symbol,
                 side=side,
                 entry_price=float(entry_price),
-                entry_ts=float(now_ts),
-                peak_pnl_pct=0.0,
-                armed=False,
-                close_sent=False,
+                now_ts=float(now_ts),
             )
+            self._persist_trailing_state()
+            self._cleanup_trailing_state(symbol=symbol)
+
+    def _infer_entry_ts(self, *, symbol: str, side: str, now_ts: float) -> float:
+        if not self._order_records:
+            return float(now_ts)
+        try:
+            entry_side = "BUY" if str(side).upper() == "LONG" else "SELL"
+            ts = self._order_records.get_latest_entry_created_ts(symbol=symbol, side=entry_side)
+            if ts is not None and ts > 0.0:
+                return float(ts)
+        except Exception:
+            logger.exception("trailing_infer_entry_ts_failed", extra={"symbol": symbol, "side": side})
+        return float(now_ts)
+
+    def _load_or_bootstrap_trailing_state(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        now_ts: float,
+    ) -> TrailingPositionState:
+        if self._trailing_state_repo:
+            try:
+                row = self._trailing_state_repo.get(symbol=symbol)
+                if row is not None:
+                    rs = str(row.get("position_side") or "").upper()
+                    rp = float(row.get("entry_price") or 0.0)
+                    if rs == str(side).upper() and abs(rp - float(entry_price)) <= 1e-12:
+                        return TrailingPositionState(
+                            symbol=symbol,
+                            side=side,
+                            entry_price=float(entry_price),
+                            entry_ts=float(row.get("entry_ts") or now_ts),
+                            peak_pnl_pct=float(row.get("peak_pnl_pct") or 0.0),
+                            armed=bool(row.get("armed")),
+                            close_state=str(row.get("close_state") or "IDLE").upper(),
+                            last_close_attempt_ts=float(row.get("last_close_attempt_ts") or 0.0),
+                            attempt_count=int(row.get("attempt_count") or 0),
+                        )
+            except Exception:
+                logger.exception("trailing_state_load_failed", extra={"symbol": symbol})
+
+        return TrailingPositionState(
+            symbol=symbol,
+            side=side,
+            entry_price=float(entry_price),
+            entry_ts=self._infer_entry_ts(symbol=symbol, side=side, now_ts=now_ts),
+            peak_pnl_pct=0.0,
+            armed=False,
+            close_state="IDLE",
+            last_close_attempt_ts=0.0,
+            attempt_count=0,
+        )
+
+    def _persist_trailing_state(self) -> None:
+        if not self._trailing_state_repo or not self._trailing:
+            return
+        tr = self._trailing
+        try:
+            self._trailing_state_repo.upsert(
+                symbol=tr.symbol,
+                position_side=tr.side,
+                entry_price=float(tr.entry_price),
+                entry_ts=float(tr.entry_ts),
+                peak_pnl_pct=float(tr.peak_pnl_pct),
+                armed=bool(tr.armed),
+                close_state=str(tr.close_state or "IDLE").upper(),
+                last_close_attempt_ts=(float(tr.last_close_attempt_ts) if tr.last_close_attempt_ts > 0.0 else None),
+                attempt_count=int(tr.attempt_count),
+            )
+        except Exception:
+            logger.exception("trailing_state_persist_failed", extra={"symbol": tr.symbol})
+
+    def _cleanup_trailing_state(self, *, symbol: str) -> None:
+        if not self._trailing_state_repo:
+            return
+        try:
+            self._trailing_state_repo.delete_all_except(symbols=[symbol])
+        except Exception:
+            logger.exception("trailing_state_cleanup_failed", extra={"symbol": symbol})
+
+    def _clear_trailing_state(self) -> None:
+        if not self._trailing_state_repo:
+            return
+        try:
+            self._trailing_state_repo.clear()
+        except Exception:
+            logger.exception("trailing_state_clear_failed")
 
     async def _notify(self, event: Mapping[str, str]) -> None:
         if not self._notifier:

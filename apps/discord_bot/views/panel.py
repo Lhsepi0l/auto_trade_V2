@@ -186,8 +186,8 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
         required=True,
     )
     max_exposure_pct = discord.ui.TextInput(
-        label="최대 노출 비율 0.01~1.0 (max_exposure_pct)",
-        placeholder="예: 0.2",
+        label="최대 노출 비율 (0.2 또는 20%) (max_exposure_pct)",
+        placeholder="예: 0.2 또는 20%",
         required=True,
     )
     max_notional_pct = discord.ui.TextInput(
@@ -302,7 +302,7 @@ class BudgetCustomModal(discord.ui.Modal, title="예산 상세 설정"):
     advanced_limits = discord.ui.TextInput(
         label="고급 제한값 (명목,노출,수수료버퍼)",
         required=False,
-        placeholder="예: 1000,0.20,0.002 (빈칸 허용)",
+        placeholder="예: 1000,0.20,0.002 또는 1000,20%,0.002",
     )
 
     def __init__(self, *, api: TraderAPIClient, view: "PanelView") -> None:

@@ -161,7 +161,7 @@ async def test_modal_submit_calls_set_value(monkeypatch: pytest.MonkeyPatch) -> 
 
     basic = RiskBasicModal(api=api, view=view)  # type: ignore[arg-type]
     basic.max_leverage._value = "5"  # type: ignore[attr-defined]
-    basic.max_exposure_pct._value = "20"  # type: ignore[attr-defined]
+    basic.max_exposure_pct._value = "20%"  # type: ignore[attr-defined]
     basic.max_notional_pct._value = "50"  # type: ignore[attr-defined]
     basic.per_trade_risk_pct._value = "1"  # type: ignore[attr-defined]
     await basic.on_submit(it)  # type: ignore[arg-type]

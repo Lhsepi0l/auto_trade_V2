@@ -131,3 +131,28 @@ def test_live_sizing_blocks_for_min_notional():
     out = svc.compute_live(symbol="BTCUSDT", risk=risk, leverage=1.0)
     assert out.blocked is True
     assert out.block_reason == "BUDGET_TOO_SMALL_FOR_MIN_NOTIONAL"
+
+
+def test_legacy_compute_max_exposure_ratio_no_double_scaling():
+    risk = RiskConfig(
+        per_trade_risk_pct=10.0,
+        max_exposure_pct=0.2,
+        max_notional_pct=100.0,
+        max_leverage=10.0,
+        daily_loss_limit_pct=-0.02,
+        dd_limit_pct=-0.15,
+        lose_streak_n=3,
+        cooldown_hours=6.0,
+        notify_interval_sec=120,
+    )
+    svc = SizingService(client=_FakeClient())  # type: ignore[arg-type]
+    out = svc.compute(
+        symbol="BTCUSDT",
+        risk=risk,
+        equity_usdt=1000.0,
+        available_usdt=1000.0,
+        price=100.0,
+        stop_distance_pct=1.0,
+    )
+    assert abs(out.target_notional_usdt - 200.0) < 1e-6
+    assert out.capped_by == "max_exposure_pct"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import pytest
@@ -222,7 +222,7 @@ async def test_user_stream_disconnect_enables_safe_mode_and_blocks_entry(tmp_pat
     engine.set_recovery_lock(False)
     engine.start()
     with pytest.raises(ExecutionRejected) as ei:
-        exe.enter_position(
+        await exe.enter_position(
             {
                 "symbol": "BTCUSDT",
                 "direction": Direction.LONG.value,
@@ -231,3 +231,70 @@ async def test_user_stream_disconnect_enables_safe_mode_and_blocks_entry(tmp_pat
         )
     assert "ws_down_safe_mode" in str(ei.value)
     await svc.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_user_stream_stale_event_with_exposure_enables_safe_mode_and_blocks_entry(tmp_path) -> None:
+    db = connect(str(tmp_path / "u5.sqlite3"))
+    migrate(db)
+    engine = EngineService(engine_state_repo=EngineStateRepo(db))
+    pnl = PnLService(repo=PnLStateRepo(db))
+    risk = RiskConfigService(risk_config_repo=RiskConfigRepo(db))
+    policy = RiskService(risk=risk, engine=engine, pnl=pnl)
+    notifier = FakeNotifier()
+    client = FakeBinanceRest()
+    client.positions["BTCUSDT"] = {"position_amt": 0.02, "entry_price": 100.0, "unrealized_pnl": 0.0}
+
+    exe = ExecutionService(
+        client=client,  # type: ignore[arg-type]
+        engine=engine,
+        risk=risk,
+        pnl=pnl,
+        policy=policy,
+        notifier=notifier,  # type: ignore[arg-type]
+        allowed_symbols=["BTCUSDT", "ETHUSDT", "XAUUSDT"],
+        dry_run=True,
+        dry_run_strict=False,
+    )
+
+    svc = UserStreamService(
+        client=client,  # type: ignore[arg-type]
+        engine=engine,
+        pnl=pnl,
+        execution=exe,
+        notifier=notifier,  # type: ignore[arg-type]
+        stale_msg_after_sec=60,
+        stale_event_after_sec=1,
+        exposure_probe_interval_sec=0.1,
+        tracked_symbols=["BTCUSDT"],
+    )
+    now = datetime.now(tz=timezone.utc)
+    engine.set_ws_status(connected=True, last_event_time=now)
+    svc._last_ws_connect_ts = now  # type: ignore[attr-defined]
+    svc._last_ws_msg_ts = now  # type: ignore[attr-defined]
+    svc._last_ws_event_ts = now - timedelta(seconds=5)  # type: ignore[attr-defined]
+    health_task = asyncio.create_task(svc._health_guard_loop())  # type: ignore[attr-defined]
+    try:
+        await _wait_until(lambda: bool(svc.safe_mode), timeout=3.0)
+        assert engine.is_ws_safe_mode() is True
+        assert any(str(e.get("kind")) == "WS_DOWN_SAFE_MODE" for e in notifier.events)
+    finally:
+        svc._stop.set()  # type: ignore[attr-defined]
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    engine.set_recovery_lock(False)
+    engine.start()
+    with pytest.raises(ExecutionRejected) as ei:
+        await exe.enter_position(
+            {
+                "symbol": "BTCUSDT",
+                "direction": Direction.LONG.value,
+                "exec_hint": ExecHint.MARKET.value,
+            }
+        )
+    assert "ws_down_safe_mode" in str(ei.value)

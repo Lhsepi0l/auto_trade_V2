@@ -170,9 +170,11 @@ class RiskService:
         # Exposure cap: projected total exposure must be within max_exposure_pct of equity.
         existing_exposure = float(account_state.get("total_exposure_notional_usdt") or 0.0)
         projected = existing_exposure + notional
-        max_exposure = equity_usdt * (float(cfg.max_exposure_pct) / 100.0)
-        if projected > max_exposure:
-            return Decision(kind="BLOCK", reason="exposure_above_max_exposure")
+        max_exposure_ratio = float(cfg.max_exposure_pct or 0.0)
+        if max_exposure_ratio > 0.0:
+            max_exposure = equity_usdt * max_exposure_ratio
+            if projected > max_exposure:
+                return Decision(kind="BLOCK", reason="exposure_above_max_exposure")
 
         # Notional cap (direct) within max_notional_pct of equity.
         max_notional = equity_usdt * (float(cfg.max_notional_pct) / 100.0)

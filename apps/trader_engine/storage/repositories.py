@@ -23,7 +23,7 @@ class RiskConfigRepo:
         self._db = db
 
     def get(self) -> Optional[RiskConfig]:
-        row = self._db.conn.execute("SELECT * FROM risk_config WHERE id=1").fetchone()
+        row = self._db.query_one("SELECT * FROM risk_config WHERE id=1")
         if not row:
             return None
         keys = set(row.keys())
@@ -220,7 +220,7 @@ class EngineStateRepo:
         self._db = db
 
     def get(self) -> EngineStateRow:
-        row = self._db.conn.execute("SELECT * FROM engine_state WHERE id=1").fetchone()
+        row = self._db.query_one("SELECT * FROM engine_state WHERE id=1")
         if not row:
             # Default bootstrap state (persisted).
             state = EngineStateRow(state=EngineState.STOPPED, updated_at=datetime.now(tz=timezone.utc))
@@ -263,7 +263,7 @@ class StatusSnapshotRepo:
         self._db = db
 
     def get_json(self) -> Optional[Dict[str, Any]]:
-        row = self._db.conn.execute("SELECT json FROM status_snapshot WHERE id=1").fetchone()
+        row = self._db.query_one("SELECT json FROM status_snapshot WHERE id=1")
         if not row:
             return None
         return json.loads(row["json"])
@@ -291,7 +291,7 @@ class PnLStateRepo:
         self._db = db
 
     def get(self) -> Optional[PnLState]:
-        row = self._db.conn.execute("SELECT * FROM pnl_state WHERE id=1").fetchone()
+        row = self._db.query_one("SELECT * FROM pnl_state WHERE id=1")
         if not row:
             return None
         cooldown_until = row["cooldown_until"]
@@ -468,17 +468,111 @@ class OrderRecordRepo:
         )
 
     def get_by_client_order_id(self, client_order_id: str) -> Optional[Dict[str, Any]]:
-        row = self._db.conn.execute(
+        row = self._db.query_one(
             "SELECT * FROM order_records WHERE client_order_id=?",
             (client_order_id,),
-        ).fetchone()
+        )
         return dict(row) if row else None
 
     def list_pending_open(self) -> list[Dict[str, Any]]:
-        rows = self._db.conn.execute(
+        rows = self._db.query_all(
             """
             SELECT * FROM order_records
             WHERE status IN ('CREATED','SENT','ACK','PARTIAL','OPEN')
             """.strip()
-        ).fetchall()
+        )
         return [dict(r) for r in rows]
+
+    def get_latest_entry_created_ts(self, *, symbol: str, side: str) -> Optional[float]:
+        row = self._db.query_one(
+            """
+            SELECT ts_created
+            FROM order_records
+            WHERE symbol=? AND side=? AND reduce_only=0
+            ORDER BY ts_created DESC
+            LIMIT 1
+            """.strip(),
+            (str(symbol).upper(), str(side).upper()),
+        )
+        if not row or row["ts_created"] is None:
+            return None
+        try:
+            return _parse_dt(str(row["ts_created"])).timestamp()
+        except Exception:
+            return None
+
+
+class TrailingStateRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get(self, *, symbol: str) -> Optional[Dict[str, Any]]:
+        row = self._db.query_one("SELECT * FROM trailing_state WHERE symbol=?", (str(symbol).upper(),))
+        return dict(row) if row else None
+
+    def upsert(
+        self,
+        *,
+        symbol: str,
+        position_side: str,
+        entry_price: float,
+        entry_ts: float,
+        peak_pnl_pct: float,
+        armed: bool,
+        close_state: str,
+        last_close_attempt_ts: Optional[float],
+        attempt_count: int,
+    ) -> None:
+        self._db.execute(
+            """
+            INSERT INTO trailing_state(
+                symbol,
+                position_side,
+                entry_price,
+                entry_ts,
+                peak_pnl_pct,
+                armed,
+                close_state,
+                last_close_attempt_ts,
+                attempt_count,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                position_side=excluded.position_side,
+                entry_price=excluded.entry_price,
+                entry_ts=excluded.entry_ts,
+                peak_pnl_pct=excluded.peak_pnl_pct,
+                armed=excluded.armed,
+                close_state=excluded.close_state,
+                last_close_attempt_ts=excluded.last_close_attempt_ts,
+                attempt_count=excluded.attempt_count,
+                updated_at=excluded.updated_at
+            """.strip(),
+            (
+                str(symbol).upper(),
+                str(position_side).upper(),
+                float(entry_price),
+                float(entry_ts),
+                float(peak_pnl_pct),
+                int(bool(armed)),
+                str(close_state).upper(),
+                float(last_close_attempt_ts) if last_close_attempt_ts is not None else None,
+                int(attempt_count),
+                _utcnow_iso(),
+            ),
+        )
+
+    def delete(self, *, symbol: str) -> None:
+        self._db.execute("DELETE FROM trailing_state WHERE symbol=?", (str(symbol).upper(),))
+
+    def delete_all_except(self, *, symbols: list[str]) -> None:
+        keep = [str(s).upper() for s in symbols if str(s).strip()]
+        if not keep:
+            self.clear()
+            return
+        placeholders = ",".join(["?"] * len(keep))
+        self._db.execute(f"DELETE FROM trailing_state WHERE symbol NOT IN ({placeholders})", tuple(keep))
+
+    def clear(self) -> None:
+        self._db.execute("DELETE FROM trailing_state")

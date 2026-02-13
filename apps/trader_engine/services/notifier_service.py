@@ -129,6 +129,14 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         reason = str(event.get("reason") or (detail or {}).get("reason") or "panic")
         return f"[RISK] PANIC reason={reason}"
 
+    if kind == "PANIC_RESULT":
+        ok = bool(event.get("ok"))
+        cancel_ok = bool(event.get("canceled_orders_ok"))
+        close_ok = bool(event.get("close_ok"))
+        errs = event.get("errors") if isinstance(event.get("errors"), list) else []
+        err_txt = str(errs[0]) if errs else "-"
+        return f"[RISK] PANIC_RESULT ok={ok} cancel_ok={cancel_ok} close_ok={close_ok} err={err_txt}"
+
     if kind == "BLOCK":
         reason = str(event.get("reason") or (detail or {}).get("reason") or "blocked")
         return f"[RISK] ENTRY BLOCKED: {reason} symbol={symbol}"

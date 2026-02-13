@@ -60,6 +60,20 @@ class EngineStateSchema(BaseModel):
     updated_at: datetime
 
 
+class PanicResultSchema(BaseModel):
+    ok: bool
+    canceled_orders_ok: bool
+    close_ok: bool
+    errors: List[str] = Field(default_factory=list)
+    closed_symbol: Optional[str] = None
+    closed_qty: Optional[float] = None
+
+
+class PanicResponseSchema(BaseModel):
+    engine_state: EngineStateSchema
+    panic_result: PanicResultSchema
+
+
 class DisabledSymbolSchema(BaseModel):
     symbol: str
     reason: str

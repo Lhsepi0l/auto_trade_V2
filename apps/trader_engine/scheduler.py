@@ -352,7 +352,7 @@ class TraderScheduler:
                 return
             close_reason = "TAKE_PROFIT" if float(open_pos_upnl) >= 0 else "STOP_LOSS"
             try:
-                out = await asyncio.to_thread(self._execution.close_position, sym, reason=close_reason)
+                out = await self._execution.close_position(sym, reason=close_reason)
                 snap.last_action = f"close:{sym}"
                 snap.last_error = None
                 logger.info("strategy_close", extra={"symbol": sym, "detail": out})
@@ -372,18 +372,6 @@ class TraderScheduler:
             return
         dir_s = str(dec.enter_direction or "").upper()
         direction = Direction.LONG if dir_s == "LONG" else Direction.SHORT
-
-        # REBALANCE: close first, then enter.
-        if dec.kind == "REBALANCE":
-            close_sym = str(dec.close_symbol or "").upper()
-            if close_sym:
-                try:
-                    out = await asyncio.to_thread(self._execution.close_position, close_sym, reason="REBALANCE")
-                    logger.info("strategy_rebalance_close", extra={"symbol": close_sym, "detail": out})
-                except ExecutionRejected as e:
-                    snap.last_action = f"rebalance_close:{close_sym}"
-                    snap.last_error = str(e)
-                    return
 
         # Compute sizing: use 30m ATR% as stop distance proxy (fallback 1%).
         ss = scores.get(target_symbol)
@@ -432,8 +420,29 @@ class TraderScheduler:
             "notional_usdt": float(size.target_notional_usdt),
         }
 
+        if dec.kind == "REBALANCE":
+            close_sym = str(dec.close_symbol or "").upper()
+            if close_sym:
+                try:
+                    out = await self._execution.rebalance(close_symbol=close_sym, enter_intent=intent)
+                    if bool(out.get("blocked")):
+                        reason = str(out.get("block_reason") or "entry_blocked")
+                        snap.last_action = f"{dec.kind.lower()}_blocked:{target_symbol}:{direction.value}"
+                        snap.last_error = reason
+                    else:
+                        snap.last_action = f"{dec.kind.lower()}_enter:{target_symbol}:{direction.value}"
+                        snap.last_error = None
+                    logger.info("strategy_rebalance", extra={"symbol": target_symbol, "detail": out})
+                except ExecutionRejected as e:
+                    snap.last_action = f"{dec.kind.lower()}_enter:{target_symbol}:{direction.value}"
+                    snap.last_error = str(e)
+                except Exception as e:  # noqa: BLE001
+                    snap.last_action = f"{dec.kind.lower()}_enter:{target_symbol}:{direction.value}"
+                    snap.last_error = f"{type(e).__name__}: {e}"
+                return
+
         try:
-            out = await asyncio.to_thread(self._execution.enter_position, intent)
+            out = await self._execution.enter_position(intent)
             if bool(out.get("blocked")):
                 reason = str(out.get("block_reason") or "entry_blocked")
                 snap.last_action = f"{dec.kind.lower()}_blocked:{target_symbol}:{direction.value}"

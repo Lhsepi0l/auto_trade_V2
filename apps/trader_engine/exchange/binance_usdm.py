@@ -113,8 +113,8 @@ class BinanceUSDMClient:
     def close(self) -> None:
         try:
             self._session.close()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("binance_session_close_failed", extra={"err": type(e).__name__}, exc_info=True)
 
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
@@ -204,8 +204,12 @@ class BinanceUSDMClient:
                 if e.code == -1021 and signed:
                     try:
                         self.refresh_time_offset()
-                    except Exception:
-                        pass
+                    except Exception as refresh_err:  # noqa: BLE001
+                        logger.warning(
+                            "binance_time_offset_refresh_failed",
+                            extra={"err": type(refresh_err).__name__},
+                            exc_info=True,
+                        )
                     return _do_once()
                 raise
 

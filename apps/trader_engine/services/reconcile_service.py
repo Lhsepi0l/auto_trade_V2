@@ -59,8 +59,8 @@ class ReconcileService:
             if self._oplog:
                 try:
                     self._oplog.log_event("STARTUP_RECONCILE_FAIL", {"reason": f"{type(e).__name__}:{e}"})
-                except Exception:
-                    pass
+                except Exception as log_err:  # noqa: BLE001
+                    logger.warning("oplog_startup_reconcile_fail_event_failed", extra={"err": type(log_err).__name__}, exc_info=True)
             return False
         finally:
             self._last_reconcile_ts = time.time()

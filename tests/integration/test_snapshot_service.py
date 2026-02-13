@@ -30,7 +30,7 @@ def test_snapshot_insert_fields_with_fake_exchange(tmp_path) -> None:
     assert row.unrealized_pnl_usdt == pytest.approx(5.0, rel=1e-6)
     assert row.unrealized_pnl_pct == pytest.approx(10.0, rel=1e-6)
 
-    db_row = db.conn.execute(
+    db_row = db.query_one(
         """
         SELECT symbol, position_side, qty, entry_price, mark_price,
                unrealized_pnl_usdt, unrealized_pnl_pct, equity_usdt, available_usdt
@@ -38,7 +38,7 @@ def test_snapshot_insert_fields_with_fake_exchange(tmp_path) -> None:
         ORDER BY ts DESC
         LIMIT 1
         """.strip()
-    ).fetchone()
+    )
     assert db_row is not None
     assert str(db_row["symbol"]) == "BTCUSDT"
     assert str(db_row["position_side"]) == "LONG"

@@ -49,6 +49,16 @@ class FakeBinanceClient:
     def get_open_positions_any(self) -> Dict[str, Dict[str, float]]:
         return {}
 
+    def get_open_orders_usdtm(self, symbols):  # type: ignore[no-untyped-def]
+        out = {str(s).upper(): [] for s in symbols}
+        for o in self._orders.values():
+            sym = str(o.get("symbol") or "").upper()
+            if sym not in out:
+                continue
+            if str(o.get("status") or "").upper() in {"NEW", "PARTIALLY_FILLED"}:
+                out[sym].append(dict(o))
+        return out
+
     def cancel_all_open_orders(self, *, symbol: str) -> List[Mapping[str, Any]]:
         # Mark all open orders for the symbol as CANCELED.
         for o in self._orders.values():
@@ -192,12 +202,13 @@ def _mk_service(client: FakeBinanceClient, cfg: RiskConfig) -> ExecutionService:
     )
 
 
-def test_limit_fills_without_market_fallback() -> None:
+@pytest.mark.asyncio
+async def test_limit_fills_without_market_fallback() -> None:
     c = FakeBinanceClient()
     c._scenario = "fill"
     c._book["BTCUSDT"] = {"bidPrice": "99", "askPrice": "100"}
     s = _mk_service(c, _mk_cfg())
-    out = s.enter_position(
+    out = await s.enter_position(
         {"symbol": "BTCUSDT", "direction": Direction.LONG, "exec_hint": ExecHint.LIMIT, "qty": 0.01}
     )
     assert out["symbol"] == "BTCUSDT"
@@ -205,12 +216,13 @@ def test_limit_fills_without_market_fallback() -> None:
     assert out.get("market_fallback_used") in (False, None)
 
 
-def test_partial_fill_then_retry_limit_remaining() -> None:
+@pytest.mark.asyncio
+async def test_partial_fill_then_retry_limit_remaining() -> None:
     c = FakeBinanceClient()
     c._scenario = "partial_then_cancel"
     c._book["BTCUSDT"] = {"bidPrice": "99", "askPrice": "100"}
     s = _mk_service(c, _mk_cfg(exec_limit_timeout_sec=0.01, exec_limit_retries=2))
-    out = s.enter_position(
+    out = await s.enter_position(
         {"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01}
     )
     assert out["symbol"] == "BTCUSDT"
@@ -218,12 +230,13 @@ def test_partial_fill_then_retry_limit_remaining() -> None:
     assert out.get("market_fallback_used") is False
 
 
-def test_limit_then_market_fallback_on_failure() -> None:
+@pytest.mark.asyncio
+async def test_limit_then_market_fallback_on_failure() -> None:
     c = FakeBinanceClient()
     c._scenario = "never_fill"
     c._book["BTCUSDT"] = {"bidPrice": "99", "askPrice": "100"}  # spread ok
     s = _mk_service(c, _mk_cfg(exec_limit_timeout_sec=0.01, exec_limit_retries=2, spread_max_pct=0.05))
-    out = s.enter_position(
+    out = await s.enter_position(
         {"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01}
     )
     assert out["symbol"] == "BTCUSDT"
@@ -231,7 +244,8 @@ def test_limit_then_market_fallback_on_failure() -> None:
     assert out.get("market_fallback_used") is True
 
 
-def test_market_fallback_blocked_by_spread_guard() -> None:
+@pytest.mark.asyncio
+async def test_market_fallback_blocked_by_spread_guard() -> None:
     c = FakeBinanceClient()
     c._scenario = "never_fill"
     c._book["BTCUSDT"] = {"bidPrice": "90", "askPrice": "110"}  # very wide
@@ -240,11 +254,12 @@ def test_market_fallback_blocked_by_spread_guard() -> None:
         _mk_cfg(exec_limit_timeout_sec=0.01, exec_limit_retries=2, spread_max_pct=0.001, allow_market_when_wide_spread=False),
     )
     with pytest.raises(ExecutionRejected) as ei:
-        _ = s.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01})
+        _ = await s.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01})
     assert "market_fallback_blocked_by_spread_guard" in ei.value.message
 
 
-def test_dry_run_enter_has_no_side_effects() -> None:
+@pytest.mark.asyncio
+async def test_dry_run_enter_has_no_side_effects() -> None:
     class SideEffectClient(FakeBinanceClient):
         def __init__(self) -> None:
             super().__init__()
@@ -295,5 +310,5 @@ def test_dry_run_enter_has_no_side_effects() -> None:
         dry_run=True,
         dry_run_strict=False,
     )
-    out = s.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01})
+    out = await s.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT", "qty": 0.01})
     assert out["dry_run"] is True

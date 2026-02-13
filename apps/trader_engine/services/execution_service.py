@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -121,6 +122,7 @@ class ExecutionService:
         oplog: Optional[OperationalLogger] = None,
         snapshot: Optional[SnapshotService] = None,
         order_records: Optional[OrderRecordRepo] = None,
+        exec_lock_timeout_sec: float = 5.0,
     ) -> None:
         self._client = client
         self._engine = engine
@@ -138,6 +140,15 @@ class ExecutionService:
         self._order_records = order_records
         self._cid_env = _sanitize_env_token(os.getenv("BOT_ENV", "PROD"))
         self._run_id = oplog.run_id if oplog else None
+        self._exec_lock = asyncio.Lock()
+        self._exec_lock_timeout_sec = max(float(exec_lock_timeout_sec), 0.01)
+
+    async def _acquire_exec_lock(self) -> bool:
+        try:
+            await asyncio.wait_for(self._exec_lock.acquire(), timeout=self._exec_lock_timeout_sec)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     def _emit(self, kind: str, payload: Mapping[str, Any]) -> None:
         if not self._notifier:
@@ -390,6 +401,29 @@ class ExecutionService:
                 logger.exception("oplog_risk_block_failed", extra={"symbol": symbol, "reason": reason})
         return out
 
+    def _entry_block(
+        self,
+        *,
+        symbol: str,
+        hint: ExecHint,
+        reason: str,
+        event_kind: str,
+        intent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        out = self._blocked_response(
+            symbol=symbol,
+            hint=hint,
+            reason=reason,
+            event_kind=event_kind,
+            intent_id=intent_id,
+        )
+        if self._pnl:
+            try:
+                self._pnl.set_last_block_reason(reason)
+            except Exception:
+                pass
+        return out
+
     def _budget_guard(
         self,
         *,
@@ -406,14 +440,19 @@ class ExecutionService:
         cap = self._sizing.compute_live(symbol=symbol, risk=cfg, leverage=leverage)
         if cap.blocked or cap.notional_usdt <= 0.0 or cap.qty <= 0.0:
             reason = str(cap.block_reason or "BUDGET_BLOCKED")
+            if reason == "MARK_PRICE_UNAVAILABLE":
+                reason = "MARKET_DATA_UNAVAILABLE"
             return self._blocked_response(symbol=symbol, hint=exec_hint, reason=reason, event_kind=event_kind, intent_id=intent_id), _dec("0"), _dec("0"), cap
 
         cap_notional = float(cap.notional_usdt)
         mark = float(cap.mark_price or 0.0)
         if mark <= 0.0:
-            mark = float(self._best_price_ref(symbol=symbol, side=side))
+            try:
+                mark = float(self._best_price_ref(symbol=symbol, side=side))
+            except Exception:
+                mark = 0.0
         if mark <= 0.0:
-            return self._blocked_response(symbol=symbol, hint=exec_hint, reason="MARK_PRICE_UNAVAILABLE", event_kind=event_kind, intent_id=intent_id), _dec("0"), _dec("0"), cap
+            return self._blocked_response(symbol=symbol, hint=exec_hint, reason="MARKET_DATA_UNAVAILABLE", event_kind=event_kind, intent_id=intent_id), _dec("0"), _dec("0"), cap
 
         if qty_in is None and notional_usdt is None:
             requested_qty = _dec(cap.qty)
@@ -438,7 +477,16 @@ class ExecutionService:
 
         return None, requested_qty, requested_notional, cap
 
-    def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+    async def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+        locked = await self._acquire_exec_lock()
+        if not locked:
+            raise ExecutionRejected("EXECUTION_LOCK_BUSY")
+        try:
+            return self._close_position_unlocked(symbol, reason=reason)
+        finally:
+            self._exec_lock.release()
+
+    def _close_position_unlocked(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
         self._require_not_panic()
         if self._dry_run and self._dry_run_strict:
             raise ExecutionRejected("dry_run_strict_close_blocked")
@@ -536,7 +584,16 @@ class ExecutionService:
         self._capture_snapshot(reason=reason, symbol=sym)
         return out
 
-    def close_all_positions(self, *, reason: str = "EXIT") -> Dict[str, Any]:
+    async def close_all_positions(self, *, reason: str = "EXIT") -> Dict[str, Any]:
+        locked = await self._acquire_exec_lock()
+        if not locked:
+            raise ExecutionRejected("EXECUTION_LOCK_BUSY")
+        try:
+            return self._close_all_positions_unlocked(reason=reason)
+        finally:
+            self._exec_lock.release()
+
+    def _close_all_positions_unlocked(self, *, reason: str = "EXIT") -> Dict[str, Any]:
         self._require_not_panic()
         if self._dry_run and self._dry_run_strict:
             raise ExecutionRejected("dry_run_strict_close_blocked")
@@ -571,7 +628,31 @@ class ExecutionService:
         self._capture_snapshot(reason="CLOSE_ALL")
         return out
 
-    def enter_position(
+    async def enter_position(
+        self,
+        intent: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        locked = await self._acquire_exec_lock()
+        if not locked:
+            symbol = str(intent.get("symbol", "")).strip().upper() or "UNKNOWN"
+            hint_raw = str(intent.get("exec_hint") or "LIMIT")
+            try:
+                hint = ExecHint(hint_raw.upper())
+            except Exception:
+                hint = ExecHint.LIMIT
+            return self._blocked_response(
+                symbol=symbol,
+                hint=hint,
+                reason="EXECUTION_LOCK_BUSY",
+                event_kind="ENTER",
+                intent_id=str(intent.get("intent_id") or self._new_intent_id(symbol)),
+            )
+        try:
+            return self._enter_position_unlocked(intent)
+        finally:
+            self._exec_lock.release()
+
+    def _enter_position_unlocked(
         self,
         intent: Mapping[str, Any],
     ) -> Dict[str, Any]:
@@ -637,6 +718,14 @@ class ExecutionService:
                 intent_id=intent_id,
             )
             if blocked_out is not None:
+                if str(blocked_out.get("block_reason") or "") == "MARK_PRICE_UNAVAILABLE":
+                    return self._entry_block(
+                        symbol=symbol,
+                        hint=exec_hint,
+                        reason="MARKET_DATA_UNAVAILABLE",
+                        event_kind=event_kind,
+                        intent_id=intent_id,
+                    )
                 if self._pnl:
                     try:
                         self._pnl.set_last_block_reason(str(blocked_out.get("block_reason") or "BUDGET_BLOCKED"))
@@ -647,9 +736,24 @@ class ExecutionService:
             # DRY_RUN: do not place NEW entry/rebalance orders. Return a simulated result + notify.
             if self._dry_run:
                 # No side effects in dry_run mode: do not cancel orders and do not close positions.
-                price_ref = self._best_price_ref(symbol=symbol, side=side)
+                try:
+                    price_ref = self._best_price_ref(symbol=symbol, side=side)
+                except Exception:
+                    return self._entry_block(
+                        symbol=symbol,
+                        hint=exec_hint,
+                        reason="MARKET_DATA_UNAVAILABLE",
+                        event_kind=event_kind,
+                        intent_id=intent_id,
+                    )
                 if price_ref <= 0:
-                    raise ExecutionRejected("book_ticker_unavailable")
+                    return self._entry_block(
+                        symbol=symbol,
+                        hint=exec_hint,
+                        reason="MARKET_DATA_UNAVAILABLE",
+                        event_kind=event_kind,
+                        intent_id=intent_id,
+                    )
                 qty: Decimal = qty_calc
 
                 is_market = exec_hint == ExecHint.MARKET
@@ -699,7 +803,17 @@ class ExecutionService:
                 return sim
 
             # Sync: existing positions (across entire account) + enforce single-asset rule.
-            positions = self._get_open_positions()
+            try:
+                positions = self._get_open_positions()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                return self._entry_block(
+                    symbol=symbol,
+                    hint=exec_hint,
+                    reason="PRECHECK_POSITION_FAILED",
+                    event_kind=event_kind,
+                    intent_id=intent_id,
+                )
             if positions:
                 # Enforce 1-asset rule by closing anything that isn't the target.
                 open_syms = list(positions.keys())
@@ -707,19 +821,59 @@ class ExecutionService:
                 open_amt = float(positions[open_sym].get("position_amt", 0.0) or 0.0)
                 if len(positions) > 1:
                     logger.warning("single_asset_rule_violation_detected", extra={"open_symbols": open_syms})
-                    _ = self.close_all_positions(reason="REBALANCE")
-                    positions = self._get_open_positions()
+                    _ = self._close_all_positions_unlocked(reason="REBALANCE")
+                    try:
+                        positions = self._get_open_positions()
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="PRECHECK_POSITION_FAILED",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
                 elif open_sym != symbol:
-                    _ = self.close_all_positions(reason="REBALANCE")
-                    positions = self._get_open_positions()
+                    _ = self._close_all_positions_unlocked(reason="REBALANCE")
+                    try:
+                        positions = self._get_open_positions()
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="PRECHECK_POSITION_FAILED",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
                 else:
                     # Same symbol; check direction. If opposite, close first.
                     if open_amt > 0 and direction == Direction.SHORT:
-                        _ = self.close_position(symbol, reason="REBALANCE")
-                        positions = self._get_open_positions()
+                        _ = self._close_position_unlocked(symbol, reason="REBALANCE")
+                        try:
+                            positions = self._get_open_positions()
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                            return self._entry_block(
+                                symbol=symbol,
+                                hint=exec_hint,
+                                reason="PRECHECK_POSITION_FAILED",
+                                event_kind=event_kind,
+                                intent_id=intent_id,
+                            )
                     elif open_amt < 0 and direction == Direction.LONG:
-                        _ = self.close_position(symbol, reason="REBALANCE")
-                        positions = self._get_open_positions()
+                        _ = self._close_position_unlocked(symbol, reason="REBALANCE")
+                        try:
+                            positions = self._get_open_positions()
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                            return self._entry_block(
+                                symbol=symbol,
+                                hint=exec_hint,
+                                reason="PRECHECK_POSITION_FAILED",
+                                event_kind=event_kind,
+                                intent_id=intent_id,
+                            )
                     else:
                         # Same symbol same direction: disallow for MVP.
                         raise ExecutionRejected("adding_to_position_not_allowed")
@@ -743,16 +897,22 @@ class ExecutionService:
                             has_open = True
                             break
                 if has_open:
-                    return self._blocked_response(
+                    return self._entry_block(
                         symbol=symbol,
                         hint=exec_hint,
                         reason="open_entry_order_exists",
                         event_kind=event_kind,
                         intent_id=intent_id,
                     )
-            except Exception:
-                # Fail-open here to avoid interrupting close/rebalance flows on transient read errors.
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("precheck_open_orders_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                return self._entry_block(
+                    symbol=symbol,
+                    hint=exec_hint,
+                    reason="PRECHECK_OPEN_ORDERS_FAILED",
+                    event_kind=event_kind,
+                    intent_id=intent_id,
+                )
 
             # Determine reference price for sizing (post-close).
             blocked_live, qty_calc_live, _notional_calc_live, cap_live = self._budget_guard(
@@ -774,9 +934,24 @@ class ExecutionService:
                         pass
                 return blocked_live
 
-            price_ref = self._best_price_ref(symbol=symbol, side=side)
+            try:
+                price_ref = self._best_price_ref(symbol=symbol, side=side)
+            except Exception:
+                return self._entry_block(
+                    symbol=symbol,
+                    hint=exec_hint,
+                    reason="MARKET_DATA_UNAVAILABLE",
+                    event_kind=event_kind,
+                    intent_id=intent_id,
+                )
             if price_ref <= 0:
-                raise ExecutionRejected("book_ticker_unavailable")
+                return self._entry_block(
+                    symbol=symbol,
+                    hint=exec_hint,
+                    reason="MARKET_DATA_UNAVAILABLE",
+                    event_kind=event_kind,
+                    intent_id=intent_id,
+                )
             qty: Decimal = qty_calc_live
 
             is_market = exec_hint == ExecHint.MARKET
@@ -793,7 +968,17 @@ class ExecutionService:
             if self._policy and self._pnl:
                 try:
                     bal = self._client.get_account_balance_usdtm()
-                    pos = self._client.get_open_positions_any()
+                    try:
+                        pos = self._client.get_open_positions_any()
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("precheck_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="PRECHECK_POSITION_FAILED",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
                     wallet = float(bal.get("wallet") or 0.0)
                     upnl = sum(float(r.get("unrealized_pnl") or 0.0) for r in pos.values())
                     equity = wallet + upnl
@@ -802,7 +987,16 @@ class ExecutionService:
                     st = self._pnl.update_equity_peak(equity_usdt=equity)
                     metrics = self._pnl.compute_metrics(st=st, equity_usdt=equity)
 
-                    bt = self._book(symbol)
+                    try:
+                        bt = self._book(symbol)
+                    except Exception:
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="MARKET_DATA_UNAVAILABLE",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
                     bid = float(bt.get("bidPrice", 0) or 0.0)
                     ask = float(bt.get("askPrice", 0) or 0.0)
 
@@ -818,7 +1012,13 @@ class ExecutionService:
                             amt0 = float(row0.get("position_amt") or 0.0)
                             total_exposure += abs(amt0) * float(mid0 or 0.0)
                         except Exception:
-                            continue
+                            return self._entry_block(
+                                symbol=symbol,
+                                hint=exec_hint,
+                                reason="MARKET_DATA_UNAVAILABLE",
+                                event_kind=event_kind,
+                                intent_id=intent_id,
+                            )
 
                     notional_est = float(qty * price_ref)
                     enriched_intent = dict(intent)
@@ -892,8 +1092,15 @@ class ExecutionService:
                         "CANCEL_ALL",
                         {"intent_id": intent_id, "symbol": symbol, "action": "cancel_all", "reason": "pre_entry", "count": len(canceled)},
                     )
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("precheck_cancel_open_orders_failed", extra={"symbol": symbol, "err": type(e).__name__})
+                return self._entry_block(
+                    symbol=symbol,
+                    hint=exec_hint,
+                    reason="PRECHECK_OPEN_ORDERS_FAILED",
+                    event_kind=event_kind,
+                    intent_id=intent_id,
+                )
 
             if exec_hint == ExecHint.MARKET:
                 client_order_id = self._new_client_order_id(intent_id=intent_id, attempt=1)
@@ -956,13 +1163,24 @@ class ExecutionService:
                 return out
 
             if exec_hint == ExecHint.LIMIT:
-                out = self._enter_limit_then_market(
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    intent_id=intent_id,
-                    cycle_id=(str(intent.get("cycle_id")) if intent.get("cycle_id") is not None else None),
-                )
+                try:
+                    out = self._enter_limit_then_market(
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        intent_id=intent_id,
+                        cycle_id=(str(intent.get("cycle_id")) if intent.get("cycle_id") is not None else None),
+                    )
+                except ExecutionRejected as e:
+                    if e.message == "book_ticker_unavailable":
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="MARKET_DATA_UNAVAILABLE",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
+                    raise
                 out["intent_id"] = intent_id
                 for o in out.get("orders", []):
                     if isinstance(o, Mapping):
@@ -997,13 +1215,24 @@ class ExecutionService:
                 return out
 
             if exec_hint == ExecHint.SPLIT:
-                out = self._enter_split(
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    intent_id=intent_id,
-                    cycle_id=(str(intent.get("cycle_id")) if intent.get("cycle_id") is not None else None),
-                )
+                try:
+                    out = self._enter_split(
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        intent_id=intent_id,
+                        cycle_id=(str(intent.get("cycle_id")) if intent.get("cycle_id") is not None else None),
+                    )
+                except ExecutionRejected as e:
+                    if e.message == "book_ticker_unavailable":
+                        return self._entry_block(
+                            symbol=symbol,
+                            hint=exec_hint,
+                            reason="MARKET_DATA_UNAVAILABLE",
+                            event_kind=event_kind,
+                            intent_id=intent_id,
+                        )
+                    raise
                 out["intent_id"] = intent_id
                 for o in out.get("orders", []):
                     if isinstance(o, Mapping):
@@ -1048,16 +1277,66 @@ class ExecutionService:
             self._emit("FAIL", {"op": op, "symbol": intent.get("symbol"), "error": f"{type(e).__name__}: {e}"})
             raise
 
-    def panic(self) -> Dict[str, Any]:
+    async def rebalance(self, *, close_symbol: str, enter_intent: Mapping[str, Any]) -> Dict[str, Any]:
+        locked = await self._acquire_exec_lock()
+        if not locked:
+            symbol = str(enter_intent.get("symbol", "")).strip().upper() or "UNKNOWN"
+            return self._blocked_response(
+                symbol=symbol,
+                hint=ExecHint.LIMIT,
+                reason="EXECUTION_LOCK_BUSY",
+                event_kind="REBALANCE",
+                intent_id=str(enter_intent.get("intent_id") or self._new_intent_id(symbol)),
+            )
+        try:
+            close_sym = self._normalize_symbol(close_symbol)
+            close_out = self._close_position_unlocked(close_sym, reason="REBALANCE")
+            intent_payload = dict(enter_intent)
+            intent_payload["op"] = "REBALANCE"
+            enter_out = self._enter_position_unlocked(intent_payload)
+            enter_out["rebalance_close"] = close_out
+            return enter_out
+        finally:
+            self._exec_lock.release()
+
+    async def panic(self) -> Dict[str, Any]:
+        locked = await self._acquire_exec_lock()
+        if not locked:
+            raise ExecutionRejected("EXECUTION_LOCK_BUSY")
+        try:
+            return self._panic_unlocked()
+        finally:
+            self._exec_lock.release()
+
+    def _panic_unlocked(self) -> Dict[str, Any]:
         if self._dry_run and self._dry_run_strict:
             raise ExecutionRejected("dry_run_strict_panic_blocked")
         # PANIC lock first.
         row = self._engine.panic()
         self._emit("PANIC", {"reason": "manual_panic"})
-        # Best-effort cleanup. Do not raise; return what happened.
-        info: Dict[str, Any] = {"engine_state": row.state.value, "updated_at": row.updated_at.isoformat()}
-        cleanup = self._panic_guarded_close_all(force=True)
-        info.update({"cleanup": cleanup})
+        panic_result = self._panic_guarded_close_all(force=True)
+        self._emit(
+            "PANIC_RESULT",
+            {
+                "ok": bool(panic_result.get("ok")),
+                "canceled_orders_ok": bool(panic_result.get("canceled_orders_ok")),
+                "close_ok": bool(panic_result.get("close_ok")),
+                "errors": list(panic_result.get("errors") or []),
+                "closed_symbol": panic_result.get("closed_symbol"),
+                "closed_qty": panic_result.get("closed_qty"),
+            },
+        )
+        logger.log(
+            logging.INFO if bool(panic_result.get("ok")) else logging.WARNING,
+            "panic_result",
+            extra={"panic_result": panic_result},
+        )
+        # Best-effort cleanup. Do not raise; return structured result.
+        info: Dict[str, Any] = {
+            "engine_state": row.state.value,
+            "updated_at": row.updated_at.isoformat(),
+            "panic_result": panic_result,
+        }
         self._capture_snapshot(reason="PANIC")
         return info
 
@@ -1065,20 +1344,39 @@ class ExecutionService:
         try:
             if force:
                 # bypass engine RUNNING check, but still block if PANIC is already set.
-                return self.close_position(symbol)
-            return self.close_position(symbol)
+                return self._close_position_unlocked(symbol)
+            return self._close_position_unlocked(symbol)
         except Exception as e:  # noqa: BLE001
             logger.exception("close_position_failed", extra={"symbol": symbol, "err": type(e).__name__})
             return {"ok": False, "symbol": symbol, "error": f"{type(e).__name__}: {e}"}
 
     def _panic_guarded_close_all(self, *, force: bool) -> Dict[str, Any]:
         # force=True is used for emergency cleanup paths (PANIC, forced symbol switch).
+        errors: List[str] = []
+        orders: List[Dict[str, Any]] = []
+        cancels = 0
+        canceled_orders_ok = True
+        close_ok = True
+        closed_symbol: Optional[str] = None
+        closed_qty_total = 0.0
         try:
             if not force:
                 self._require_not_panic()
-            positions = self._get_open_positions()
-            # Cancel open orders for enabled symbols AND any symbols we detect open positions on.
-            cancels = 0
+            try:
+                positions = self._get_open_positions()
+            except Exception as e:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "canceled_orders_ok": False,
+                    "close_ok": False,
+                    "errors": [f"positions:{type(e).__name__}:{e}"],
+                    "closed_symbol": None,
+                    "closed_qty": None,
+                    "closed": False,
+                    "canceled": 0,
+                    "orders": [],
+                }
+
             cancel_syms = set(self._allowed_symbols) | set(positions.keys())
             for sym in sorted(cancel_syms):
                 try:
@@ -1089,53 +1387,85 @@ class ExecutionService:
                             "CANCEL_ALL",
                             {"symbol": sym, "action": "cancel_all", "reason": "panic_guarded_close_all", "count": len(c)},
                         )
-                except Exception:
-                    continue
-            if not positions:
-                return {"ok": True, "closed": False, "reason": "no_open_position", "canceled": cancels}
-            # Close every open position, even if multiple exist (defensive).
-            orders: List[Dict[str, Any]] = []
-            for sym, row in positions.items():
-                amt = float(row.get("position_amt", 0.0) or 0.0)
-                if abs(amt) <= 0:
-                    continue
-                side = _direction_to_close_side(amt)
-                qty = self._round_qty(symbol=sym, qty=_dec(abs(amt)), is_market=True)
-                panic_intent = self._new_intent_id(sym)
-                panic_cid = self._new_client_order_id(intent_id=panic_intent, attempt=1)
-                self._record_created(
-                    intent_id=panic_intent,
-                    cycle_id=None,
-                    symbol=sym,
-                    side=side,
-                    order_type="MARKET",
-                    reduce_only=True,
-                    qty=qty,
-                    price=None,
-                    time_in_force=None,
-                    client_order_id=panic_cid,
-                )
-                o = self._client.place_order_market(
-                    symbol=sym,
-                    side=side,
-                    quantity=float(qty),
-                    reduce_only=True,
-                    new_client_order_id=panic_cid,
-                )
-                self._record_sent_or_ack(client_order_id=panic_cid, order=o, fallback_status="ACK")
-                so = _safe_order(o)
-                orders.append(so)
-                self._oplog_execution_from_order(
-                    intent_id=None,
-                    symbol=sym,
-                    side=side,
-                    reason="panic_guarded_close_all",
-                    order=so,
-                )
-            return {"ok": True, "closed": bool(orders), "canceled": cancels, "orders": orders}
+                except Exception as e:  # noqa: BLE001
+                    canceled_orders_ok = False
+                    errors.append(f"cancel:{sym}:{type(e).__name__}:{e}")
+
+            if positions:
+                for sym, row in positions.items():
+                    amt = float(row.get("position_amt", 0.0) or 0.0)
+                    if abs(amt) <= 0:
+                        continue
+                    side = _direction_to_close_side(amt)
+                    try:
+                        qty = self._round_qty(symbol=sym, qty=_dec(abs(amt)), is_market=True)
+                        panic_intent = self._new_intent_id(sym)
+                        panic_cid = self._new_client_order_id(intent_id=panic_intent, attempt=1)
+                        self._record_created(
+                            intent_id=panic_intent,
+                            cycle_id=None,
+                            symbol=sym,
+                            side=side,
+                            order_type="MARKET",
+                            reduce_only=True,
+                            qty=qty,
+                            price=None,
+                            time_in_force=None,
+                            client_order_id=panic_cid,
+                        )
+                        o = self._client.place_order_market(
+                            symbol=sym,
+                            side=side,
+                            quantity=float(qty),
+                            reduce_only=True,
+                            new_client_order_id=panic_cid,
+                        )
+                        self._record_sent_or_ack(client_order_id=panic_cid, order=o, fallback_status="ACK")
+                        so = _safe_order(o)
+                        orders.append(so)
+                        self._oplog_execution_from_order(
+                            intent_id=None,
+                            symbol=sym,
+                            side=side,
+                            reason="panic_guarded_close_all",
+                            order=so,
+                        )
+                        closed_symbol = sym
+                        try:
+                            closed_qty_total += abs(float(so.get("executed_qty") or 0.0))
+                        except Exception:
+                            pass
+                    except Exception as e:  # noqa: BLE001
+                        close_ok = False
+                        errors.append(f"close:{sym}:{type(e).__name__}:{e}")
+            ok = canceled_orders_ok and close_ok
+            closed_flag = bool(orders)
+            return {
+                "ok": ok,
+                "canceled_orders_ok": canceled_orders_ok,
+                "close_ok": close_ok,
+                "errors": errors,
+                "closed_symbol": closed_symbol if len(orders) == 1 else None,
+                "closed_qty": float(closed_qty_total) if closed_qty_total > 0 else None,
+                "closed": closed_flag,
+                "canceled": cancels,
+                "orders": orders,
+                "reason": "no_open_position" if not positions else None,
+            }
         except Exception as e:  # noqa: BLE001
             logger.exception("panic_close_all_failed", extra={"err": type(e).__name__})
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            errors.append(f"panic:{type(e).__name__}:{e}")
+            return {
+                "ok": False,
+                "canceled_orders_ok": False,
+                "close_ok": False,
+                "errors": errors,
+                "closed_symbol": None,
+                "closed_qty": None,
+                "closed": False,
+                "canceled": cancels,
+                "orders": orders,
+            }
 
     def _market_fallback_allowed_now(self, *, symbol: str) -> bool:
         """Check whether MARKET is currently allowed by the spread guard config."""

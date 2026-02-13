@@ -183,3 +183,31 @@ def test_constraints_block_on_leverage_above_cap():
     )
     assert dec.kind == "BLOCK"
     assert dec.reason == "leverage_above_max_leverage"
+
+
+def test_constraints_max_exposure_uses_ratio_units():
+    cfg = RiskConfig(
+        per_trade_risk_pct=10.0,
+        max_exposure_pct=0.2,
+        max_notional_pct=100.0,
+        max_leverage=5.0,
+        daily_loss_limit_pct=-1.0,
+        dd_limit_pct=-1.0,
+        lose_streak_n=10,
+        cooldown_hours=1,
+        notify_interval_sec=120,
+    )
+    svc, _eng, _pnl = _mk(cfg)
+
+    allow = svc.enforce_constraints(
+        intent={"symbol": "BTCUSDT", "notional_usdt_est": 150.0, "leverage": 2.0},
+        account_state={"equity_usdt": 1000.0, "open_symbols": [], "total_exposure_notional_usdt": 0.0},
+    )
+    assert allow.kind == "ALLOW"
+
+    block = svc.enforce_constraints(
+        intent={"symbol": "BTCUSDT", "notional_usdt_est": 250.0, "leverage": 2.0},
+        account_state={"equity_usdt": 1000.0, "open_symbols": [], "total_exposure_notional_usdt": 0.0},
+    )
+    assert block.kind == "BLOCK"
+    assert block.reason == "exposure_above_max_exposure"

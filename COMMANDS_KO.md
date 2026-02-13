@@ -134,6 +134,7 @@ DISCORD_GUILD_ID=...
 - `/close symbol:BTCUSDT`: 심볼 단일 청산 (`POST /trade/close`)
 - `/closeall`: 전체 포지션 청산 (`POST /trade/close_all`)
 - `/set key:<risk_key> value:<string>`: 리스크 키 단일 수정 (`POST /set`)
+  - `max_exposure_pct` 입력 규칙: `0.2`(ratio) 또는 `20%`(퍼센트 표기)만 허용, `20`은 거부
 - `/preset name:<conservative|normal|aggressive>`: 프리셋 적용 (`POST /preset`)
 - `/panel`: 컨트롤 패널 메시지 생성/갱신
 

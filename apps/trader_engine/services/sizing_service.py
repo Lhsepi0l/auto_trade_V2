@@ -329,8 +329,7 @@ class SizingService:
 
         # Exposure cap uses available (operationally safer for futures wallet).
         me = float(risk.max_exposure_pct or 0.0)
-        me_ratio = (me / 100.0) if me > 1.0 else me
-        max_exposure = avail * me_ratio
+        max_exposure = avail * me
         projected = float(existing_exposure_notional_usdt or 0.0) + float(notional)
         if max_exposure > 0 and projected > max_exposure:
             notional = max(0.0, max_exposure - float(existing_exposure_notional_usdt or 0.0))

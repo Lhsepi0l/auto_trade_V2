@@ -37,6 +37,7 @@ from apps.trader_engine.storage.repositories import (
     PnLStateRepo,
     RiskConfigRepo,
     StatusSnapshotRepo,
+    TrailingStateRepo,
 )
 from apps.trader_engine.scheduler import TraderScheduler
 
@@ -63,6 +64,7 @@ def _build_lifespan(
         _status_snapshot_repo = StatusSnapshotRepo(db)  # reserved for later wiring
         pnl_state_repo = PnLStateRepo(db)
         order_record_repo = OrderRecordRepo(db)
+        trailing_state_repo = TrailingStateRepo(db)
         oplog = OperationalLogger.create(db=db, component="engine")
 
         engine_service = EngineService(engine_state_repo=engine_state_repo)
@@ -170,6 +172,8 @@ def _build_lifespan(
         oplog=oplog,
         market_data=market_data_service,
         reconcile=reconcile_service,
+        order_records=order_record_repo,
+        trailing_state_repo=trailing_state_repo,
     )
         user_stream = UserStreamService(
         client=binance_client,
@@ -180,6 +184,7 @@ def _build_lifespan(
         snapshot=snapshot_service,
         order_records=order_record_repo,
         reconcile=reconcile_service,
+        tracked_symbols=binance_service.enabled_symbols,
     )
 
         app.state.settings = settings
@@ -236,24 +241,24 @@ def _build_lifespan(
             try:
                 try:
                     await user_stream.stop()
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("user_stream_stop_failed", extra={"err": type(e).__name__}, exc_info=True)
                 try:
                     await watchdog.stop()
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("watchdog_stop_failed", extra={"err": type(e).__name__}, exc_info=True)
                 try:
                     await scheduler.stop()
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("scheduler_stop_failed", extra={"err": type(e).__name__}, exc_info=True)
                 if hasattr(binance_service, "close"):
                     binance_service.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("lifespan_shutdown_cleanup_failed", extra={"err": type(e).__name__}, exc_info=True)
             try:
                 oplog.log_event("ENGINE_SHUTDOWN", {"action": "shutdown"})
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("oplog_shutdown_event_failed", extra={"err": type(e).__name__}, exc_info=True)
             close(db)
 
     return lifespan

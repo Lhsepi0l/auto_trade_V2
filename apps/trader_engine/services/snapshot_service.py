@@ -74,8 +74,8 @@ class SnapshotService:
             self._last_wallet = wallet
             self._last_available = available
             self._last_balance_ts = now
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("snapshot_balance_fetch_failed", extra={"err": type(e).__name__}, exc_info=True)
         return self._last_wallet, self._last_available
 
     def _pick_position(self, preferred_symbol: Optional[str] = None) -> tuple[Optional[str], Optional[Mapping[str, Any]]]:
@@ -196,14 +196,14 @@ class SnapshotService:
 
     def get_last_snapshot_meta(self) -> tuple[Optional[str], Optional[float], Optional[float]]:
         try:
-            row = self._db.conn.execute(
+            row = self._db.query_one(
                 """
                 SELECT ts, unrealized_pnl_usdt, unrealized_pnl_pct
                 FROM pnl_snapshots
                 ORDER BY ts DESC
                 LIMIT 1
                 """.strip()
-            ).fetchone()
+            )
         except Exception:
             return None, None, None
         if not row:

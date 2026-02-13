@@ -70,12 +70,13 @@ def _mk_services(tmp_path):
     return engine, risk
 
 
-def test_enter_requires_running(tmp_path):
+@pytest.mark.asyncio
+async def test_enter_requires_running(tmp_path):
     engine, risk = _mk_services(tmp_path)
     exe = ExecutionService(client=_FakeBinance(), engine=engine, risk=risk, allowed_symbols=["BTCUSDT"])
 
     with pytest.raises(ExecutionRejected):
-        exe.enter_position(
+        await exe.enter_position(
             {
                 "symbol": "BTCUSDT",
                 "direction": Direction.LONG,
@@ -85,10 +86,11 @@ def test_enter_requires_running(tmp_path):
         )
 
 
-def test_close_rejected_in_panic(tmp_path):
+@pytest.mark.asyncio
+async def test_close_rejected_in_panic(tmp_path):
     engine, risk = _mk_services(tmp_path)
     engine.panic()
 
     exe = ExecutionService(client=_FakeBinance(), engine=engine, risk=risk, allowed_symbols=["BTCUSDT"])
     with pytest.raises(ExecutionRejected):
-        exe.close_position("BTCUSDT")
+        await exe.close_position("BTCUSDT")

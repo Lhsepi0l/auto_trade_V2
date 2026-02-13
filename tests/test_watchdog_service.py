@@ -39,7 +39,7 @@ class _FakeExecution:
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
 
-    def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+    async def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
         self.calls.append({"symbol": symbol, "reason": reason})
         return {"symbol": symbol, "closed": True, "reason": reason}
 

@@ -40,17 +40,17 @@ def test_oplog_writes_tables(tmp_path) -> None:
         details_json={"source": "unit"},
     )
 
-    c1 = db.conn.execute("SELECT COUNT(*) AS c FROM op_events").fetchone()["c"]
-    c2 = db.conn.execute("SELECT COUNT(*) AS c FROM decisions").fetchone()["c"]
-    c3 = db.conn.execute("SELECT COUNT(*) AS c FROM executions").fetchone()["c"]
-    c4 = db.conn.execute("SELECT COUNT(*) AS c FROM risk_blocks").fetchone()["c"]
+    c1 = db.query_one("SELECT COUNT(*) AS c FROM op_events")["c"]
+    c2 = db.query_one("SELECT COUNT(*) AS c FROM decisions")["c"]
+    c3 = db.query_one("SELECT COUNT(*) AS c FROM executions")["c"]
+    c4 = db.query_one("SELECT COUNT(*) AS c FROM risk_blocks")["c"]
 
     assert int(c1) >= 4
     assert int(c2) == 1
     assert int(c3) == 1
     assert int(c4) == 1
 
-    row = db.conn.execute("SELECT json FROM op_events ORDER BY ts DESC LIMIT 1").fetchone()
+    row = db.query_one("SELECT json FROM op_events ORDER BY ts DESC LIMIT 1")
     assert row is not None
     payload = json.loads(str(row["json"]))
     assert payload.get("run_id")

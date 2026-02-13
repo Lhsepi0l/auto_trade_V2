@@ -68,12 +68,13 @@ def _svc(exchange: FakeBinanceRest, cfg: RiskConfig, *, dry_run: bool = False) -
 
 
 @pytest.mark.integration
-def test_entry_uses_computed_qty_when_missing_qty_and_notional() -> None:
+@pytest.mark.asyncio
+async def test_entry_uses_computed_qty_when_missing_qty_and_notional() -> None:
     ex = FakeBinanceRest()
     ex.available = 1000.0
     svc = _svc(ex, _cfg(capital_mode="PCT_AVAILABLE", capital_pct=0.2, margin_use_pct=0.9, max_leverage=2.0))
 
-    out = svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "MARKET"})
+    out = await svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "MARKET"})
     assert out.get("blocked") is not True
     assert out.get("orders")
     filled = float(out["orders"][0].get("executed_qty") or 0.0)
@@ -81,7 +82,8 @@ def test_entry_uses_computed_qty_when_missing_qty_and_notional() -> None:
 
 
 @pytest.mark.integration
-def test_entry_block_when_budget_too_small() -> None:
+@pytest.mark.asyncio
+async def test_entry_block_when_budget_too_small() -> None:
     ex = FakeBinanceRest()
     ex.available = 5.0
     svc = _svc(
@@ -89,18 +91,19 @@ def test_entry_block_when_budget_too_small() -> None:
         _cfg(capital_mode="FIXED_USDT", capital_usdt=5.0, margin_use_pct=0.1, max_leverage=1.0),
     )
 
-    out = svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT"})
+    out = await svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT"})
     assert out.get("blocked") is True
     assert str(out.get("block_reason")) in {"BUDGET_TOO_SMALL_FOR_MIN_NOTIONAL", "BUDGET_TOO_SMALL_FOR_MIN_QTY"}
 
 
 @pytest.mark.integration
-def test_dry_run_blocks_real_orders_but_reports_sizing() -> None:
+@pytest.mark.asyncio
+async def test_dry_run_blocks_real_orders_but_reports_sizing() -> None:
     ex = FakeBinanceRest()
     ex.available = 1000.0
     svc = _svc(ex, _cfg(capital_mode="PCT_AVAILABLE", capital_pct=0.2), dry_run=True)
 
-    out = svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT"})
+    out = await svc.enter_position({"symbol": "BTCUSDT", "direction": "LONG", "exec_hint": "LIMIT"})
     assert out.get("dry_run") is True
     assert float(out.get("qty") or 0.0) > 0.0
     assert float(out.get("notional_usdt_est") or 0.0) > 0.0

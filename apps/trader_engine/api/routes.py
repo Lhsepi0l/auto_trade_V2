@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from apps.trader_engine.api.schemas import (
     CapitalSnapshotSchema,
@@ -18,6 +19,8 @@ from apps.trader_engine.api.schemas import (
     StatusResponse,
     SchedulerSnapshotSchema,
     WatchdogStatusSchema,
+    PanicResponseSchema,
+    PanicResultSchema,
     TradeCloseRequest,
     TradeEnterRequest,
     TradeResult,
@@ -346,14 +349,34 @@ def stop(request: Request, engine: EngineService = Depends(_engine_service)) -> 
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message) from e
 
 
-@router.post("/panic", response_model=EngineStateSchema)
-def panic(
+@router.post("/panic", response_model=PanicResponseSchema)
+async def panic(
     request: Request,
+    response: Response,
     engine: EngineService = Depends(_engine_service),
     exe: ExecutionService = Depends(_execution_service),
-) -> EngineStateSchema:
+) -> PanicResponseSchema | JSONResponse:
     # PANIC should lock state + attempt best-effort cancel/close.
-    _ = exe.panic()
+    try:
+        out = await exe.panic()
+    except ExecutionRejected as e:
+        if str(getattr(e, "message", e)) == "EXECUTION_LOCK_BUSY":
+            row = engine.get_state()
+            retry_after_ms = max(int(float(getattr(exe, "_exec_lock_timeout_sec", 0.5)) * 1000.0), 100)
+            return JSONResponse(
+                status_code=status.HTTP_423_LOCKED,
+                content={
+                    "ok": False,
+                    "code": "EXECUTION_LOCK_BUSY",
+                    "message": "panic request blocked by execution lock",
+                    "retry_after_ms": retry_after_ms,
+                    "engine_state": {
+                        "state": row.state.value,
+                        "updated_at": row.updated_at.isoformat(),
+                    },
+                },
+            )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message) from e
     oplog = _oplog(request)
     if oplog:
         try:
@@ -361,7 +384,21 @@ def panic(
         except Exception:
             logger.exception("oplog_engine_panic_failed")
     row = engine.get_state()
-    return EngineStateSchema(state=row.state, updated_at=row.updated_at)
+    panic_result_raw = dict(out.get("panic_result") or {})
+    panic_result = PanicResultSchema(
+        ok=bool(panic_result_raw.get("ok", True)),
+        canceled_orders_ok=bool(panic_result_raw.get("canceled_orders_ok", True)),
+        close_ok=bool(panic_result_raw.get("close_ok", True)),
+        errors=[str(x) for x in (panic_result_raw.get("errors") or [])],
+        closed_symbol=(str(panic_result_raw.get("closed_symbol")) if panic_result_raw.get("closed_symbol") else None),
+        closed_qty=(float(panic_result_raw.get("closed_qty")) if panic_result_raw.get("closed_qty") is not None else None),
+    )
+    if not panic_result.ok:
+        response.status_code = status.HTTP_207_MULTI_STATUS
+    return PanicResponseSchema(
+        engine_state=EngineStateSchema(state=row.state, updated_at=row.updated_at),
+        panic_result=panic_result,
+    )
 
 
 @router.get("/risk", response_model=RiskConfigSchema)
@@ -424,12 +461,12 @@ def preset(
 
 
 @router.post("/trade/enter", response_model=TradeResult)
-def trade_enter(
+async def trade_enter(
     req: TradeEnterRequest,
     exe: ExecutionService = Depends(_execution_service),
 ) -> TradeResult:
     try:
-        out = exe.enter_position(req.model_dump())
+        out = await exe.enter_position(req.model_dump())
         return TradeResult(
             symbol=out.get("symbol", req.symbol),
             hint=out.get("hint"),
@@ -443,12 +480,12 @@ def trade_enter(
 
 
 @router.post("/trade/close", response_model=TradeResult)
-def trade_close(
+async def trade_close(
     req: TradeCloseRequest,
     exe: ExecutionService = Depends(_execution_service),
 ) -> TradeResult:
     try:
-        out = exe.close_position(req.symbol)
+        out = await exe.close_position(req.symbol)
         return TradeResult(symbol=out.get("symbol", req.symbol), detail=out)
     except ExecutionValidationError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.message) from e
@@ -457,11 +494,11 @@ def trade_close(
 
 
 @router.post("/trade/close_all", response_model=TradeResult)
-def trade_close_all(
+async def trade_close_all(
     exe: ExecutionService = Depends(_execution_service),
 ) -> TradeResult:
     try:
-        out = exe.close_all_positions()
+        out = await exe.close_all_positions()
         return TradeResult(symbol=str(out.get("symbol", "")), detail=out)
     except ExecutionRejected as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message) from e
