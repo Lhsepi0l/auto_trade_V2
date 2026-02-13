@@ -1,0 +1,2 @@
+# Discord bot service layer.
+
