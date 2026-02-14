@@ -92,9 +92,12 @@ class UserStreamService:
             int(stale_msg_after_sec if stale_msg_after_sec is not None else (self._safe_mode_after_sec * 3)),
             self._safe_mode_after_sec,
         )
-        self._stale_event_after_sec = max(
-            int(stale_event_after_sec if stale_event_after_sec is not None else self._safe_mode_after_sec),
-            1,
+        # Event-level staleness can be noisy with passive positions because Binance user stream
+        # may not emit account/order events for long periods even when transport is healthy.
+        # Keep transport staleness check enabled by default and only enable event staleness when
+        # explicitly configured.
+        self._stale_event_after_sec = (
+            max(int(stale_event_after_sec), 1) if stale_event_after_sec is not None else 0
         )
         self._exposure_probe_interval_sec = max(float(exposure_probe_interval_sec), 0.5)
         self._tracked_symbols = [str(s).strip().upper() for s in (tracked_symbols or []) if str(s).strip()]
@@ -443,9 +446,10 @@ class UserStreamService:
         if msg_ref is not None and (now_ts - msg_ref.timestamp()) > float(self._stale_msg_after_sec):
             return "user_stream_stale_transport"
 
-        evt_ref = self._last_ws_event_ts or self._last_ws_connect_ts
-        if evt_ref is not None and (now_ts - evt_ref.timestamp()) > float(self._stale_event_after_sec):
-            return "user_stream_stale_event_with_exposure"
+        if self._stale_event_after_sec > 0:
+            evt_ref = self._last_ws_event_ts or self._last_ws_connect_ts
+            if evt_ref is not None and (now_ts - evt_ref.timestamp()) > float(self._stale_event_after_sec):
+                return "user_stream_stale_event_with_exposure"
         return None
 
     async def _health_guard_loop(self) -> None:
