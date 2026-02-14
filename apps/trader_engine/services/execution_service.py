@@ -1037,6 +1037,7 @@ class ExecutionService:
                     enriched_intent["symbol"] = symbol
                     enriched_intent["exec_hint"] = exec_hint
                     enriched_intent["notional_usdt_est"] = notional_est
+                    enriched_intent["leverage"] = float(lev_f)
 
                     acc_state = {
                         "wallet_usdt": wallet,
