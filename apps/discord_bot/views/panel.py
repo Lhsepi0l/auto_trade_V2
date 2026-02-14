@@ -541,8 +541,8 @@ class PanelView(discord.ui.View):
             if hasattr(msg, "id"):
                 try:
                     self.message_id = int(msg.id)
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("panel_message_id_parse_failed", extra={"err": type(e).__name__}, exc_info=True)
             await msg.edit(embed=em, view=self)
 
     async def _apply_config(self, pairs: Dict[str, Any]) -> None:

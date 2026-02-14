@@ -20,3 +20,11 @@ build/
 *.shm
 .DS_Store
 FINAL_PRODUCTION_AUDIT_REPORT_*_KST.md
+FINAL_DEPLOY_READINESS_REPORT_*_KST.md
+FINAL_FULL_DEPLOYMENT_GATE_REPORT_*_KST.md
+FINAL_*_REPORT_*_KST.md
+RELEASE_*_REPORT_*_KST.md
+backups/
+data/*.sqlite3
+data/*.wal
+data/*.shm

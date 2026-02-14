@@ -22,6 +22,8 @@ async def _run() -> int:
     # Safety defaults for smoke.
     os.environ["TRADING_DRY_RUN"] = "true"
     os.environ["DRY_RUN_STRICT"] = "false"
+    os.environ["BINANCE_API_KEY"] = ""
+    os.environ["BINANCE_API_SECRET"] = ""
 
     app = create_app(
         test_mode=True,

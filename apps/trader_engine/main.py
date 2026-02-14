@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Mapping, Optional
 from fastapi import FastAPI
 
 from apps.trader_engine.api.routes import router
-from apps.trader_engine.config import load_settings
+from apps.trader_engine.config import load_settings, validate_runtime_settings
 from apps.trader_engine.exchange.binance_usdm import BinanceCredentials, BinanceUSDMClient
 from apps.trader_engine.exchange.time_sync import TimeSync
 from apps.trader_engine.logging_setup import LoggingConfig, setup_logging
@@ -54,6 +54,7 @@ def _build_lifespan(
         settings = load_settings()
         if forced_test_mode is not None:
             settings = settings.model_copy(update={"test_mode": bool(forced_test_mode)})
+        settings = validate_runtime_settings(settings)
         setup_logging(LoggingConfig(level=settings.log_level, log_dir=settings.log_dir, json=settings.log_json, component="engine"))
 
         db = connect(settings.db_path)
@@ -76,6 +77,7 @@ def _build_lifespan(
         _ = pnl_service.get_or_bootstrap()
 
     # Binance USDT-M Futures (조회 전용)
+        has_client_override = bool(test_overrides and test_overrides.get("binance_client") is not None)
         binance_client = BinanceUSDMClient(
             BinanceCredentials(api_key=settings.binance_api_key, api_secret=settings.binance_api_secret),
             base_url=settings.binance_base_url,
@@ -85,7 +87,7 @@ def _build_lifespan(
             retry_backoff=settings.retry_backoff,
             recv_window_ms=settings.binance_recv_window_ms,
         )
-        if test_overrides and test_overrides.get("binance_client") is not None:
+        if has_client_override:
             binance_client = test_overrides["binance_client"]
         snapshot_service = SnapshotService(db=db, client=binance_client, pnl=pnl_service, oplog=oplog)
         binance_service = BinanceService(
@@ -93,7 +95,10 @@ def _build_lifespan(
             allowed_symbols=cfg.universe_symbols,
             spread_wide_pct=cfg.spread_max_pct,
         )
-        if not (settings.test_mode and test_overrides and test_overrides.get("skip_binance_startup")):
+        skip_binance_startup = bool(settings.test_mode)
+        if test_overrides and test_overrides.get("skip_binance_startup"):
+            skip_binance_startup = True
+        if not skip_binance_startup:
             binance_service.startup()
 
         policy = RiskService(
@@ -116,6 +121,13 @@ def _build_lifespan(
             oplog=oplog,
         )
 
+        effective_dry_run = bool(settings.trading_dry_run)
+        effective_dry_run_strict = bool(settings.dry_run_strict)
+        if bool(settings.test_mode) and not has_client_override:
+            # Hard fence: test_mode without an injected fake exchange must never place real orders.
+            effective_dry_run = True
+            effective_dry_run_strict = True
+
         execution_service = ExecutionService(
             client=binance_client,
             engine=engine_service,
@@ -126,8 +138,8 @@ def _build_lifespan(
             sizing=sizing_service,
             allowed_symbols=binance_service.enabled_symbols,
             split_parts=settings.exec_split_parts,
-            dry_run=bool(settings.trading_dry_run),
-            dry_run_strict=bool(settings.dry_run_strict),
+            dry_run=effective_dry_run,
+            dry_run_strict=effective_dry_run_strict,
             oplog=oplog,
             snapshot=snapshot_service,
             order_records=order_record_repo,
@@ -217,11 +229,19 @@ def _build_lifespan(
         except Exception:
             logger.exception("oplog_boot_event_failed")
         try:
-            auto_start_bg = not bool(settings.test_mode and test_overrides and test_overrides.get("disable_background_tasks"))
-            # Recovery lock: block new entries until startup reconcile succeeds.
-            engine_service.set_recovery_lock(True)
-            reconcile_ok = await asyncio.to_thread(reconcile_service.startup_reconcile)
-            logger.info("startup_reconcile_done", extra={"ok": bool(reconcile_ok)})
+            auto_start_bg = not bool(settings.test_mode)
+            if test_overrides and test_overrides.get("disable_background_tasks"):
+                auto_start_bg = False
+            reconcile_ok = True
+            if bool(settings.test_mode):
+                # In test_mode, do not touch private account endpoints.
+                engine_service.set_recovery_lock(False)
+                logger.info("startup_reconcile_skipped", extra={"reason": "test_mode"})
+            else:
+                # Recovery lock: block new entries until startup reconcile succeeds.
+                engine_service.set_recovery_lock(True)
+                reconcile_ok = await asyncio.to_thread(reconcile_service.startup_reconcile)
+                logger.info("startup_reconcile_done", extra={"ok": bool(reconcile_ok)})
             if auto_start_bg:
                 if bool(settings.scheduler_enabled):
                     scheduler.start()
@@ -287,6 +307,7 @@ def main() -> int:
     if not args.api:
         # Simple non-server boot: initializes DB + defaults then exits.
         settings = load_settings()
+        settings = validate_runtime_settings(settings)
         setup_logging(LoggingConfig(level=settings.log_level, log_dir=settings.log_dir, json=settings.log_json, component="engine"))
         db = connect(settings.db_path)
         migrate(db)

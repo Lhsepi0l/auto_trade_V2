@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+import logging
 import time
 from typing import Any, Dict, Mapping, Optional
 
 from apps.trader_engine.domain.models import RiskConfig
 from apps.trader_engine.exchange.binance_usdm import BinanceUSDMClient
+
+logger = logging.getLogger(__name__)
 
 
 def _dec(x: Any) -> Decimal:
@@ -79,7 +82,7 @@ class SizingService:
                 return
         except Exception:
             # Best-effort pre-warm only.
-            pass
+            logger.exception("sizing_refresh_filters_failed")
         if self._filters_last_refresh_time is None:
             self._filters_last_refresh_time = now
 
@@ -94,8 +97,8 @@ class SizingService:
                 self._filters_cache[sym] = f
                 self._filters_last_refresh_time = time.time()
                 return f
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sizing_symbol_filters_fetch_failed", extra={"symbol": sym, "err": type(e).__name__}, exc_info=True)
         return {}
 
     def _fetch_available_usdt(self) -> float:
@@ -109,8 +112,8 @@ class SizingService:
                     return avail
                 if wallet > 0.0:
                     return wallet
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sizing_fetch_balance_failed", extra={"err": type(e).__name__}, exc_info=True)
 
         # Fallback: account-like payload if the client provides it.
         try:
@@ -136,8 +139,8 @@ class SizingService:
                                 return avail
                             if wallet > 0.0:
                                 return wallet
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sizing_fetch_balance_fallback_failed", extra={"err": type(e).__name__}, exc_info=True)
 
         return 0.0
 
@@ -400,8 +403,8 @@ class SizingService:
                         stop_distance_pct=sd,
                         capped_by="min_notional",
                     )
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("sizing_min_notional_check_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
 
         return SizingResult(
             available_usdt=avail,

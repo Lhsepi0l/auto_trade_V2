@@ -420,8 +420,8 @@ class ExecutionService:
         if self._pnl:
             try:
                 self._pnl.set_last_block_reason(reason)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("pnl_set_last_block_reason_failed", extra={"reason": reason, "err": type(e).__name__}, exc_info=True)
         return out
 
     def _budget_guard(
@@ -659,8 +659,8 @@ class ExecutionService:
         # Any entry path should resync time once (keeps signed requests stable).
         try:
             self._client.refresh_time_offset()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("refresh_time_offset_failed", extra={"err": type(e).__name__}, exc_info=True)
 
         op = str(intent.get("op") or "ENTER").upper()
         event_kind = "REBALANCE" if op == "REBALANCE" else "ENTER"
@@ -729,8 +729,12 @@ class ExecutionService:
                 if self._pnl:
                     try:
                         self._pnl.set_last_block_reason(str(blocked_out.get("block_reason") or "BUDGET_BLOCKED"))
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "pnl_set_last_block_reason_failed",
+                            extra={"reason": str(blocked_out.get("block_reason") or "BUDGET_BLOCKED"), "err": type(e).__name__},
+                            exc_info=True,
+                        )
                 return blocked_out
 
             # DRY_RUN: do not place NEW entry/rebalance orders. Return a simulated result + notify.
@@ -765,8 +769,12 @@ class ExecutionService:
                 if self._pnl:
                     try:
                         self._pnl.set_last_block_reason("dry_run_enabled")
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "pnl_set_last_block_reason_failed",
+                            extra={"reason": "dry_run_enabled", "err": type(e).__name__},
+                            exc_info=True,
+                        )
                 sim = {
                     "symbol": symbol,
                     "hint": exec_hint.value,
@@ -930,8 +938,12 @@ class ExecutionService:
                 if self._pnl:
                     try:
                         self._pnl.set_last_block_reason(str(blocked_live.get("block_reason") or "BUDGET_BLOCKED"))
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "pnl_set_last_block_reason_failed",
+                            extra={"reason": str(blocked_live.get("block_reason") or "BUDGET_BLOCKED"), "err": type(e).__name__},
+                            exc_info=True,
+                        )
                 return blocked_live
 
             try:
@@ -1080,8 +1092,8 @@ class ExecutionService:
                     if self._pnl:
                         try:
                             self._pnl.set_last_block_reason("risk_guard_failed")
-                        except Exception:
-                            pass
+                        except Exception as ie:  # noqa: BLE001
+                            logger.warning("pnl_set_last_block_reason_failed", extra={"reason": "risk_guard_failed", "err": type(ie).__name__}, exc_info=True)
                     raise ExecutionRejected("risk_guard_failed") from e
 
             # Safety: clear any stale open orders for the target symbol before a new entry.
@@ -1136,8 +1148,8 @@ class ExecutionService:
                         from datetime import datetime, timezone
 
                         self._pnl.set_last_entry(symbol=symbol, at=datetime.now(tz=timezone.utc))
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("pnl_set_last_entry_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
                 out = {"symbol": symbol, "hint": exec_hint.value, "intent_id": intent_id, "orders": [_safe_order(order)]}
                 self._oplog_execution_from_order(
                     intent_id=intent_id,
@@ -1196,8 +1208,8 @@ class ExecutionService:
                         from datetime import datetime, timezone
 
                         self._pnl.set_last_entry(symbol=symbol, at=datetime.now(tz=timezone.utc))
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("pnl_set_last_entry_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
                 self._emit(
                     event_kind,
                     {
@@ -1248,8 +1260,8 @@ class ExecutionService:
                         from datetime import datetime, timezone
 
                         self._pnl.set_last_entry(symbol=symbol, at=datetime.now(tz=timezone.utc))
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("pnl_set_last_entry_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
                 self._emit(
                     event_kind,
                     {
@@ -1433,8 +1445,12 @@ class ExecutionService:
                         closed_symbol = sym
                         try:
                             closed_qty_total += abs(float(so.get("executed_qty") or 0.0))
-                        except Exception:
-                            pass
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                "panic_closed_qty_parse_failed",
+                                extra={"symbol": sym, "executed_qty": so.get("executed_qty"), "err": type(e).__name__},
+                                exc_info=True,
+                            )
                     except Exception as e:  # noqa: BLE001
                         close_ok = False
                         errors.append(f"close:{sym}:{type(e).__name__}:{e}")
@@ -1602,8 +1618,8 @@ class ExecutionService:
                 # Not fully filled within timeout -> cancel and capture partial fill if any.
                 try:
                     _ = self._client.cancel_all_open_orders(symbol=symbol)
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("limit_timeout_cancel_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
                 try:
                     o2 = self._client.get_order(symbol=symbol, order_id=oid)
                     orders.append(_safe_order(o2))

@@ -82,8 +82,8 @@ class RiskService:
             # Persist cooldown cleared (best-effort).
             try:
                 self._pnl.set_cooldown_until(cooldown_until=None)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("risk_cooldown_clear_persist_failed", extra={"err": type(e).__name__}, exc_info=True)
 
         if isinstance(cd_until, datetime) and now >= cd_until:
             if self._engine.get_state().state == EngineState.COOLDOWN:
@@ -91,8 +91,8 @@ class RiskService:
             # Persist cooldown cleared (best-effort).
             try:
                 self._pnl.set_cooldown_until(cooldown_until=None)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("risk_cooldown_clear_persist_failed", extra={"err": type(e).__name__}, exc_info=True)
 
         # Daily loss / drawdown checks (percent units).
         daily_pnl_pct = float(pnl_state.get("daily_pnl_pct") or 0.0)
@@ -124,8 +124,8 @@ class RiskService:
             until = now + timedelta(hours=float(cfg.cooldown_hours))
             try:
                 self._pnl.set_cooldown_until(cooldown_until=until)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("risk_cooldown_set_persist_failed", extra={"err": type(e).__name__}, exc_info=True)
             self._engine.set_state(EngineState.COOLDOWN)
             return Decision(kind="BLOCK", reason="lose_streak_cooldown", until=until)
 

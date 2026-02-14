@@ -71,14 +71,14 @@ async def _safe_defer(interaction: discord.Interaction) -> bool:
             cmd = getattr(getattr(interaction, "command", None), "name", None)
             created = getattr(interaction, "created_at", None)
             logger.warning("discord_unknown_interaction", extra={"command": cmd, "created_at": str(created)})
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("discord_unknown_interaction_log_failed", extra={"err": type(e).__name__}, exc_info=True)
         try:
             ch = interaction.channel
             if ch is not None and hasattr(ch, "send"):
                 await ch.send("응답 시간이 초과되었습니다. 명령어를 다시 시도해 주세요.")
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("discord_unknown_interaction_notify_failed", extra={"err": type(e).__name__}, exc_info=True)
         return False
 
 

@@ -83,5 +83,31 @@ class TraderSettings(BaseSettings):
         return [s.strip().upper() for s in self.allowed_symbols.split(",") if s.strip()]
 
 
+class SettingsValidationError(ValueError):
+    """Raised when runtime settings violate safety requirements."""
+
+
+def validate_runtime_settings(settings: TraderSettings) -> TraderSettings:
+    api_key = str(settings.binance_api_key or "").strip()
+    api_secret = str(settings.binance_api_secret or "").strip()
+    if bool(settings.test_mode):
+        if api_key or api_secret:
+            raise SettingsValidationError(
+                "TEST_MODE=true requires BINANCE_API_KEY/BINANCE_API_SECRET to be empty for strict isolation."
+            )
+        return settings
+
+    missing: List[str] = []
+    if not api_key:
+        missing.append("BINANCE_API_KEY")
+    if not api_secret:
+        missing.append("BINANCE_API_SECRET")
+    if missing:
+        raise SettingsValidationError(
+            f"Missing required env vars in non-test mode: {', '.join(missing)}"
+        )
+    return settings
+
+
 def load_settings() -> TraderSettings:
     return TraderSettings()

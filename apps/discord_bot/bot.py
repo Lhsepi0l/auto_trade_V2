@@ -51,8 +51,8 @@ class RemoteBot(commands.Bot):
     async def close(self) -> None:
         try:
             await self.api.aclose()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("discord_api_close_failed", extra={"err": type(e).__name__}, exc_info=True)
         await super().close()
 
 

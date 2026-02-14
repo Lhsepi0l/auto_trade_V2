@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,8 +37,8 @@ def _terminate(p: ManagedProcess, *, force_after_sec: float = 5.0) -> None:
         time.sleep(0.1)
     try:
         p.proc.kill()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("run_all_kill_failed", extra={"name": p.name, "err": type(e).__name__}, exc_info=True)
 
 
 def main() -> int:
@@ -61,8 +64,8 @@ def main() -> int:
             continue
         try:
             signal.signal(s, _request_stop)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("run_all_signal_hook_failed", extra={"signal": str(s), "err": type(e).__name__}, exc_info=True)
 
     try:
         if not args.bot_only:
