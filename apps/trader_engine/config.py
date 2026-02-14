@@ -24,6 +24,8 @@ class TraderSettings(BaseSettings):
 
     api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=8000)
+    instance_lock_path: str = Field(default="./run/engine.lock", description="Single-instance lock file path")
+    allow_multi_instance: bool = Field(default=False, description="Dangerous override to skip single-instance lock")
 
     # Exchange settings (Binance USDT-M Futures; 조회 전용)
     binance_api_key: str = Field(default="")

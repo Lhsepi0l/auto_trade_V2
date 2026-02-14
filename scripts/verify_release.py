@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,72 @@ def _backup_self_test() -> None:
     print("[PASS] backup self-test")
 
 
+def _single_instance_lock_self_test() -> None:
+    print("[STEP] single-instance lock self-test")
+    root = Path(tempfile.mkdtemp(prefix="verify_single_instance_"))
+    lock_path = root / "engine.lock"
+    ready_path = root / "ready.flag"
+    holder = None
+    try:
+        holder_code = (
+            "import sys, time\n"
+            "from pathlib import Path\n"
+            "repo = Path(sys.argv[1])\n"
+            "lock_path = Path(sys.argv[2])\n"
+            "ready_path = Path(sys.argv[3])\n"
+            "if str(repo) not in sys.path:\n"
+            "    sys.path.insert(0, str(repo))\n"
+            "from apps.trader_engine.services.single_instance import acquire_lock\n"
+            "acquire_lock(str(lock_path))\n"
+            "ready_path.write_text('ready', encoding='utf-8')\n"
+            "print('LOCK_HELD_READY', flush=True)\n"
+            "time.sleep(5)\n"
+        )
+        holder = subprocess.Popen(
+            [sys.executable, "-c", holder_code, str(ROOT), str(lock_path), str(ready_path)],
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if ready_path.exists():
+                break
+            if holder.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        if not ready_path.exists():
+            out, err = holder.communicate(timeout=1)
+            raise RuntimeError(f"single-instance holder setup failed: stdout={out!r} stderr={err!r}")
+
+        from apps.trader_engine.services.single_instance import acquire_lock, release_lock
+
+        try:
+            acquire_lock(str(lock_path))
+            release_lock()
+            raise RuntimeError("single-instance lock accepted second holder")
+        except RuntimeError as e:
+            if "SINGLE_INSTANCE_LOCK_HELD" not in str(e):
+                raise RuntimeError(f"unexpected single-instance lock error: {e}") from e
+    finally:
+        if holder is not None and holder.poll() is None:
+            holder.terminate()
+            try:
+                holder.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                holder.kill()
+                holder.wait(timeout=2)
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+        if root.exists():
+            raise RuntimeError(f"single-instance lock self-test cleanup failed: {root}")
+
+    print("[PASS] single-instance lock self-test")
+
+
 def _ensure_clean_verify_artifacts() -> None:
     for rel in (".tmp", "tmp"):
         p = ROOT / rel
@@ -91,6 +158,7 @@ def main() -> int:
         _run_step("pytest not e2e", [sys.executable, "-m", "pytest", "-m", "not e2e"])
         _run_step("pytest all", [sys.executable, "-m", "pytest"])
         _run_step("smoke test mode", [sys.executable, "scripts/smoke_test_mode.py"], expect_token="SMOKE_OK")
+        _single_instance_lock_self_test()
         _backup_self_test()
         _ensure_clean_verify_artifacts()
         print("VERIFY_OK")

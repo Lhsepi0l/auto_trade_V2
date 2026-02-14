@@ -30,6 +30,7 @@ from apps.trader_engine.services.user_stream_service import UserStreamService
 from apps.trader_engine.services.watchdog_service import WatchdogService
 from apps.trader_engine.services.oplog import OperationalLogger
 from apps.trader_engine.services.snapshot_service import SnapshotService
+from apps.trader_engine.services.single_instance import acquire_lock
 from apps.trader_engine.storage.db import close, connect, migrate
 from apps.trader_engine.storage.repositories import (
     EngineStateRepo,
@@ -56,6 +57,17 @@ def _build_lifespan(
             settings = settings.model_copy(update={"test_mode": bool(forced_test_mode)})
         settings = validate_runtime_settings(settings)
         setup_logging(LoggingConfig(level=settings.log_level, log_dir=settings.log_dir, json=settings.log_json, component="engine"))
+
+        if bool(settings.allow_multi_instance):
+            logger.warning("single_instance_lock_skipped", extra={"lock_path": settings.instance_lock_path})
+            instance_lock = None
+        else:
+            try:
+                instance_lock = acquire_lock(settings.instance_lock_path)
+            except RuntimeError:
+                logger.error("single_instance_lock_failed", extra={"lock_path": settings.instance_lock_path}, exc_info=True)
+                raise
+            logger.info("single_instance_lock_acquired", extra={"lock_path": settings.instance_lock_path})
 
         db = connect(settings.db_path)
         migrate(db)
@@ -201,6 +213,8 @@ def _build_lifespan(
 
         app.state.settings = settings
         app.state.test_mode = bool(settings.test_mode)
+        app.state.instance_lock = instance_lock
+        app.state.instance_lock_path = settings.instance_lock_path
         app.state.notifier = notifier
         app.state.db = db
         app.state.engine_service = engine_service

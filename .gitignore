@@ -32,3 +32,4 @@ data/*.shm
 tmp/
 FINAL_POSTFIX_*
 FINAL_FULL_*
+run/
