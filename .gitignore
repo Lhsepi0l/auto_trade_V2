@@ -28,3 +28,7 @@ backups/
 data/*.sqlite3
 data/*.wal
 data/*.shm
+.tmp/
+tmp/
+FINAL_POSTFIX_*
+FINAL_FULL_*
