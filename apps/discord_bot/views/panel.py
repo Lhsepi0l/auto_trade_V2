@@ -191,8 +191,8 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
         required=True,
     )
     max_notional_pct = discord.ui.TextInput(
-        label="최대 명목 비율 0~100 (max_notional_pct)",
-        placeholder="예: 50",
+        label="최대 포지션 배수(1배=100) (max_notional_pct)",
+        placeholder="예: 10배=10x=1000, 20배=20x=2000",
         required=True,
     )
     per_trade_risk_pct = discord.ui.TextInput(

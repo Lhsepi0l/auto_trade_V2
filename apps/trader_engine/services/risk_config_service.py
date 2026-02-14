@@ -188,6 +188,33 @@ class RiskConfigService:
                 raise ValueError("invalid_atr_trail_timeframe")
             return v
 
+        if key == RiskConfigKey.max_notional_pct:
+            txt = value.strip().lower().replace(" ", "")
+            # Friendly inputs:
+            # - 100 / 1000 / 2000 (percent of equity notionals)
+            # - 10x / x10 / 10배 (equity multiple => *100)
+            if txt.endswith("%"):
+                txt = txt[:-1]
+            if txt.endswith("x"):
+                try:
+                    return float(txt[:-1]) * 100.0
+                except Exception as e:
+                    raise ValueError("invalid_max_notional_pct_multiple") from e
+            if txt.startswith("x"):
+                try:
+                    return float(txt[1:]) * 100.0
+                except Exception as e:
+                    raise ValueError("invalid_max_notional_pct_multiple") from e
+            if txt.endswith("배"):
+                try:
+                    return float(txt[:-1]) * 100.0
+                except Exception as e:
+                    raise ValueError("invalid_max_notional_pct_multiple") from e
+            try:
+                return float(txt)
+            except Exception as e:
+                raise ValueError("invalid_float_for_max_notional_pct") from e
+
         # Everything else: float
         try:
             return float(value)

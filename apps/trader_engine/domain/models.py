@@ -8,10 +8,12 @@ from apps.trader_engine.domain.enums import CapitalMode, EngineState
 
 
 class RiskConfig(BaseModel):
-    # Percent units: 0..100
+    # Percent-style fields (range depends on each key).
     per_trade_risk_pct: float = Field(ge=0, le=100)
     max_exposure_pct: float | None = Field(default=None, ge=0.01, le=1.0)
-    max_notional_pct: float = Field(ge=0, le=100)
+    # Notional cap in percent of equity.
+    # 100 == equity x1, 1000 == equity x10, 2000 == equity x20.
+    max_notional_pct: float = Field(ge=0, le=5000)
 
     # Hardcap is enforced again in RiskService, but keep it here too.
     max_leverage: float = Field(ge=1, le=50)
