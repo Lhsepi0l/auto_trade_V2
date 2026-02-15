@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import discord
@@ -256,6 +257,18 @@ def _fmt_status_payload(payload: Dict[str, Any]) -> str:
             lines.append(f"스케줄러 최근 액션: {la}")
         if le:
             lines.append(f"스케줄러 최근 오류: {le}")
+        try:
+            tick_sec = float(sched.get("tick_sec") or 1800.0)
+            base_ts = sched.get("tick_finished_at") or sched.get("tick_started_at")
+            if base_ts:
+                next_ts = datetime.fromisoformat(str(base_ts)) + timedelta(seconds=max(tick_sec, 1.0))
+                now = datetime.now(tz=timezone.utc)
+                remaining = int((next_ts - now).total_seconds())
+                if remaining < 0:
+                    remaining = 0
+                lines.append(f"다음 판단까지: {remaining // 60}분 {remaining % 60}초")
+        except Exception:
+            pass
     if last_error:
         lines.append(f"최근 오류: {last_error}")
 

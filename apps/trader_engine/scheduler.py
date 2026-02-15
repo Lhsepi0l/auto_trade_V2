@@ -33,6 +33,7 @@ def _utcnow() -> datetime:
 class SchedulerSnapshot:
     tick_started_at: str
     tick_finished_at: Optional[str]
+    tick_sec: float
     engine_state: str
     enabled_symbols: List[str]
 
@@ -121,6 +122,7 @@ class TraderScheduler:
         snap = SchedulerSnapshot(
             tick_started_at=started,
             tick_finished_at=None,
+            tick_sec=self._tick_sec,
             engine_state=st.value,
             enabled_symbols=enabled,
             candidate=None,
@@ -152,6 +154,7 @@ class TraderScheduler:
             snap = SchedulerSnapshot(
                 tick_started_at=started,
                 tick_finished_at=None,
+                tick_sec=self._tick_sec,
                 engine_state=st.value,
                 enabled_symbols=enabled,
                 candidate=None,

@@ -138,6 +138,7 @@ class AiSignalSchema(BaseModel):
 class SchedulerSnapshotSchema(BaseModel):
     tick_started_at: str
     tick_finished_at: Optional[str] = None
+    tick_sec: float = 1800.0
     engine_state: str
     enabled_symbols: List[str]
     candidate: Optional[CandidateSchema] = None
