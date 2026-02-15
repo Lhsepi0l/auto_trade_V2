@@ -76,6 +76,22 @@ def _fmt_dt(v: Any) -> str:
     return str(v) if v is not None else "-"
 
 
+def _to_float(v: Any) -> float | None:
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _side_to_ko(side: str) -> str:
+    s = str(side or "").upper()
+    if s == "BUY":
+        return "롱(매수)"
+    if s == "SELL":
+        return "숏(매도)"
+    return s or "-"
+
+
 def _decision_reason_ko(reason: str) -> str:
     table = {
         "no_candidate": "진입 후보가 없어 대기합니다.",
@@ -114,7 +130,46 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         side = str((detail or {}).get("side") or (detail or {}).get("direction") or "")
         qty = (detail or {}).get("qty")
         price = (detail or {}).get("price_ref")
-        return f"[EVENT] {kind} {symbol} {side} qty={_fmt_float(qty)} price={_fmt_float(price, 4)}"
+        qty_f = _to_float(qty)
+        price_f = _to_float(price)
+        notional = (qty_f * price_f) if (qty_f is not None and price_f is not None) else None
+        action = "신규 진입" if kind == "ENTER" else "리밸런싱 진입"
+        if notional is not None:
+            return (
+                f"[체결 시도] {action}: {symbol} {_side_to_ko(side)} | "
+                f"수량 {_fmt_float(qty)} | 기준가 {_fmt_float(price, 4)} | "
+                f"주문금액 약 {_fmt_float(notional, 2)} USDT"
+            )
+        return (
+            f"[체결 시도] {action}: {symbol} {_side_to_ko(side)} | "
+            f"수량 {_fmt_float(qty)} | 기준가 {_fmt_float(price, 4)}"
+        )
+
+    if kind == "FILL":
+        side = str((detail or {}).get("side") or "")
+        qty = (detail or {}).get("qty")
+        price = (detail or {}).get("price_ref")
+        realized = (detail or {}).get("realized_pnl")
+        qty_f = _to_float(qty)
+        price_f = _to_float(price)
+        notional = (qty_f * price_f) if (qty_f is not None and price_f is not None) else None
+        if notional is not None:
+            return (
+                f"[체결 완료] {symbol} {_side_to_ko(side)} | "
+                f"수량 {_fmt_float(qty)} | 체결가 {_fmt_float(price, 4)} | "
+                f"체결금액 약 {_fmt_float(notional, 2)} USDT | "
+                f"실현손익 {_fmt_float(realized, 4)} USDT"
+            )
+        return (
+            f"[체결 완료] {symbol} {_side_to_ko(side)} | "
+            f"수량 {_fmt_float(qty)} | 체결가 {_fmt_float(price, 4)} | "
+            f"실현손익 {_fmt_float(realized, 4)} USDT"
+        )
+
+    if kind == "ACCOUNT_UPDATE":
+        positions_count = (detail or {}).get("positions_count")
+        balances_count = (detail or {}).get("balances_count")
+        return f"[계정 업데이트] 포지션 {positions_count}건, 잔고 {balances_count}건 반영"
 
     if kind in {"EXIT", "TAKE_PROFIT", "STOP_LOSS", "WATCHDOG_SHOCK", "TRAILING_PCT", "TRAILING_ATR"}:
         reason = str((detail or {}).get("reason") or kind)
