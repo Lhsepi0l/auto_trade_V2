@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from apps.trader_engine.domain.enums import EngineState
 from apps.trader_engine.api.schemas import (
     CapitalSnapshotSchema,
     CapitalConfigSnapshotSchema,
@@ -347,6 +348,49 @@ def stop(request: Request, engine: EngineService = Depends(_engine_service)) -> 
         return EngineStateSchema(state=row.state, updated_at=row.updated_at)
     except EngineConflict as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=e.message) from e
+
+
+@router.post("/cooldown/clear", response_model=PnLStatusSchema)
+def clear_cooldown(
+    request: Request,
+    engine: EngineService = Depends(_engine_service),
+    pnl: PnLService = Depends(_pnl_service),
+    binance: BinanceService = Depends(_binance_service),
+) -> PnLStatusSchema:
+    st = pnl.clear_risk_guards()
+    try:
+        if engine.get_state().state == EngineState.COOLDOWN:
+            engine.start()
+    except Exception:
+        logger.exception("cooldown_clear_engine_resume_failed")
+
+    bal = (binance.get_status().get("usdt_balance") or {})
+    wallet = float(bal.get("wallet") or 0.0)
+    m = pnl.compute_metrics(st=st, equity_usdt=wallet)
+
+    oplog = _oplog(request)
+    if oplog:
+        try:
+            oplog.log_event("COOLDOWN_CLEAR", {"action": "cooldown_clear", "reason": "api"})
+        except Exception:
+            logger.exception("oplog_cooldown_clear_failed")
+
+    return PnLStatusSchema(
+        day=st.day,
+        daily_realized_pnl=float(st.daily_realized_pnl),
+        equity_peak=float(st.equity_peak),
+        daily_pnl_pct=float(m.daily_pnl_pct),
+        drawdown_pct=float(m.drawdown_pct),
+        lose_streak=int(st.lose_streak),
+        cooldown_until=st.cooldown_until,
+        last_block_reason=st.last_block_reason,
+        last_fill_symbol=st.last_fill_symbol,
+        last_fill_side=st.last_fill_side,
+        last_fill_qty=st.last_fill_qty,
+        last_fill_price=st.last_fill_price,
+        last_fill_realized_pnl=st.last_fill_realized_pnl,
+        last_fill_time=st.last_fill_time,
+    )
 
 
 @router.post("/panic", response_model=PanicResponseSchema)

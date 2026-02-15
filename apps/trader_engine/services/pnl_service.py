@@ -158,6 +158,21 @@ class PnLService:
         self._repo.upsert(st)
         return st
 
+    def clear_risk_guards(self) -> PnLState:
+        """Clear cooldown/streak related guards for manual operator override."""
+        st = self.get_or_bootstrap()
+        now = _utcnow()
+        st = st.model_copy(
+            update={
+                "lose_streak": 0,
+                "cooldown_until": None,
+                "last_block_reason": None,
+                "updated_at": now,
+            }
+        )
+        self._repo.upsert(st)
+        return st
+
     def compute_metrics(self, *, st: PnLState, equity_usdt: float) -> PnLMetrics:
         equity = float(equity_usdt or 0.0)
         if equity <= 0.0:

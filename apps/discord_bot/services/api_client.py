@@ -93,6 +93,9 @@ class TraderAPIClient:
     async def panic(self) -> Any:
         return await self._request_json("POST", "/panic")
 
+    async def clear_cooldown(self) -> Any:
+        return await self._request_json("POST", "/cooldown/clear")
+
     async def set_value(self, key: str, value: str) -> Any:
         return await self._request_json("POST", "/set", json_body={"key": key, "value": value})
 
