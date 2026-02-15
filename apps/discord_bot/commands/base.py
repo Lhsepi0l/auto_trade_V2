@@ -29,6 +29,13 @@ RISK_KEYS: List[str] = [
     "notify_interval_sec",
     "spread_max_pct",
     "allow_market_when_wide_spread",
+    "capital_mode",
+    "capital_pct",
+    "capital_usdt",
+    "margin_budget_usdt",
+    "margin_use_pct",
+    "max_position_notional_usdt",
+    "fee_buffer_pct",
     "universe_symbols",
     "enable_watchdog",
     "watchdog_interval_sec",
@@ -51,6 +58,56 @@ RISK_KEYS: List[str] = [
 ]
 
 PRESETS: List[str] = ["conservative", "normal", "aggressive"]
+PROFILE_KEYS: List[str] = ["recovery_safe", "balanced_20x", "aggressive_50x"]
+
+
+def _profile_payload(name: str, budget_usdt: Optional[float]) -> Dict[str, str]:
+    # One-shot presets for users who want quick batch tuning in Discord.
+    profiles: Dict[str, Dict[str, str]] = {
+        "recovery_safe": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_use_pct": "0.8",
+            "max_leverage": "20",
+            "max_exposure_pct": "0.5",
+            "max_notional_pct": "300",
+            "per_trade_risk_pct": "15",
+            "score_conf_threshold": "0.3",
+            "score_gap_threshold": "0.15",
+            "daily_loss_limit_pct": "-0.03",
+            "dd_limit_pct": "-0.12",
+            "cooldown_hours": "6",
+        },
+        "balanced_20x": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_use_pct": "0.9",
+            "max_leverage": "20",
+            "max_exposure_pct": "null",
+            "max_notional_pct": "1000",
+            "per_trade_risk_pct": "50",
+            "score_conf_threshold": "0.2",
+            "score_gap_threshold": "0.1",
+            "daily_loss_limit_pct": "-0.05",
+            "dd_limit_pct": "-0.2",
+            "cooldown_hours": "2",
+        },
+        "aggressive_50x": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_use_pct": "0.9",
+            "max_leverage": "50",
+            "max_exposure_pct": "null",
+            "max_notional_pct": "2000",
+            "per_trade_risk_pct": "100",
+            "score_conf_threshold": "0.1",
+            "score_gap_threshold": "0.1",
+            "daily_loss_limit_pct": "-0.15",
+            "dd_limit_pct": "-0.35",
+            "cooldown_hours": "0",
+        },
+    }
+    payload = dict(profiles[name])
+    if budget_usdt is not None:
+        payload["margin_budget_usdt"] = str(float(budget_usdt))
+    return payload
 
 
 async def _safe_defer(interaction: discord.Interaction) -> bool:
@@ -361,6 +418,40 @@ class RemoteControl(commands.Cog):
         try:
             payload = await self.api.preset(name.value)
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
+        except APIError as e:
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
+        except Exception as e:  # noqa: BLE001
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
+
+
+    @app_commands.command(name="profile", description="리스크/예산 프로필 일괄 적용")
+    @app_commands.describe(
+        name="적용할 프로필",
+        budget_usdt="증거금 예산(선택). 입력 시 margin_budget_usdt 같이 적용",
+    )
+    @app_commands.choices(name=[app_commands.Choice(name=p, value=p) for p in PROFILE_KEYS])
+    async def profile(
+        self,
+        interaction: discord.Interaction,
+        name: app_commands.Choice[str],
+        budget_usdt: Optional[float] = None,
+    ) -> None:
+        if not await _safe_defer(interaction):
+            return
+        try:
+            payload = _profile_payload(name.value, budget_usdt)
+            await self.api.set_config(payload)
+            risk = await self.api.get_risk()
+            lines: List[str] = [
+                f"profile={name.value}",
+                f"max_leverage={risk.get('max_leverage')}",
+                f"margin_budget_usdt={risk.get('margin_budget_usdt')}",
+                f"max_notional_pct={risk.get('max_notional_pct')}",
+                f"per_trade_risk_pct={risk.get('per_trade_risk_pct')}",
+                f"score_conf_threshold={risk.get('score_conf_threshold')}",
+                f"daily_loss_limit_pct={risk.get('daily_loss_limit_pct')}",
+            ]
+            await interaction.followup.send("```text\n" + "\n".join(lines) + "\n```")
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
