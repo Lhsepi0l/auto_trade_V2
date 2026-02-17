@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from apps.trader_engine.domain.enums import Direction, EngineState, ExecHint
+from apps.trader_engine.domain.enums import CapitalMode, Direction, EngineState, ExecHint
 from apps.trader_engine.services.ai_service import AiService, AiSignal
 from apps.trader_engine.services.binance_service import BinanceService
 from apps.trader_engine.services.engine_service import EngineService
@@ -52,7 +52,7 @@ class SchedulerSnapshot:
 
 
 class TraderScheduler:
-    """30m tick strategy loop.
+    """Trading decision loop.
 
     - Always computes scores/snapshots.
     - Only executes when engine state is RUNNING.
@@ -91,28 +91,34 @@ class TraderScheduler:
         self._oplog = oplog
         self._snapshot = snapshot
 
-        self._tick_sec = float(tick_sec)
         self._reverse_threshold = float(reverse_threshold)
         self._last_status_notify_ts = 0.0
+        self._tick_change_event = asyncio.Event()
+        self._tick_min_sec = 30.0
+        self._tick_sec = max(float(tick_sec), self._tick_min_sec)
 
         self._task: Optional[asyncio.Task[None]] = None
         self._stop = asyncio.Event()
         self.snapshot: Optional[SchedulerSnapshot] = None
+        self._start_requested = False
 
     def start(self) -> None:
         if self._task and not self._task.done():
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="trader_scheduler")
+        self._start_requested = True
 
     async def stop(self) -> None:
         self._stop.set()
+        self._tick_change_event.set()
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=5.0)
             except asyncio.TimeoutError:
                 self._task.cancel()
         self._task = None
+        self._start_requested = False
 
     async def tick_once(self) -> SchedulerSnapshot:
         """Run exactly one decision tick (test/debug helper)."""
@@ -144,6 +150,25 @@ class TraderScheduler:
             snap.tick_finished_at = _utcnow().isoformat()
             self.snapshot = snap
         return snap
+
+    @property
+    def tick_sec(self) -> float:
+        return self._tick_sec
+
+    def is_running(self) -> bool:
+        return bool(self._start_requested and self._task and not self._task.done())
+
+    def set_tick_sec(self, tick_sec: float) -> float:
+        tick_sec_f = float(tick_sec)
+        if tick_sec_f < self._tick_min_sec:
+            raise ValueError(f"tick_sec must be >= {self._tick_min_sec:g}")
+        self._tick_sec = tick_sec_f
+        self._tick_change_event.set()
+        logger.info(
+            "scheduler_tick_interval_updated",
+            extra={"tick_sec": tick_sec_f, "running": self.is_running()},
+        )
+        return self._tick_sec
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -185,7 +210,13 @@ class TraderScheduler:
         while time.time() < end:
             if self._stop.is_set():
                 return
-            await asyncio.sleep(min(1.0, end - time.time()))
+            wait_sec = min(1.0, max(0.0, end - time.time()))
+            try:
+                await asyncio.wait_for(self._tick_change_event.wait(), timeout=wait_sec)
+            except asyncio.TimeoutError:
+                continue
+            self._tick_change_event.clear()
+            return
 
     async def _tick(self, snap: SchedulerSnapshot) -> None:
         st = self._engine.get_state().state
@@ -325,7 +356,10 @@ class TraderScheduler:
         # Periodic status notify (default 30m via risk_config.notify_interval_sec).
         if self._snapshot:
             try:
-                self._snapshot.maybe_capture_periodic(cycle_id=str(snap.tick_started_at), interval_sec=1800)
+                self._snapshot.maybe_capture_periodic(
+                    cycle_id=str(snap.tick_started_at),
+                    interval_sec=max(int(cfg.notify_interval_sec), 10),
+                )
             except Exception:
                 logger.exception("snapshot_periodic_failed")
         await self._maybe_send_status(
@@ -376,35 +410,45 @@ class TraderScheduler:
         dir_s = str(dec.enter_direction or "").upper()
         direction = Direction.LONG if dir_s == "LONG" else Direction.SHORT
 
-        # Compute sizing: use 30m ATR% as stop distance proxy (fallback 1%).
-        ss = scores.get(target_symbol)
-        atr_pct = 1.0
-        if ss and "30m" in ss.timeframes:
-            atr_pct = float(ss.timeframes["30m"].atr_pct or 1.0)
-        stop_distance_pct = max(float(atr_pct), 0.5)
+        capital_mode = str(cfg.capital_mode.value if hasattr(cfg.capital_mode, "value") else cfg.capital_mode).upper()
+        use_margin_budget_mode = capital_mode == CapitalMode.MARGIN_BUDGET_USDT.value
+        if use_margin_budget_mode:
+            size = await asyncio.to_thread(
+                self._sizing.compute_live,
+                symbol=target_symbol,
+                risk=cfg,
+                leverage=cfg.max_leverage,
+            )
+        else:
+            # Compute sizing: use 30m ATR% as stop distance proxy (fallback 1%).
+            ss = scores.get(target_symbol)
+            atr_pct = 1.0
+            if ss and "30m" in ss.timeframes:
+                atr_pct = float(ss.timeframes["30m"].atr_pct or 1.0)
+            stop_distance_pct = max(float(atr_pct), 0.5)
 
-        # Price reference: prefer book mid from spreads, else last close.
-        bt = (b.get("spreads") or {}).get(target_symbol) if isinstance(b, dict) else None
-        bid = float((bt or {}).get("bid") or 0.0) if isinstance(bt, dict) else 0.0
-        ask = float((bt or {}).get("ask") or 0.0) if isinstance(bt, dict) else 0.0
-        price = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else 0.0
-        if price <= 0.0:
-            last = await asyncio.to_thread(self._market_data.get_last_close, symbol=target_symbol, interval="30m", limit=2)
-            price = float(last or 0.0)
-        if price <= 0.0:
-            snap.last_error = "price_unavailable"
-            return
+            # Price reference: prefer book mid from spreads, else last close.
+            bt = (b.get("spreads") or {}).get(target_symbol) if isinstance(b, dict) else None
+            bid = float((bt or {}).get("bid") or 0.0) if isinstance(bt, dict) else 0.0
+            ask = float((bt or {}).get("ask") or 0.0) if isinstance(bt, dict) else 0.0
+            price = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else 0.0
+            if price <= 0.0:
+                last = await asyncio.to_thread(self._market_data.get_last_close, symbol=target_symbol, interval="30m", limit=2)
+                price = float(last or 0.0)
+            if price <= 0.0:
+                snap.last_error = "price_unavailable"
+                return
 
-        size = await asyncio.to_thread(
-            self._sizing.compute,
-            symbol=target_symbol,
-            risk=cfg,
-            equity_usdt=equity,
-            available_usdt=available,
-            price=price,
-            stop_distance_pct=stop_distance_pct,
-            existing_exposure_notional_usdt=0.0,
-        )
+            size = await asyncio.to_thread(
+                self._sizing.compute,
+                symbol=target_symbol,
+                risk=cfg,
+                equity_usdt=equity,
+                available_usdt=available,
+                price=price,
+                stop_distance_pct=stop_distance_pct,
+                existing_exposure_notional_usdt=0.0,
+            )
         if size.target_notional_usdt <= 0 or size.target_qty <= 0:
             snap.last_error = f"sizing_blocked:{size.capped_by or 'unknown'}"
             return

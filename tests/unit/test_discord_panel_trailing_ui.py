@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from apps.discord_bot.views.panel import ADMIN_ONLY_MSG, PanelView, TrailingConfigModal
+from apps.discord_bot.views.panel import ADMIN_ONLY_MSG, AdvancedPanelView, TrailingConfigModal
+from apps.discord_bot.ui_labels import TRAILING_BUTTON_LABEL
 
 
 class _FakeResponse:
@@ -56,10 +57,9 @@ class _FakeInteraction:
         self.response = _FakeResponse()
         self.followup = _FakeFollowup()
         self.message = _FakeMessage()
-        self.channel = None
 
 
-def _find_button(view: PanelView, label: str) -> discord.ui.Button:
+def _find_button(view: AdvancedPanelView, label: str) -> discord.ui.Button:
     for item in view.children:
         if isinstance(item, discord.ui.Button) and str(item.label) == label:
             return item
@@ -68,10 +68,12 @@ def _find_button(view: PanelView, label: str) -> discord.ui.Button:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_trailing_button_exists() -> None:
-    api = SimpleNamespace(get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}))
-    view = PanelView(api=api)  # type: ignore[arg-type]
-    _find_button(view, "트레일링설정")
+async def test_trailing_button_exists_in_advanced_view() -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}})
+    )
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    _find_button(view, TRAILING_BUTTON_LABEL)
 
 
 @pytest.mark.unit
@@ -96,11 +98,11 @@ async def test_trailing_modal_submit_calls_set_config(monkeypatch: pytest.Monkey
             }
         ),
     )
-    view = PanelView(api=api)  # type: ignore[arg-type]
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
 
     it_click = _FakeInteraction()
-    await _find_button(view, "트레일링설정").callback(it_click)
+    await _find_button(view, TRAILING_BUTTON_LABEL).callback(it_click)
     assert isinstance(it_click.response.modal, TrailingConfigModal)
 
     modal = it_click.response.modal
@@ -134,11 +136,11 @@ async def test_trailing_permission_gate_denies_non_admin(monkeypatch: pytest.Mon
         set_config=AsyncMock(),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}, "risk_config": {}}),
     )
-    view = PanelView(api=api)  # type: ignore[arg-type]
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: False)
 
     it = _FakeInteraction()
-    await _find_button(view, "트레일링설정").callback(it)
+    await _find_button(view, TRAILING_BUTTON_LABEL).callback(it)
 
-    assert any(ADMIN_ONLY_MSG in m for m in it.response.messages + it.followup.messages)
+    assert ADMIN_ONLY_MSG in (it.response.messages + it.followup.messages)
     api.set_config.assert_not_awaited()

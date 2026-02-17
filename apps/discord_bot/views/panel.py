@@ -2,20 +2,104 @@
 
 import logging
 import math
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Literal, Optional
 
 import discord
 
-from apps.discord_bot.commands.base import _fmt_status_payload
-from apps.discord_bot.services.api_client import APIError, TraderAPIClient
+from apps.discord_bot.services.api_client import APIError
+from apps.discord_bot.services.contracts import TraderAPI
+from apps.discord_bot.services.formatting import format_status_payload
+from apps.discord_bot.ui_labels import (
+    ADVANCED_TOGGLE_LABEL,
+    EXEC_MODE_SELECT_PLACEHOLDER,
+    MARGIN_BUDGET_BUTTON_LABEL,
+    PANIC_BUTTON_LABEL,
+    RISK_ADVANCED_BUTTON_LABEL,
+    RISK_BASIC_BUTTON_LABEL,
+    SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
+    SIMPLE_PANEL_BUTTON_LABELS,
+    SIMPLE_TOGGLE_LABEL,
+    START_BUTTON_LABEL,
+    STOP_BUTTON_LABEL,
+    TICK_ONCE_BUTTON_LABEL,
+    TRAILING_BUTTON_LABEL,
+)
 
 logger = logging.getLogger(__name__)
 
 ADMIN_ONLY_MSG = "관리자만 조작할 수 있습니다."
-PLACEHOLDER_EXEC_MODE = "실행 모드"
-PLACEHOLDER_BUDGET_MODE = "예산 모드"
-PLACEHOLDER_BUDGET_PRESET = "예산 프리셋"
+HELP_SIMPLE = (
+    "간단 모드 버튼: "
+    + "/".join(
+        [
+            START_BUTTON_LABEL,
+            STOP_BUTTON_LABEL,
+            PANIC_BUTTON_LABEL,
+            TICK_ONCE_BUTTON_LABEL,
+            MARGIN_BUDGET_BUTTON_LABEL,
+            ADVANCED_TOGGLE_LABEL,
+        ]
+    )
+    + " 를 사용할 수 있습니다.\n"
+    + "원하면 고급설정에서 고급 설정(리스크/트레일링/실행모드/스캔 간격)을 열 수 있습니다."
+)
+HELP_ADVANCED = (
+    "고급 모드 버튼: "
+    + "/".join(
+        [
+            RISK_BASIC_BUTTON_LABEL,
+            RISK_ADVANCED_BUTTON_LABEL,
+            TRAILING_BUTTON_LABEL,
+            SIMPLE_TOGGLE_LABEL,
+        ]
+    )
+    + " 와 실행모드/스캔 간격 선택이 같이 표시됩니다."
+)
 
+REASON_HINT_MAP: dict[str, str] = {
+    "no_candidate": "현재 진입 후보가 없습니다.",
+    "vol_shock_no_entry": "변동성 급등 구간이라 신규 진입을 보류합니다.",
+    "confidence_below_threshold": "신뢰도 점수가 기준치보다 낮아 진입하지 않습니다.",
+    "short_not_allowed_regime": "현재 구간은 숏 진입이 제한됩니다.",
+    "enter_candidate": "진입 조건이 맞아 후보를 선택했습니다.",
+    "vol_shock_close": "변동성 급등 구간이라 포지션 종료를 보류합니다.",
+    "profit_hold": "익절 신호가 살아있어 대기 상태입니다.",
+    "same_symbol": "현재 보유 심볼과 동일한 심볼은 중복 진입할 수 없습니다.",
+    "gap_below_threshold": "점수 차이가 기준치보다 작아 대기합니다.",
+    "rebalance_to_better_candidate": "더 나은 후보가 나와 재평가해 이동합니다.",
+    "close_symbol_missing": "종료할 심볼 정보를 찾을 수 없습니다.",
+    "enter_symbol_missing": "진입할 심볼 정보를 찾을 수 없습니다.",
+    "price_unavailable": "가격 데이터를 확인할 수 없습니다.",
+    "BALANCE_UNAVAILABLE": "잔고 조회에 실패했습니다.",
+    "MARKET_DATA_UNAVAILABLE": "마켓 데이터 조회 중 오류가 발생했습니다.",
+    "MARK_PRICE_UNAVAILABLE": "마켓 가격 조회 중 오류가 발생했습니다.",
+    "BUDGET_TOO_SMALL_FOR_MIN_NOTIONAL": "최소 주문금액보다 작은 값은 사용할 수 없습니다.",
+    "BUDGET_TOO_SMALL_FOR_MIN_QTY": "최소 수량보다 작은 값은 사용할 수 없습니다.",
+    "BUDGET_BLOCKED": "예산으로 주문 계산이 차단되었습니다.",
+    "ENTRY_EXCEEDS_BUDGET_CAP": "주문 크기가 예산 한도보다 큽니다.",
+    "cooldown_active": "현재 쿨다운 상태여서 판단을 보류합니다.",
+    "daily_loss_limit_reached": "일일 손실 제한에 걸렸습니다.",
+    "dd_limit_reached": "DD 제한에 걸렸습니다.",
+    "lose_streak_cooldown": "연속 손실 중이라 일시 정지됩니다.",
+    "equity_unavailable": "자산 데이터(Equity)를 가져올 수 없습니다.",
+    "leverage_above_max_leverage": "레버리지가 허용 범위를 넘었습니다.",
+    "single_asset_rule_violation": "단일 자산 모드에서는 동일 방향 중복 진입이 금지됩니다.",
+    "exposure_above_max_exposure": "총 노출 한도를 넘어 진입할 수 없습니다.",
+    "notional_above_max_notional": "주문 기준금액이 최대 한도를 넘습니다.",
+    "notional_unavailable": "주문 기준금액 계산값이 없습니다.",
+    "per_trade_risk_exceeded": "1회 위험 기준을 넘는 주문입니다.",
+    "book_unavailable_market_disabled": "호가창 데이터가 없습니다.",
+}
+
+REASON_PREFIX_HINTS = {
+    "min_hold_active:": "최소 보유 시간 조건이 활성화되어 있습니다",
+    "sizing_blocked:": "주문 계산이 차단됨",
+    "spread_too_wide_market_disabled:": "스프레드가 너무 넓어 시장가 주문이 비활성입니다",
+    "daily_loss_limit_reached:": "일일 손실 제한에 걸림",
+    "dd_limit_reached:": "DD 제한에 걸림",
+    "notional_": "주문 기준금액이 제한 조건을 벗어났습니다",
+}
 
 def _is_admin(interaction: discord.Interaction) -> bool:
     user = interaction.user
@@ -24,92 +108,193 @@ def _is_admin(interaction: discord.Interaction) -> bool:
     return bool(user.guild_permissions.administrator)
 
 
-def _build_embed(payload: Dict[str, Any]) -> discord.Embed:
-    eng = payload.get("engine_state") or {}
-    pnl = payload.get("pnl") or {}
+def _fmt_money(v: Any, *, digits: int = 4) -> str:
+    try:
+        return f"{float(v):.{digits}f}"
+    except Exception:
+        return str(v)
+
+
+def _parse_iso_to_aware_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _next_decision_eta(payload: Dict[str, Any]) -> str:
     sched = payload.get("scheduler") or {}
-    state = str(eng.get("state", "UNKNOWN"))
+    tick_sec = float(sched.get("tick_sec") or 1800.0)
+    base_ts = sched.get("tick_finished_at") or sched.get("tick_started_at")
+    base = _parse_iso_to_aware_datetime(base_ts)
+    if base is None:
+        return "확인 필요"
+    next_tick = base + timedelta(seconds=max(tick_sec, 1.0))
+    now = datetime.now(timezone.utc)
+    remaining = int((next_tick - now).total_seconds())
+    if remaining < 0:
+        remaining = 0
+    return f"{remaining // 60}분 {remaining % 60}초 후"
+
+
+def _reason_to_human_readable(raw_reason: str) -> str:
+    reason = str(raw_reason).strip()
+    if not reason:
+        return "사유 없음"
+
+    for prefix, msg in REASON_PREFIX_HINTS.items():
+        if reason.startswith(prefix):
+            detail = reason[len(prefix) :].strip()
+            if detail:
+                return f"{msg}: {detail}"
+            return msg
+
+    if reason in REASON_HINT_MAP:
+        return REASON_HINT_MAP[reason]
+
+    return reason
+
+
+def _build_last_result(last_action: str, last_error: str | None) -> tuple[str, str]:
+    if last_error:
+        human = _reason_to_human_readable(last_error)
+        return "BLOCKED", f"사유: {human}"
+    if last_action:
+        return "OK", str(last_action)
+    return "-", "-"
+
+
+def _scan_interval_label(payload: Dict[str, Any]) -> str:
+    sched = payload.get("scheduler") or {}
+    tick_sec = float(sched.get("tick_sec") or 1800.0)
+    if tick_sec <= 0:
+        return "미지정"
+    tick_min = tick_sec / 60.0
+    if tick_min.is_integer():
+        return f"{int(tick_min)}분"
+    if tick_sec < 60:
+        return f"{tick_sec:.0f}초"
+    return f"{tick_sec/60:.1f}분"
+
+
+def _budget_display(payload: Dict[str, Any]) -> tuple[str, str]:
+    cfg = payload.get("config") or {}
+    cap = payload.get("capital_snapshot") or {}
+
+    budget = cap.get("budget_usdt")
+    order_amt = cap.get("notional_usdt")
+
+    if budget is None:
+        mode = str(cfg.get("capital_mode") or "").upper()
+        if mode == "MARGIN_BUDGET_USDT":
+            budget = cfg.get("margin_budget_usdt")
+        elif mode == "FIXED_USDT":
+            budget = cfg.get("capital_usdt")
+        else:
+            budget = cfg.get("capital_pct")
+
+    if order_amt is None and isinstance(cap, dict) and cap.get("used_margin") is not None:
+        # Fallback if API snapshot is incomplete.
+        order_amt = cap.get("budget_usdt")
+
+    return _fmt_money(budget), _fmt_money(order_amt)
+
+
+
+def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, str]:
+    eng = payload.get("engine_state") or {}
     dry_run = bool(payload.get("dry_run", False))
+    state = str(eng.get("state", "UNKNOWN"))
 
-    pos = "-"
-    upnl = "0"
-    if isinstance((payload.get("binance") or {}).get("positions"), dict):
-        for sym, row in (payload.get("binance") or {}).get("positions", {}).items():
-            amt = float((row or {}).get("position_amt") or 0.0)
-            if abs(amt) > 0:
-                pos = f"{sym} amt={amt}"
-                upnl = str((row or {}).get("unrealized_pnl"))
-                break
+    sched = payload.get("scheduler") or {}
+    last_action = str(sched.get("last_action") or "-")
+    last_error = sched.get("last_error")
+    last_status, last_reason = _build_last_result(last_action, str(last_error) if last_error is not None else None)
+    last_result = f"{last_status} - {last_reason}"
 
-    dd = pnl.get("drawdown_pct")
-    daily = pnl.get("daily_pnl_pct")
-    cooldown = pnl.get("cooldown_until")
-    last_dec = sched.get("last_decision_reason")
-    capital = payload.get("capital_snapshot") or {}
-    cap_cfg = payload.get("config") or {}
-    risk_cfg = payload.get("risk_config") or {}
+    decision_hint = f"엔진: {state}\n드라이런: {'ON' if dry_run else 'OFF'}"
+    next_decision = _next_decision_eta(payload)
+    budget, order_amt = _budget_display(payload)
+    margin_line = f"현재 증거금: {budget} USDT"
+    expect_line = f"예상 주문금액: {order_amt} USDT"
+
+    return decision_hint, next_decision, margin_line, expect_line, f"마지막 판단: {last_action}\n마지막 결과: {last_result}"
+
+
+def _build_advanced_lines(payload: Dict[str, Any]) -> list[str]:
+    risk = payload.get("risk_config") or {}
+    cfg = payload.get("config") or {}
     wd = payload.get("watchdog") or {}
 
-    dry_badge = "ON" if dry_run else "OFF"
-    em = discord.Embed(title="오토트레이더 패널", description=f"엔진: **{state}** | DRY_RUN: **{dry_badge}**")
-    em.add_field(name="포지션", value=str(pos), inline=False)
-    em.add_field(name="uPnL / 일간PnL / DD", value=f"{upnl} / {daily} / {dd}", inline=False)
-    em.add_field(name="쿨다운", value=str(cooldown or "-"), inline=True)
-    em.add_field(name="최근 판단", value=str(last_dec or "-"), inline=True)
+    lines = [
+        "리스크: "
+        + ", ".join(
+            [
+                f"레버리지={risk.get('max_leverage')}",
+                f"총노출={risk.get('max_exposure_pct')}",
+                f"최대노출={risk.get('max_notional_pct')}",
+                f"1회위험={risk.get('per_trade_risk_pct')}%",
+            ]
+        ),
+        f"실행모드={cfg.get('exec_mode_default')}",
+        "트레일링="
+        + (
+            f"ON({risk.get('trailing_mode')}, 시작={risk.get('trail_arm_pnl_pct')}%, "
+            f"distance={risk.get('trail_distance_pnl_pct') if risk.get('trailing_mode') == 'PCT' else (wd.get('last_trailing_distance_pct') or '-') }%)"
+        ),
+    ]
+    return lines
 
-    if isinstance(capital, dict) and capital:
-        blocked = bool(capital.get("blocked"))
-        block_reason = str(capital.get("block_reason") or "-")
-        margin_budget = cap_cfg.get("margin_budget_usdt")
-        if margin_budget is None:
-            margin_budget = cap_cfg.get("capital_usdt")
-        cap_lines = [
-            f"Avail USDT: {capital.get('available_usdt')}",
-            f"설정 예산(USDT): {margin_budget}",
-            f"used_margin: {capital.get('used_margin')}",
-            f"leverage: {capital.get('leverage')}",
-            f"notional: {capital.get('notional_usdt')}",
-            f"est_qty: {capital.get('est_qty')}",
-            f"blocked: {blocked}",
-        ]
-        if blocked:
-            cap_lines.append(f"block_reason: {block_reason}")
-        em.add_field(name="자본 스냅샷", value="\n".join(cap_lines), inline=False)
 
-    if isinstance(cap_cfg, dict) and cap_cfg:
-        em.add_field(
-            name="예산 설정",
-            value=(
-                f"mode={cap_cfg.get('capital_mode')} "
-                f"pct={cap_cfg.get('capital_pct')} "
-                f"usdt={cap_cfg.get('capital_usdt')} "
-                f"margin={cap_cfg.get('margin_use_pct')}"
-            ),
-            inline=False,
+def _build_embed(payload: Dict[str, Any], *, mode: Literal["simple", "advanced"] = "simple") -> discord.Embed:
+    payload = payload if isinstance(payload, dict) else {}
+    title = "오토트레이더 패널 (간단)" if mode == "simple" else "오토트레이더 패널 (고급)"
+    em = discord.Embed(title=title)
+    if mode == "simple":
+        em.description = "현재 화면 버튼: " + "/".join(SIMPLE_PANEL_BUTTON_LABELS)
+    else:
+        em.description = (
+            "고급 화면 버튼: "
+            + "/".join(
+                [
+                    RISK_BASIC_BUTTON_LABEL,
+                    RISK_ADVANCED_BUTTON_LABEL,
+                    TRAILING_BUTTON_LABEL,
+                    EXEC_MODE_SELECT_PLACEHOLDER,
+                    SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
+                ]
+            )
         )
+    line1, next_decision, margin_line, order_line, judge_line = _build_simple_lines(payload)
+    em.add_field(name="엔진 상태", value=line1, inline=False)
+    em.add_field(name="다음 판단", value=next_decision, inline=True)
+    em.add_field(name="현재 증거금", value=margin_line, inline=True)
+    em.add_field(name="예상 주문금액", value=order_line, inline=True)
+    em.add_field(name="스캔 간격", value=_scan_interval_label(payload), inline=True)
+    em.add_field(name="마지막 결과", value=judge_line, inline=False)
+    em.add_field(name="한 번에 보기", value=HELP_SIMPLE if mode == "simple" else HELP_ADVANCED, inline=False)
 
-    if isinstance(risk_cfg, dict):
-        trailing_enabled = bool(risk_cfg.get("trailing_enabled", True))
-        trailing_mode = str(risk_cfg.get("trailing_mode") or "PCT").upper()
-        arm_pct = risk_cfg.get("trail_arm_pnl_pct")
-        grace_min = risk_cfg.get("trail_grace_minutes")
-        dist_cfg = risk_cfg.get("trail_distance_pnl_pct")
-        dist_last = wd.get("last_trailing_distance_pct") if isinstance(wd, dict) else None
-        dist_show = dist_last if trailing_mode == "ATR" and dist_last is not None else dist_cfg
-        peak = wd.get("last_peak_pnl_pct") if isinstance(wd, dict) else None
-        upnl_pct = payload.get("last_unrealized_pnl_pct")
-        tr_lines = [
-            f"enabled={trailing_enabled}",
-            f"mode={trailing_mode}",
-            f"arm%={arm_pct}",
-            f"distance%={dist_show}",
-            f"grace_min={grace_min}",
-            f"last_peak_pnl_pct={peak}",
-            f"last_unrealized_pnl_pct={upnl_pct}",
-        ]
-        em.add_field(name="트레일링", value="\n".join(tr_lines), inline=False)
+    if mode == "advanced":
+        adv = _build_advanced_lines(payload)
+        if adv:
+            em.add_field(name="고급 상태", value="\n".join(adv), inline=False)
+        em.add_field(name="디버그 상태", value=f"```text\n{format_status_payload(payload)}\n```", inline=False)
 
-    em.add_field(name="요약", value=f"```text\n{_fmt_status_payload(payload)}\n```", inline=False)
     return em
 
 
@@ -124,17 +309,17 @@ def _sanitize_usdt_input(raw: str) -> float:
     if not math.isfinite(v):
         raise ValueError("유한한 숫자만 입력할 수 있습니다.")
     if v < 5.0:
-        raise ValueError("최소 5.0 USDT 이상이어야 합니다.")
+        raise ValueError("최소 5 USDT 이상 입력해야 합니다.")
     return v
 
 
 def _parse_bool_like(raw: str, *, field: str) -> bool:
     s = str(raw or "").strip().lower()
-    if s in {"1", "true", "t", "yes", "y", "on", "예", "네", "사용", "켜기", "활성"}:
+    if s in {"1", "true", "t", "yes", "y", "on", "예", "네", "켜기"}:
         return True
-    if s in {"0", "false", "f", "no", "n", "off", "아니오", "아니요", "중지", "끄기", "비활성"}:
+    if s in {"0", "false", "f", "no", "n", "off", "아니오", "아니요", "끄기"}:
         return False
-    raise ValueError(f"{field}: 예/아니오(yes/no)로 입력하세요.")
+    raise ValueError(f"{field}: true/false(예/아니오) 형식으로 입력해주세요")
 
 
 def _parse_float_range(raw: str, *, field: str, min_v: float, max_v: float) -> float:
@@ -159,26 +344,6 @@ def _parse_int_range(raw: str, *, field: str, min_v: int, max_v: int) -> int:
     return v
 
 
-def _budget_mode_options(current: str) -> list[discord.SelectOption]:
-    cur = str(current or "PCT_AVAILABLE").upper()
-    return [
-        discord.SelectOption(label="비율(가용자산)", value="PCT_AVAILABLE", default=(cur == "PCT_AVAILABLE")),
-        discord.SelectOption(label="고정(USDT)", value="FIXED_USDT", default=(cur == "FIXED_USDT")),
-    ]
-
-
-def _budget_preset_options(mode: str, current: str) -> list[discord.SelectOption]:
-    m = str(mode or "PCT_AVAILABLE").upper()
-    cur = str(current or "").upper()
-    if m == "FIXED_USDT":
-        vals = ["50", "100", "200", "500"]
-        return [discord.SelectOption(label=f"{v} USDT", value=v, default=(cur == v)) for v in vals]
-
-    vals = ["0.05", "0.10", "0.20", "0.50"]
-    labels = ["5%", "10%", "20%", "50%"]
-    return [discord.SelectOption(label=labels[i], value=vals[i], default=(cur == vals[i])) for i in range(len(vals))]
-
-
 class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
     max_leverage = discord.ui.TextInput(
         label="최대 레버리지 (max_leverage)",
@@ -186,22 +351,22 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
         required=True,
     )
     max_exposure_pct = discord.ui.TextInput(
-        label="최대 노출 비율 (0.2 또는 20%) (max_exposure_pct)",
+        label="최대 노출 비율 (max_exposure_pct)",
         placeholder="예: 0.2 또는 20%",
         required=True,
     )
     max_notional_pct = discord.ui.TextInput(
-        label="최대 포지션 배수(1배=100) (max_notional_pct)",
-        placeholder="예: 10배=10x=1000, 20배=20x=2000",
+        label="최대 포지션 배수 (max_notional_pct)",
+        placeholder="예: 10 (1000%)",
         required=True,
     )
     per_trade_risk_pct = discord.ui.TextInput(
-        label="1회 트레이드 리스크 % 0~100 (per_trade_risk_pct)",
+        label="1회 트레이드 리스크 % (per_trade_risk_pct)",
         placeholder="예: 1",
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPIClient, view: "PanelView", defaults: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -215,13 +380,14 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
         if not _is_admin(interaction):
             await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+
         pairs = {
             "max_leverage": str(self.max_leverage),
             "max_exposure_pct": str(self.max_exposure_pct),
             "max_notional_pct": str(self.max_notional_pct),
             "per_trade_risk_pct": str(self.per_trade_risk_pct),
         }
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             for k, v in pairs.items():
                 await self._api.set_value(k, v)
@@ -233,27 +399,27 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
 
 class RiskAdvancedModal(discord.ui.Modal, title="리스크 고급"):
     daily_loss_limit_pct = discord.ui.TextInput(
-        label="일일 손실 제한 -1~0 (daily_loss_limit_pct)",
+        label="일일 손실 제한 (-1 ~ 0)",
         placeholder="예: -0.02",
         required=True,
     )
     dd_limit_pct = discord.ui.TextInput(
-        label="최대 낙폭 제한 -1~0 (dd_limit_pct)",
+        label="최대 낙폭 제한 (-1 ~ 0)",
         placeholder="예: -0.15",
         required=True,
     )
     min_hold_minutes = discord.ui.TextInput(
-        label="최소 보유 시간(분) (min_hold_minutes)",
+        label="최소 보유 시간(분)",
         placeholder="예: 240",
         required=True,
     )
     score_conf_threshold = discord.ui.TextInput(
-        label="신뢰도 임계값 0~1 (score_conf_threshold)",
+        label="신뢰도 임계값(0~1)",
         placeholder="예: 0.65",
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPIClient, view: "PanelView", defaults: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -267,13 +433,14 @@ class RiskAdvancedModal(discord.ui.Modal, title="리스크 고급"):
         if not _is_admin(interaction):
             await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+
         pairs = {
             "daily_loss_limit_pct": str(self.daily_loss_limit_pct),
             "dd_limit_pct": str(self.dd_limit_pct),
             "min_hold_minutes": str(self.min_hold_minutes),
             "score_conf_threshold": str(self.score_conf_threshold),
         }
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             for k, v in pairs.items():
                 await self._api.set_value(k, v)
@@ -283,93 +450,33 @@ class RiskAdvancedModal(discord.ui.Modal, title="리스크 고급"):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
 
 
-class BudgetCustomModal(discord.ui.Modal, title="예산 상세 설정"):
-    capital_pct = discord.ui.TextInput(
-        label="가용자산 비율 0.01~1.0 (capital_pct)",
-        required=False,
-        placeholder="예: 0.20",
-    )
-    capital_usdt = discord.ui.TextInput(
-        label="고정 예산 USDT >=5 (capital_usdt)",
-        required=False,
-        placeholder="예: 100",
-    )
-    margin_use_pct = discord.ui.TextInput(
-        label="증거금 사용률 0.10~1.0 (margin_use_pct)",
-        required=False,
-        placeholder="예: 0.90",
-    )
-    advanced_limits = discord.ui.TextInput(
-        label="고급 제한값 (명목,노출,수수료버퍼)",
-        required=False,
-        placeholder="예: 1000,0.20,0.002 또는 1000,20%,0.002",
-    )
-
-    def __init__(self, *, api: TraderAPIClient, view: "PanelView") -> None:
-        super().__init__(timeout=300)
-        self._api = api
-        self._view = view
-
-    async def _apply_config(self, pairs: Dict[str, Any]) -> None:
-        fn = getattr(self._api, "set_config", None)
-        if callable(fn):
-            await fn(pairs)
-            return
-        for k, v in pairs.items():
-            await self._api.set_value(str(k), str(v))
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not _is_admin(interaction):
-            await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        pairs = {
-            "capital_pct": str(self.capital_pct).strip(),
-            "capital_usdt": str(self.capital_usdt).strip(),
-            "margin_use_pct": str(self.margin_use_pct).strip(),
-        }
-        try:
-            payload: Dict[str, str] = {}
-            for k, v in pairs.items():
-                if not v:
-                    continue
-                payload[k] = v
-
-            adv = str(self.advanced_limits).strip()
-            if adv:
-                parts = [p.strip() for p in adv.split(",")]
-                while len(parts) < 3:
-                    parts.append("")
-                if parts[0]:
-                    payload["max_position_notional_usdt"] = parts[0]
-                if parts[1]:
-                    payload["max_exposure_pct"] = parts[1]
-                if parts[2]:
-                    payload["fee_buffer_pct"] = parts[2]
-
-            await self._apply_config(payload)
-            await self._view.refresh_message(interaction)
-            await interaction.followup.send(f"예산 상세 설정 적용 완료 ({len(payload)}개)", ephemeral=True)
-        except APIError as e:
-            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
-
-
 class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
     amount_usdt = discord.ui.TextInput(
-        label="증거금(USDT)",
-        placeholder="예: 100 또는 1000",
+        label="증거금 (USDT, 최소 5)",
+        placeholder="예: 100",
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPIClient, view: "PanelView") -> None:
+    def __init__(
+        self,
+        *,
+        api: TraderAPI,
+        view: "PanelViewBase",
+        current_budget: Optional[float] = None,
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
+        if current_budget is not None:
+            pretty = _fmt_money(current_budget, digits=4)
+            self.amount_usdt.default = pretty
+            self.amount_usdt.placeholder = f"현재값: {pretty} USDT / 예: 100"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):
             await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
             return
+
         try:
             amount = _sanitize_usdt_input(str(self.amount_usdt))
         except ValueError as e:
@@ -384,32 +491,22 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
                     "margin_budget_usdt": amount,
                 }
             )
+            await self._view.refresh_message(interaction)
+            await interaction.followup.send(f"증거금 설정 완료: {amount:.4f} USDT", ephemeral=True)
         except APIError as e:
             await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
-            return
-
-        try:
-            await self._view.refresh_message(interaction)
-        except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(
-                f"증거금 예산 {amount} USDT 적용 완료 (패널 새로고침 경고: {type(e).__name__})",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.followup.send(f"증거금 예산 {amount} USDT 적용 완료", ephemeral=True)
 
 
 class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
     trailing_enabled = discord.ui.TextInput(
-        label="트레일링 사용 여부 (예/아니오)",
+        label="트레일링 사용(예/아니오)",
         required=True,
         placeholder="예: 예",
     )
     trailing_mode = discord.ui.TextInput(
-        label="트레일링 모드 (퍼센트/ATR)",
+        label="트레일링 모드 (PCT / ATR)",
         required=True,
-        placeholder="예: 퍼센트",
+        placeholder="예: PCT",
     )
     trail_arm_pnl_pct = discord.ui.TextInput(
         label="트레일링 시작 수익률(%)",
@@ -424,10 +521,10 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
     mode_params = discord.ui.TextInput(
         label="모드 상세값",
         required=False,
-        placeholder="퍼센트: 0.8 / ATR: 1h,2.0,0.6,1.8",
+        placeholder="PCT: 0.8 / ATR: 1h,2.0,0.6,1.8",
     )
 
-    def __init__(self, *, api: TraderAPIClient, view: "PanelView", defaults: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -436,6 +533,7 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
         self.trailing_mode.default = str(d.get("trailing_mode", "PCT"))
         self.trail_arm_pnl_pct.default = str(d.get("trail_arm_pnl_pct", "1.2"))
         self.trail_grace_minutes.default = str(d.get("trail_grace_minutes", "30"))
+
         mode = str(d.get("trailing_mode", "PCT")).upper()
         if mode == "ATR":
             self.mode_params.default = (
@@ -458,9 +556,11 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             mode_alias = {"퍼센트": "PCT", "PERCENT": "PCT", "PCT": "PCT", "ATR": "ATR"}
             mode = mode_alias.get(mode_raw, mode_raw)
             if mode not in {"PCT", "ATR"}:
-                raise ValueError("트레일링 모드는 퍼센트(PCT) 또는 ATR만 가능합니다.")
+                raise ValueError("트레일링 모드는 PCT 또는 ATR만 가능합니다.")
             arm = _parse_float_range(str(self.trail_arm_pnl_pct), field="trail_arm_pnl_pct", min_v=0.0, max_v=100.0)
-            grace = _parse_int_range(str(self.trail_grace_minutes), field="trail_grace_minutes", min_v=0, max_v=1440)
+            grace = _parse_int_range(
+                str(self.trail_grace_minutes), field="trail_grace_minutes", min_v=0, max_v=1440
+            )
 
             payload: Dict[str, Any] = {
                 "trailing_enabled": enabled,
@@ -477,19 +577,23 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             else:
                 parts = [p.strip() for p in params.split(",") if p.strip()]
                 if len(parts) != 4:
-                    raise ValueError("mode_params: ATR 모드는 'timeframe,k,min,max' 형식이어야 합니다.")
+                    raise ValueError("ATR 모드는 'timeframe,k,min,max' 형식이어야 합니다.")
                 tf = str(parts[0]).lower() or "1h"
                 if tf not in {"15m", "1h", "4h"}:
-                    raise ValueError("ATR 타임프레임은 15m/1h/4h만 가능합니다.")
+                    raise ValueError("ATR 타임프레임은 15m/1h/4h 만 가능합니다.")
                 k = _parse_float_range(parts[1], field="atr_trail_k", min_v=0.0, max_v=20.0)
                 mn = _parse_float_range(parts[2], field="atr_trail_min_pct", min_v=0.0, max_v=100.0)
                 mx = _parse_float_range(parts[3], field="atr_trail_max_pct", min_v=0.0, max_v=100.0)
                 if mx < mn:
                     raise ValueError("ATR 최대폭은 ATR 최소폭보다 크거나 같아야 합니다.")
-                payload["atr_trail_timeframe"] = tf
-                payload["atr_trail_k"] = k
-                payload["atr_trail_min_pct"] = mn
-                payload["atr_trail_max_pct"] = mx
+                payload.update(
+                    {
+                        "atr_trail_timeframe": tf,
+                        "atr_trail_k": k,
+                        "atr_trail_min_pct": mn,
+                        "atr_trail_max_pct": mx,
+                    }
+                )
         except ValueError as e:
             await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
             return
@@ -503,55 +607,15 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
 
 
-class PanelView(discord.ui.View):
-    def __init__(self, *, api: TraderAPIClient, message_id: Optional[int] = None) -> None:
+class PanelViewBase(discord.ui.View):
+    def __init__(self, *, api: TraderAPI, message_id: Optional[int] = None) -> None:
         super().__init__(timeout=None)
         self.api = api
         self.message_id = message_id
-        self._capital_mode: str = "PCT_AVAILABLE"
-        self._capital_preset_value: str = "0.20"
-        self._sync_budget_controls()
 
-    def _sync_budget_controls(self) -> None:
-        for item in self.children:
-            if isinstance(item, discord.ui.Select) and str(item.placeholder) == PLACEHOLDER_BUDGET_MODE:
-                item.options = _budget_mode_options(self._capital_mode)
-            if isinstance(item, discord.ui.Select) and str(item.placeholder) == PLACEHOLDER_BUDGET_PRESET:
-                item.options = _budget_preset_options(self._capital_mode, self._capital_preset_value)
-
-    async def refresh_message(self, interaction: discord.Interaction) -> None:
-        payload = await self.api.get_status()
-        if isinstance(payload, dict):
-            cfg = payload.get("config") or {}
-            self._capital_mode = str(cfg.get("capital_mode") or self._capital_mode).upper()
-            if self._capital_mode == "FIXED_USDT":
-                self._capital_preset_value = str(cfg.get("capital_usdt") or self._capital_preset_value)
-            else:
-                self._capital_preset_value = str(cfg.get("capital_pct") or self._capital_preset_value)
-            self._sync_budget_controls()
-
-        em = _build_embed(payload if isinstance(payload, dict) else {})
-        msg = interaction.message
-        if msg is None and self.message_id and interaction.channel is not None and hasattr(interaction.channel, "fetch_message"):
-            try:
-                msg = await interaction.channel.fetch_message(self.message_id)
-            except Exception:
-                msg = None
-        if msg is not None:
-            if hasattr(msg, "id"):
-                try:
-                    self.message_id = int(msg.id)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("panel_message_id_parse_failed", extra={"err": type(e).__name__}, exc_info=True)
-            await msg.edit(embed=em, view=self)
-
-    async def _apply_config(self, pairs: Dict[str, Any]) -> None:
-        fn = getattr(self.api, "set_config", None)
-        if callable(fn):
-            await fn(pairs)
-            return
-        for k, v in pairs.items():
-            await self.api.set_value(str(k), str(v))
+    @property
+    def _mode(self) -> Literal["simple", "advanced"]:
+        raise NotImplementedError
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         if not _is_admin(interaction):
@@ -562,7 +626,62 @@ class PanelView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="시작", style=discord.ButtonStyle.success)
+    async def refresh_message(self, interaction: discord.Interaction) -> None:
+        payload = await self.api.get_status()
+        if not isinstance(payload, dict):
+            payload = {}
+
+        embed = _build_embed(payload, mode=self._mode)
+
+        if interaction.message is not None:
+            try:
+                msg = interaction.message
+            except Exception:
+                msg = None
+            if msg is not None and hasattr(msg, "edit"):
+                try:
+                    await msg.edit(embed=embed, view=self)
+                    return
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("panel_message_edit_failed", extra={"err": type(e).__name__})
+
+        if self.message_id is None or interaction.channel is None or not hasattr(interaction.channel, "fetch_message"):
+            return
+        try:
+            msg = await interaction.channel.fetch_message(self.message_id)
+            await msg.edit(embed=embed, view=self)
+        except Exception:
+            pass
+
+    async def _get_risk_config(self) -> Dict[str, Any]:
+        try:
+            payload = await self.api.get_status()
+            if isinstance(payload, dict):
+                return dict(payload.get("risk_config") or {})
+        except Exception:
+            logger.exception("panel_get_status_failed")
+        return {}
+
+    async def _swap_view(self, interaction: discord.Interaction, new_view: "PanelViewBase") -> None:
+        payload = await self.api.get_status()
+        if not isinstance(payload, dict):
+            payload = {}
+        embed = _build_embed(payload, mode=new_view._mode)
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(embed=embed, view=new_view)
+        else:
+            if interaction.message is not None:
+                await interaction.message.edit(embed=embed, view=new_view)
+            else:
+                raise RuntimeError("interaction_message_missing")
+
+
+class SimplePanelView(PanelViewBase):
+    @property
+    def _mode(self) -> Literal["simple", "advanced"]:
+        return "simple"
+
+    @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
     async def start_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -571,7 +690,7 @@ class PanelView(discord.ui.View):
         await self.refresh_message(interaction)
         await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
 
-    @discord.ui.button(label="중지", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
     async def stop_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -580,7 +699,7 @@ class PanelView(discord.ui.View):
         await self.refresh_message(interaction)
         await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
 
-    @discord.ui.button(label="패닉", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
     async def panic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -589,67 +708,187 @@ class PanelView(discord.ui.View):
         await self.refresh_message(interaction)
         await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
 
-    @discord.ui.button(label="새로고침", style=discord.ButtonStyle.primary)
-    async def refresh_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+    @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
+    async def tick_once_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.refresh_message(interaction)
-        await interaction.followup.send("상태를 새로고침했습니다.", ephemeral=True)
+        try:
+            tick = await self.api.tick_scheduler_now()
+        except APIError as e:
+            await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            return
 
-    @discord.ui.button(label="증거금설정", style=discord.ButtonStyle.primary)
+        await self.refresh_message(interaction)
+        payload = tick if isinstance(tick, dict) else {}
+        sched = payload.get("snapshot") if isinstance(payload, dict) else {}
+        last_action = "-"
+        last_error = ""
+        if isinstance(sched, dict):
+            last_action = str(sched.get("last_action") or "-")
+            last_error = str(sched.get("last_error") or "")
+        if last_error:
+            reason = _reason_to_human_readable(last_error)
+            msg = f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
+        else:
+            msg = f"즉시 판단 실행 완료: {last_action}"
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
     async def margin_budget_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
-        await interaction.response.send_modal(MarginBudgetModal(api=self.api, view=self))
 
-    @discord.ui.button(label="트레일링설정", style=discord.ButtonStyle.primary, row=1)
-    async def trailing_config_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        if not await self._guard(interaction):
-            return
-        defaults: Dict[str, Any] = {}
+        current_budget = None
         try:
             payload = await self.api.get_status()
             if isinstance(payload, dict):
-                defaults = dict(payload.get("risk_config") or {})
+                cfg = payload.get("config") or {}
+                if str(cfg.get("capital_mode") or "").upper() == "MARGIN_BUDGET_USDT":
+                    cur = cfg.get("margin_budget_usdt")
+                else:
+                    cur = cfg.get("margin_budget_usdt")
+                if cur is not None:
+                    current_budget = float(cur)
         except Exception:
-            defaults = {}
-        await interaction.response.send_modal(TrailingConfigModal(api=self.api, view=self, defaults=defaults))
+            current_budget = None
 
-    @discord.ui.button(label="리스크 기본", style=discord.ButtonStyle.secondary, row=1)
+        await interaction.response.send_modal(
+            MarginBudgetModal(
+                api=self.api,
+                view=self,
+                current_budget=current_budget,
+            )
+        )
+
+    @discord.ui.button(label=ADVANCED_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
+    async def advanced_toggle_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+
+        await self._swap_view(interaction, AdvancedPanelView(api=self.api, message_id=self.message_id))
+
+
+class AdvancedPanelView(PanelViewBase):
+    @property
+    def _mode(self) -> Literal["simple", "advanced"]:
+        return "advanced"
+
+    @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
+    async def start_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.api.start()
+        await self.refresh_message(interaction)
+        await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
+
+    @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
+    async def stop_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.api.stop()
+        await self.refresh_message(interaction)
+        await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
+
+    @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
+    async def panic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.api.panic()
+        await self.refresh_message(interaction)
+        await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
+
+    @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
+    async def tick_once_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            tick = await self.api.tick_scheduler_now()
+        except APIError as e:
+            await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            return
+
+        await self.refresh_message(interaction)
+        payload = tick if isinstance(tick, dict) else {}
+        sched = payload.get("snapshot") if isinstance(payload, dict) else {}
+        last_action = "-"
+        last_error = ""
+        if isinstance(sched, dict):
+            last_action = str(sched.get("last_action") or "-")
+            last_error = str(sched.get("last_error") or "")
+        if last_error:
+            reason = _reason_to_human_readable(last_error)
+            msg = f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
+        else:
+            msg = f"즉시 판단 실행 완료: {last_action}"
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
+    async def margin_budget_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+
+        current_budget = None
+        try:
+            payload = await self.api.get_status()
+            if isinstance(payload, dict):
+                cfg = payload.get("config") or {}
+                if str(cfg.get("capital_mode") or "").upper() == "MARGIN_BUDGET_USDT":
+                    cur = cfg.get("margin_budget_usdt")
+                else:
+                    cur = cfg.get("margin_budget_usdt")
+                if cur is not None:
+                    current_budget = float(cur)
+        except Exception:
+            current_budget = None
+
+        await interaction.response.send_modal(
+            MarginBudgetModal(
+                api=self.api,
+                view=self,
+                current_budget=current_budget,
+            )
+        )
+
+    @discord.ui.button(label=SIMPLE_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
+    async def simple_toggle_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._swap_view(interaction, SimplePanelView(api=self.api, message_id=self.message_id))
+
+    @discord.ui.button(label=RISK_BASIC_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
     async def risk_basic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
-        defaults: Dict[str, Any] = {}
-        try:
-            payload = await self.api.get_status()
-            if isinstance(payload, dict):
-                defaults = dict(payload.get("risk_config") or {})
-        except Exception:
-            defaults = {}
+        defaults: Dict[str, Any] = await self._get_risk_config()
         await interaction.response.send_modal(RiskBasicModal(api=self.api, view=self, defaults=defaults))
 
-    @discord.ui.button(label="리스크 고급", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label=RISK_ADVANCED_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
     async def risk_adv_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
-        defaults: Dict[str, Any] = {}
-        try:
-            payload = await self.api.get_status()
-            if isinstance(payload, dict):
-                defaults = dict(payload.get("risk_config") or {})
-        except Exception:
-            defaults = {}
+        defaults: Dict[str, Any] = await self._get_risk_config()
         await interaction.response.send_modal(RiskAdvancedModal(api=self.api, view=self, defaults=defaults))
 
+    @discord.ui.button(label=TRAILING_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
+    async def trailing_config_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        defaults: Dict[str, Any] = await self._get_risk_config()
+        await interaction.response.send_modal(TrailingConfigModal(api=self.api, view=self, defaults=defaults))
+
     @discord.ui.select(
-        placeholder=PLACEHOLDER_EXEC_MODE,
+        placeholder=EXEC_MODE_SELECT_PLACEHOLDER,
         options=[
             discord.SelectOption(label="LIMIT", value="LIMIT", default=True),
             discord.SelectOption(label="MARKET", value="MARKET"),
             discord.SelectOption(label="SPLIT", value="SPLIT"),
         ],
-        row=4,
+        row=3,
     )
     async def exec_mode_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         if not await self._guard(interaction):
@@ -658,75 +897,36 @@ class PanelView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         await self.api.set_value("exec_mode_default", val)
         await self.refresh_message(interaction)
-        await interaction.followup.send(f"실행 모드 변경: {val}", ephemeral=True)
+        await interaction.followup.send(f"실행모드가 {val}로 변경되었습니다.", ephemeral=True)
 
     @discord.ui.select(
-        placeholder=PLACEHOLDER_BUDGET_MODE,
+        placeholder=SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
         options=[
-            discord.SelectOption(label="비율(가용자산)", value="PCT_AVAILABLE", default=True),
-            discord.SelectOption(label="고정(USDT)", value="FIXED_USDT"),
+            discord.SelectOption(label="5분", value="300"),
+            discord.SelectOption(label="10분", value="600"),
+            discord.SelectOption(label="15분", value="900"),
+            discord.SelectOption(label="30분", value="1800", default=True),
+            discord.SelectOption(label="60분", value="3600"),
         ],
         row=2,
     )
-    async def capital_mode_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
+    async def scheduler_interval_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         if not await self._guard(interaction):
             return
-        self._capital_mode = str(select.values[0]).upper()
-        self._capital_preset_value = "50" if self._capital_mode == "FIXED_USDT" else "0.20"
-        self._sync_budget_controls()
-        if interaction.message is not None:
-            await interaction.response.edit_message(view=self)
-        else:
-            await interaction.response.send_message("모드 선택 업데이트 완료", ephemeral=True)
-
-    @discord.ui.select(
-        placeholder=PLACEHOLDER_BUDGET_PRESET,
-        options=[
-            discord.SelectOption(label="20%", value="0.20", default=True),
-            discord.SelectOption(label="10%", value="0.10"),
-            discord.SelectOption(label="50%", value="0.50"),
-            discord.SelectOption(label="5%", value="0.05"),
-        ],
-        row=3,
-    )
-    async def budget_preset_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
-        if not await self._guard(interaction):
-            return
-        self._capital_preset_value = str(select.values[0]).strip()
-        self._sync_budget_controls()
-        if interaction.message is not None:
-            await interaction.response.edit_message(view=self)
-        else:
-            await interaction.response.send_message("프리셋 선택 업데이트 완료", ephemeral=True)
-
-    @discord.ui.button(label="프리셋 적용", style=discord.ButtonStyle.success, row=1)
-    async def apply_budget_preset_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        if not await self._guard(interaction):
+        try:
+            tick_sec = float(str(select.values[0]))
+        except Exception:
+            await interaction.response.send_message("유효하지 않은 간격입니다.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            payload: Dict[str, str] = {"capital_mode": self._capital_mode}
-            if self._capital_mode == "FIXED_USDT":
-                payload["capital_usdt"] = self._capital_preset_value
-            else:
-                payload["capital_pct"] = self._capital_preset_value
-            await self._apply_config(payload)
+            await self.api.set_scheduler_interval(tick_sec)
             await self.refresh_message(interaction)
-            label = f"{self._capital_preset_value} USDT" if self._capital_mode == "FIXED_USDT" else self._capital_preset_value
-            await interaction.followup.send(
-                f"예산 프리셋 적용 완료: mode={self._capital_mode}, value={label}",
-                ephemeral=True,
-            )
+            await interaction.followup.send(f"스캔 간격을 {int(tick_sec // 60)}분으로 변경했습니다.", ephemeral=True)
         except APIError as e:
-            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
-
-    @discord.ui.button(label="직접 입력...", style=discord.ButtonStyle.secondary, row=1)
-    async def custom_budget_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        if not await self._guard(interaction):
-            return
-        await interaction.response.send_modal(BudgetCustomModal(api=self.api, view=self))
+            await interaction.followup.send(f"스캔 간격 변경 실패: {e}", ephemeral=True)
 
 
-
+PanelView = SimplePanelView
 
 

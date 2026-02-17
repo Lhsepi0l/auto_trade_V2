@@ -18,6 +18,9 @@ from apps.trader_engine.api.schemas import (
     SetValueResponse,
     SetValueRequest,
     StatusResponse,
+    SchedulerControlResponse,
+    SchedulerIntervalRequest,
+    SchedulerTickResponse,
     SchedulerSnapshotSchema,
     WatchdogStatusSchema,
     PanicResponseSchema,
@@ -37,6 +40,7 @@ from apps.trader_engine.services.pnl_service import PnLService
 from apps.trader_engine.services.risk_config_service import RiskConfigService, RiskConfigValidationError
 from apps.trader_engine.services.sizing_service import SizingService
 from apps.trader_engine.services.snapshot_service import SnapshotService
+from apps.trader_engine.scheduler import TraderScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,13 @@ def _oplog(request: Request):  # type: ignore[no-untyped-def]
     return getattr(request.app.state, "oplog", None)
 
 
+def _scheduler_service(request: Request) -> TraderScheduler:
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="scheduler_missing")
+    return scheduler  # type: ignore[return-value]
+
+
 def _require_test_mode(request: Request) -> None:
     if not bool(getattr(request.app.state, "test_mode", False)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")
@@ -124,6 +135,16 @@ def get_status(
     cfg = risk.get_config()
     b = binance.get_status()
     settings = getattr(request.app.state, "settings", None)
+    scheduler = getattr(request.app.state, "scheduler", None)
+    scheduler_running = False
+    if scheduler is not None:
+        fn = getattr(scheduler, "is_running", None)
+        if callable(fn):
+            try:
+                scheduler_running = bool(fn())
+            except Exception:
+                logger.exception("scheduler_running_check_failed")
+                scheduler_running = False
 
     pnl_payload = None
     try:
@@ -266,6 +287,9 @@ def get_status(
         "tf_weight_30m": cfg.tf_weight_30m,
         "vol_shock_atr_mult_threshold": cfg.vol_shock_atr_mult_threshold,
         "atr_mult_mean_window": cfg.atr_mult_mean_window,
+        "scheduler_tick_sec": float(getattr(scheduler, "tick_sec", 1800.0)),
+        "scheduler_enabled": bool(settings.scheduler_enabled) if settings else False,
+        "scheduler_running": scheduler_running,
     }
 
     return StatusResponse(
@@ -317,6 +341,49 @@ def get_status(
         scheduler=sched,
         watchdog=wd,
         capital_snapshot=capital_snapshot,
+    )
+
+
+@router.get("/scheduler", response_model=SchedulerControlResponse)
+def scheduler_status(request: Request, scheduler: TraderScheduler = Depends(_scheduler_service)) -> SchedulerControlResponse:
+    del request
+    return SchedulerControlResponse(
+        tick_sec=scheduler.tick_sec,
+        running=scheduler.is_running(),
+        min_tick_sec=30.0,
+    )
+
+
+@router.post("/scheduler/interval", response_model=SchedulerControlResponse)
+def set_scheduler_interval(
+    request: Request,
+    req: SchedulerIntervalRequest,
+    scheduler: TraderScheduler = Depends(_scheduler_service),
+) -> SchedulerControlResponse:
+    del request
+    try:
+        tick_sec = scheduler.set_tick_sec(req.tick_sec)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+
+    return SchedulerControlResponse(
+        tick_sec=tick_sec,
+        running=scheduler.is_running(),
+        min_tick_sec=30.0,
+    )
+
+
+@router.post("/scheduler/tick", response_model=SchedulerTickResponse)
+async def run_scheduler_tick(
+    request: Request,
+    scheduler: TraderScheduler = Depends(_scheduler_service),
+) -> SchedulerTickResponse:
+    del request
+    snap = await scheduler.tick_once()
+    return SchedulerTickResponse(
+        ok=True,
+        tick_sec=scheduler.tick_sec,
+        snapshot=SchedulerSnapshotSchema(**snap.__dict__),
     )
 
 

@@ -8,6 +8,7 @@ import discord
 import pytest
 
 from apps.discord_bot.views.panel import MarginBudgetModal, PanelView
+from apps.discord_bot.ui_labels import MARGIN_BUDGET_BUTTON_LABEL
 
 
 class _FakeResponse:
@@ -71,7 +72,7 @@ def _find_button(view: PanelView, label: str) -> discord.ui.Button:
 async def test_margin_budget_button_exists() -> None:
     api = SimpleNamespace(get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}))
     view = PanelView(api=api)  # type: ignore[arg-type]
-    _find_button(view, "증거금설정")
+    _find_button(view, MARGIN_BUDGET_BUTTON_LABEL)
 
 
 @pytest.mark.unit
@@ -85,7 +86,7 @@ async def test_admin_click_opens_modal_and_submit_calls_set_config(monkeypatch: 
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
 
     it_click = _FakeInteraction()
-    await _find_button(view, "증거금설정").callback(it_click)
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(it_click)
     assert isinstance(it_click.response.modal, MarginBudgetModal)
 
     modal = it_click.response.modal
@@ -110,7 +111,7 @@ async def test_non_admin_click_denied_and_no_api_call(monkeypatch: pytest.Monkey
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: False)
 
     it = _FakeInteraction()
-    await _find_button(view, "증거금설정").callback(it)
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(it)
 
     assert any("관리자만 조작할 수 있습니다." in m for m in it.response.messages + it.followup.messages)
     api.set_config.assert_not_awaited()

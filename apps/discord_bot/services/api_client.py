@@ -105,6 +105,15 @@ class TraderAPIClient:
             out[k] = await self.set_value(str(k), str(v))
         return out
 
+    async def get_scheduler(self) -> Any:
+        return await self._request_json("GET", "/scheduler")
+
+    async def set_scheduler_interval(self, tick_sec: float) -> Any:
+        return await self._request_json("POST", "/scheduler/interval", json_body={"tick_sec": tick_sec})
+
+    async def tick_scheduler_now(self) -> Any:
+        return await self._request_json("POST", "/scheduler/tick")
+
     async def preset(self, name: str) -> Any:
         return await self._request_json("POST", "/preset", json_body={"name": name})
 

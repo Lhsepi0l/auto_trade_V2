@@ -7,7 +7,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from apps.discord_bot.services.api_client import APIError, TraderAPIClient
+from apps.discord_bot.services.api_client import APIError
+from apps.discord_bot.services.contracts import TraderAPI
 
 
 def _fmt_json(payload: Any) -> str:
@@ -21,7 +22,7 @@ def _fmt_json(payload: Any) -> str:
 
 
 class CooldownControl(commands.Cog):
-    def __init__(self, bot: commands.Bot, api: TraderAPIClient) -> None:
+    def __init__(self, bot: commands.Bot, api: TraderAPI) -> None:
         self.bot = bot
         self.api = api
 
@@ -38,4 +39,3 @@ class CooldownControl(commands.Cog):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
             await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
-

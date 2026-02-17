@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from discord.ext import commands
 
-from apps.discord_bot.services.api_client import TraderAPIClient
+from apps.discord_bot.services.contracts import TraderAPI
 
 
-async def setup_commands(bot: commands.Bot, api: TraderAPIClient) -> None:
+async def setup_commands(bot: commands.Bot, api: TraderAPI) -> None:
     # Import lazily to avoid circular imports with panel/view modules.
     from apps.discord_bot.commands.base import RemoteControl
     from apps.discord_bot.commands.cooldown import CooldownControl

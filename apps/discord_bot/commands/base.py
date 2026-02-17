@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from apps.discord_bot.services.api_client import APIError, TraderAPIClient
+from apps.discord_bot.services.api_client import APIError
+from apps.discord_bot.services.contracts import TraderAPI
+from apps.discord_bot.services.formatting import format_status_payload as _fmt_status_payload
+from apps.discord_bot.ui_labels import (
+    ADVANCED_PANEL_BUTTON_LABELS,
+    ADVANCED_TOGGLE_LABEL,
+    MARGIN_BUDGET_BUTTON_LABEL,
+    SIMPLE_PANEL_BUTTON_LABELS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,156 +147,86 @@ async def _safe_defer(interaction: discord.Interaction) -> bool:
         return False
 
 
+def _is_admin(interaction: discord.Interaction) -> bool:
+    user = interaction.user
+    if not isinstance(user, discord.Member):
+        return False
+    return bool(user.guild_permissions.administrator)
+
+
+def _build_help_embed(*, is_admin: bool) -> discord.Embed:
+    simple_buttons = list(SIMPLE_PANEL_BUTTON_LABELS)
+    beginner_buttons = " / ".join(f"`{b}`" for b in simple_buttons)
+    advanced_buttons = list(ADVANCED_PANEL_BUTTON_LABELS)
+    advanced_buttons_text = " / ".join(f"`{b}`" for b in advanced_buttons)
+    lines = [
+        "처음 시작이면 이 순서로만 사용하세요.",
+        "1) `/panel`로 현재 상태 확인",
+        f"2) {beginner_buttons} 버튼으로 즉시 조작",
+        "3) 오류가 뜨면 원인을 먼저 읽고 설정을 재확인하세요.",
+    ]
+    em = discord.Embed(
+        title="초보자용 도움말",
+        description="\n".join(lines),
+        color=discord.Color.blue(),
+    )
+    em.add_field(
+        name="가장 먼저",
+        value=(
+            "`/panel` : 운영 패널 오픈(현재 상태, 다음 판단 시각, 실패 사유 표시)\n"
+            "`/status` : 텍스트로 자세한 상태 확인"
+        ),
+        inline=False,
+    )
+    em.add_field(
+        name="핵심 버튼",
+        value=(
+            f"{beginner_buttons} : 화면에 표시되는 순서는 `{', '.join(simple_buttons)}`\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[0]}` : 엔진 자동매매 시작\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[1]}` : 엔진 자동매매 중지\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[2]}` : 수동 정리 모드(비상)\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[3]}` : 지금 바로 한 번 스캔 실행\n"
+            f"`{MARGIN_BUDGET_BUTTON_LABEL}` : 주문 기준 예산 조정\n"
+            f"`{ADVANCED_TOGGLE_LABEL}` : 리스크/트레일링/실행모드 확장 설정 열기\n"
+        ),
+        inline=False,
+    )
+    em.add_field(
+        name="참고",
+        value=(
+            "봇은 캔들 차트 지표를 기준으로 진입 후보를 계산해 판단합니다.\n"
+            "복잡한 전략식은 알 필요 없이 `/panel`의 실패 사유를 따라가면 됩니다."
+        ),
+        inline=False,
+    )
+    if is_admin:
+        em.add_field(
+            name="관리자 전용 고급설정",
+            value=(
+                "`/risk` : 리스크 설정 조회\n"
+                "`/set` : 단일 리스크 값 변경\n"
+                "`/preset` : 프리셋 적용\n"
+                "`/profile` : 프로필 일괄 적용\n"
+                "`/close` : 특정 심볼 포지션 정리\n"
+                "`/closeall` : 전체 포지션 정리\n"
+                "`/cooldown_clear` : 쿨다운/손실 제한 해제\n"
+                f"{advanced_buttons_text} : 고급 화면에서 추가 노출\n"
+            ),
+            inline=False,
+        )
+    else:
+        em.add_field(
+            name="관리자 전용",
+            value="관리자만 사용 가능합니다: `/set`, `/risk`, `/preset`, `/profile`, `/close`, `/closeall`, `/cooldown_clear`",
+            inline=False,
+        )
+    return em
+
+
 def _truncate(s: str, *, limit: int = 1800) -> str:
     if len(s) <= limit:
         return s
     return s[: limit - 3] + "..."
-
-
-def _fmt_money(x: Any) -> str:
-    try:
-        return f"{float(x):.4f}"
-    except Exception:
-        return str(x)
-
-
-def _fmt_status_payload(payload: Dict[str, Any]) -> str:
-    engine = payload.get("engine_state") or {}
-    risk = payload.get("risk_config") or {}
-    summary = payload.get("config_summary") or {}
-    binance = payload.get("binance") or {}
-    pnl = payload.get("pnl") or {}
-    sched = payload.get("scheduler") or {}
-    dry_run = bool(payload.get("dry_run", False))
-    dry_run_strict = bool(payload.get("dry_run_strict", False))
-    last_error = payload.get("last_error", None)
-
-    state = str(engine.get("state", "UNKNOWN"))
-    panic = state.upper() == "PANIC"
-    state_line = f"엔진 상태: {state}"
-    if panic:
-        state_line = f":warning: {state_line} (패닉)"
-
-    enabled = binance.get("enabled_symbols") or []
-    disabled = binance.get("disabled_symbols") or []
-
-    bal = binance.get("usdt_balance") or {}
-    wallet = _fmt_money(bal.get("wallet", "n/a"))
-    available = _fmt_money(bal.get("available", "n/a"))
-
-    positions = binance.get("positions") or {}
-    pos_lines: List[str] = []
-    if isinstance(positions, dict):
-        for sym in sorted(positions.keys()):
-            row = positions.get(sym) or {}
-            amt = row.get("position_amt", 0)
-            pnl = row.get("unrealized_pnl", 0)
-            lev = row.get("leverage", 0)
-            entry = row.get("entry_price", 0)
-            pos_lines.append(
-                f"- {sym}: amt={amt} entry={entry} pnl={pnl} lev={lev}"
-            )
-
-    open_orders = binance.get("open_orders") or {}
-    oo_total = 0
-    if isinstance(open_orders, dict):
-        for v in open_orders.values():
-            if isinstance(v, list):
-                oo_total += len(v)
-
-    spread_wide: List[str] = []
-    spreads = binance.get("spreads") or {}
-    if isinstance(spreads, dict):
-        for sym, row in spreads.items():
-            if isinstance(row, dict) and row.get("is_wide"):
-                spread_wide.append(f"- {sym}: spread_pct={row.get('spread_pct')}")
-
-    lines: List[str] = []
-    lines.append(state_line)
-    lines.append(f"모의모드(DRY_RUN): {dry_run} (strict={dry_run_strict})")
-    lines.append(f"활성 심볼: {', '.join(enabled) if enabled else '(없음)'}")
-    if disabled:
-        # Show only first few.
-        d0 = []
-        for d in disabled[:5]:
-            if isinstance(d, dict):
-                d0.append(f"{d.get('symbol')}({d.get('reason')})")
-        lines.append(f"비활성 심볼: {', '.join(d0)}")
-    lines.append(f"USDT 잔고: wallet={wallet}, available={available}")
-    lines.append(f"오픈 주문 수: {oo_total}")
-    if pos_lines:
-        lines.append("포지션:")
-        lines.extend(pos_lines[:10])
-    if spread_wide:
-        lines.append("스프레드 과대:")
-        lines.extend(spread_wide[:5])
-
-    # Policy guard / PnL snapshot (if available).
-    if isinstance(pnl, dict) and pnl:
-        dd = pnl.get("drawdown_pct", "n/a")
-        dp = pnl.get("daily_pnl_pct", "n/a")
-        ls = pnl.get("lose_streak", "n/a")
-        cd = pnl.get("cooldown_until", None)
-        lbr = pnl.get("last_block_reason", None)
-        lines.append(f"PnL: 일간%={dp} DD%={dd} 연속손실={ls}")
-        if cd:
-            lines.append(f"쿨다운 만료: {cd}")
-        if lbr:
-            lines.append(f"최근 차단 사유: {lbr}")
-
-    # Scheduler snapshot (if enabled)
-    if isinstance(sched, dict) and sched:
-        cand = sched.get("candidate") or {}
-        ai = sched.get("ai_signal") or {}
-        if isinstance(cand, dict) and cand.get("symbol"):
-            lines.append(
-                f"후보: {cand.get('symbol')} {cand.get('direction')} "
-                f"강도={cand.get('strength')} 변동성={cand.get('vol_tag')}"
-            )
-        if isinstance(ai, dict) and ai.get("target_asset"):
-            lines.append(
-                f"AI: {ai.get('target_asset')} {ai.get('direction')} "
-                f"신뢰도={ai.get('confidence')} 힌트={ai.get('exec_hint')} 태그={ai.get('risk_tag')}"
-            )
-        la = sched.get("last_action")
-        le = sched.get("last_error")
-        if la:
-            lines.append(f"스케줄러 최근 액션: {la}")
-        if le:
-            lines.append(f"스케줄러 최근 오류: {le}")
-        try:
-            tick_sec = float(sched.get("tick_sec") or 1800.0)
-            base_ts = sched.get("tick_finished_at") or sched.get("tick_started_at")
-            if base_ts:
-                next_ts = datetime.fromisoformat(str(base_ts)) + timedelta(seconds=max(tick_sec, 1.0))
-                now = datetime.now(tz=timezone.utc)
-                remaining = int((next_ts - now).total_seconds())
-                if remaining < 0:
-                    remaining = 0
-                lines.append(f"다음 판단까지: {remaining // 60}분 {remaining % 60}초")
-        except Exception:
-            pass
-    if last_error:
-        lines.append(f"최근 오류: {last_error}")
-
-    # Risk is often useful, but keep it short for /status.
-    if isinstance(summary, dict) and summary:
-        lines.append(
-            "설정: "
-            f"symbols={','.join(summary.get('universe_symbols') or [])} "
-            f"max_lev={summary.get('max_leverage')} "
-            f"dl={summary.get('daily_loss_limit_pct')} "
-            f"dd={summary.get('dd_limit_pct')} "
-            f"spread={summary.get('spread_max_pct')}"
-        )
-    elif isinstance(risk, dict):
-        lines.append(
-            f"리스크: per_trade={risk.get('per_trade_risk_pct')}% "
-            f"max_lev={risk.get('max_leverage')} "
-            f"notify={risk.get('notify_interval_sec')}s"
-        )
-
-    return _truncate("\n".join(lines))
 
 
 def _fmt_json(payload: Any) -> str:
@@ -303,7 +240,7 @@ def _fmt_json(payload: Any) -> str:
 
 
 class RemoteControl(commands.Cog):
-    def __init__(self, bot: commands.Bot, api: TraderAPIClient) -> None:
+    def __init__(self, bot: commands.Bot, api: TraderAPI) -> None:
         self.bot = bot
         self.api = api
 
@@ -366,6 +303,16 @@ class RemoteControl(commands.Cog):
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
+        except Exception as e:  # noqa: BLE001
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
+
+    @app_commands.command(name="help", description="초보자용 사용법 보기")
+    async def help(self, interaction: discord.Interaction) -> None:
+        if not await _safe_defer(interaction):
+            return
+        try:
+            em = _build_help_embed(is_admin=_is_admin(interaction))
+            await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:  # noqa: BLE001
             await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
@@ -471,5 +418,5 @@ class RemoteControl(commands.Cog):
             await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
 
-async def setup_commands(bot: commands.Bot, api: TraderAPIClient) -> None:
+async def setup_commands(bot: commands.Bot, api: TraderAPI) -> None:
     await bot.add_cog(RemoteControl(bot, api))

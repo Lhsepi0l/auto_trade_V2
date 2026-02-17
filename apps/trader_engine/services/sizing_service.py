@@ -203,7 +203,7 @@ class SizingService:
             used_margin = max(budget * float(risk.margin_use_pct), 0.0)
         elif mode == "MARGIN_BUDGET_USDT":
             budget = min(available_net, float(risk.margin_budget_usdt))
-            # In margin-budget mode, requested value is a direct margin cap.
+            # In margin-budget mode, requested value is direct margin capital.
             used_margin = max(budget, 0.0)
         else:
             budget = min(available_net, float(risk.capital_usdt))

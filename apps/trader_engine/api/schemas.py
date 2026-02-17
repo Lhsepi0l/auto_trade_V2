@@ -151,6 +151,22 @@ class SchedulerSnapshotSchema(BaseModel):
     last_error: Optional[str] = None
 
 
+class SchedulerIntervalRequest(BaseModel):
+    tick_sec: float = Field(..., ge=30.0, description="Minimum 30 seconds.")
+
+
+class SchedulerControlResponse(BaseModel):
+    tick_sec: float
+    running: bool
+    min_tick_sec: float = 30.0
+
+
+class SchedulerTickResponse(BaseModel):
+    ok: bool
+    snapshot: Optional[SchedulerSnapshotSchema] = None
+    tick_sec: Optional[float] = None
+
+
 class WatchdogStatusSchema(BaseModel):
     symbol: Optional[str] = None
     last_mark_price: Optional[float] = None

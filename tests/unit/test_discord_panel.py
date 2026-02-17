@@ -7,13 +7,28 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from apps.discord_bot.views.panel import BudgetCustomModal, PanelView, RiskAdvancedModal, RiskBasicModal
+from apps.discord_bot.views.panel import (
+    AdvancedPanelView,
+    MarginBudgetModal,
+    PanelView,
+    RiskAdvancedModal,
+    RiskBasicModal,
+    _build_embed,
+)
+from apps.discord_bot.ui_labels import (
+    ADVANCED_PANEL_BUTTON_LABELS,
+    MARGIN_BUDGET_BUTTON_LABEL,
+    SIMPLE_PANEL_BUTTON_LABELS,
+    SIMPLE_TOGGLE_LABEL,
+)
 
 
 class _FakeResponse:
     def __init__(self) -> None:
         self._done = False
-        self.modal = None
+        self.messages: List[str] = []
+        self.edits: List[Dict[str, Any]] = []
+        self.modal: discord.ui.Modal | None = None
 
     def is_done(self) -> bool:
         return self._done
@@ -21,15 +36,17 @@ class _FakeResponse:
     async def defer(self, *, ephemeral: bool = True, thinking: bool = True) -> None:
         self._done = True
 
-    async def send_message(self, _content: str, *, ephemeral: bool = True) -> None:
+    async def send_message(self, content: str, *, ephemeral: bool = True) -> None:
         self._done = True
+        self.messages.append(content)
 
     async def send_modal(self, modal: discord.ui.Modal) -> None:
         self._done = True
         self.modal = modal
 
-    async def edit_message(self, **_kwargs: Any) -> None:
+    async def edit_message(self, **kwargs: Any) -> None:
         self._done = True
+        self.edits.append(kwargs)
 
 
 class _FakeFollowup:
@@ -54,16 +71,18 @@ class _FakeInteraction:
         self.response = _FakeResponse()
         self.followup = _FakeFollowup()
         self.message = _FakeMessage()
+        self.channel = None
 
 
-def _find_button(view: PanelView, label: str) -> discord.ui.Button:
+
+def _find_button(view: discord.ui.View, label: str) -> discord.ui.Button:
     for item in view.children:
         if isinstance(item, discord.ui.Button) and str(item.label) == label:
             return item
     raise AssertionError(f"button not found: {label}")
 
 
-def _find_select(view: PanelView, placeholder: str) -> discord.ui.Select:
+def _find_select(view: discord.ui.View, placeholder: str) -> discord.ui.Select:
     for item in view.children:
         if isinstance(item, discord.ui.Select) and str(item.placeholder) == placeholder:
             return item
@@ -72,85 +91,123 @@ def _find_select(view: PanelView, placeholder: str) -> discord.ui.Select:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_panel_buttons_call_api(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_simple_panel_shows_core_buttons_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    buttons = [str(item.label) for item in view.children if isinstance(item, discord.ui.Button)]
+
+    assert set(buttons) == set(SIMPLE_PANEL_BUTTON_LABELS)
+    assert not any(
+        str(item.placeholder) == "실행모드" for item in view.children if isinstance(item, discord.ui.Select)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_simple_buttons_call_api_and_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         start=AsyncMock(),
         stop=AsyncMock(),
         panic=AsyncMock(),
+        tick_scheduler_now=AsyncMock(return_value={"snapshot": {"last_action": "hold", "last_error": None}}),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
     )
     view = PanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
 
     it = _FakeInteraction()
-    await _find_button(view, "시작").callback(it)
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[0]).callback(it)
     api.start.assert_awaited_once()
 
     it = _FakeInteraction()
-    await _find_button(view, "중지").callback(it)
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[1]).callback(it)
     api.stop.assert_awaited_once()
 
     it = _FakeInteraction()
-    await _find_button(view, "패닉").callback(it)
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[2]).callback(it)
     api.panic.assert_awaited_once()
 
     it = _FakeInteraction()
-    await _find_button(view, "새로고침").callback(it)
-    api.get_status.assert_awaited()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)
+    api.tick_scheduler_now.assert_awaited_once()
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[5]).callback(it)
+    assert any(isinstance(item.get("view"), AdvancedPanelView) for item in it.response.edits)
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_panel_selects_call_api(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_simple_embed_description_is_korean() -> None:
+    em = _build_embed({"engine_state": {"state": "RUNNING"}}, mode="simple")
+    for label in SIMPLE_PANEL_BUTTON_LABELS[:3]:
+        assert label in str(em.description)
+    assert any(str(field.name) == "스캔 간격" for field in em.fields)
+    assert any(
+        str(field.name) == "한 번에 보기" and SIMPLE_PANEL_BUTTON_LABELS[0] in str(field.value)
+        for field in em.fields
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_simple_margin_modal_and_submit(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
-        set_value=AsyncMock(),
+        set_config=AsyncMock(),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
     )
     view = PanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
 
-    it = _FakeInteraction()
-    exec_mode = _find_select(view, "실행 모드")
-    exec_mode._values = ["MARKET"]  # type: ignore[attr-defined]
-    await exec_mode.callback(it)
-    api.set_value.assert_awaited_with("exec_mode_default", "MARKET")
+    open_it = _FakeInteraction()
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(open_it)
+    assert isinstance(open_it.response.modal, MarginBudgetModal)
+
+    modal = open_it.response.modal
+    assert isinstance(modal, MarginBudgetModal)
+    modal.amount_usdt._value = "100"  # type: ignore[attr-defined]
+
+    submit_it = _FakeInteraction()
+    await modal.on_submit(submit_it)  # type: ignore[arg-type]
+    api.set_config.assert_awaited_once_with({"capital_mode": "MARGIN_BUDGET_USDT", "margin_budget_usdt": 100.0})
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_budget_controls_apply_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_advanced_panel_has_risk_and_trailing_controls(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
-        preset=AsyncMock(),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
         set_value=AsyncMock(),
-        get_status=AsyncMock(
-            return_value={
-                "engine_state": {"state": "RUNNING"},
-                "config": {"capital_mode": "PCT_AVAILABLE", "capital_pct": 0.2, "capital_usdt": 100},
-            }
-        ),
+        set_scheduler_interval=AsyncMock(),
     )
-    view = PanelView(api=api)  # type: ignore[arg-type]
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    buttons = [str(item.label) for item in view.children if isinstance(item, discord.ui.Button)]
+
+    assert set(ADVANCED_PANEL_BUTTON_LABELS) <= set(buttons)
+    assert SIMPLE_TOGGLE_LABEL not in SIMPLE_PANEL_BUTTON_LABELS and SIMPLE_TOGGLE_LABEL in buttons
+    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == "실행모드" for item in view.children)
+    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == "스캔 간격" for item in view.children)
+
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
-
     it = _FakeInteraction()
-    mode = _find_select(view, "예산 모드")
-    mode._values = ["FIXED_USDT"]  # type: ignore[attr-defined]
-    await mode.callback(it)
+    exec_select = _find_select(view, "실행모드")
+    exec_select._values = ["MARKET"]  # type: ignore[attr-defined]
+    await exec_select.callback(it)
+    api.set_value.assert_awaited_once_with("exec_mode_default", "MARKET")
 
-    it = _FakeInteraction()
-    preset = _find_select(view, "예산 프리셋")
-    preset._values = ["200"]  # type: ignore[attr-defined]
-    await preset.callback(it)
-
-    it = _FakeInteraction()
-    await _find_button(view, "프리셋 적용").callback(it)
-    api.set_value.assert_any_await("capital_mode", "FIXED_USDT")
-    api.set_value.assert_any_await("capital_usdt", "200")
+    api.set_scheduler_interval.reset_mock()
+    it2 = _FakeInteraction()
+    interval_select = _find_select(view, "스캔 간격")
+    interval_select._values = ["600"]  # type: ignore[attr-defined]
+    await interval_select.callback(it2)
+    api.set_scheduler_interval.assert_awaited_once_with(600.0)
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_modal_submit_calls_set_value(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_risk_modals_submit_values(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         set_value=AsyncMock(),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
@@ -173,11 +230,75 @@ async def test_modal_submit_calls_set_value(monkeypatch: pytest.MonkeyPatch) -> 
     adv.score_conf_threshold._value = "0.65"  # type: ignore[attr-defined]
     await adv.on_submit(it)  # type: ignore[arg-type]
 
-    custom = BudgetCustomModal(api=api, view=view)  # type: ignore[arg-type]
-    custom.capital_pct._value = "0.2"  # type: ignore[attr-defined]
-    custom.capital_usdt._value = "100"  # type: ignore[attr-defined]
-    custom.margin_use_pct._value = "0.9"  # type: ignore[attr-defined]
-    custom.advanced_limits._value = "500,0.5,0.002"  # type: ignore[attr-defined]
-    await custom.on_submit(it)  # type: ignore[arg-type]
+    assert api.set_value.await_count >= 8
 
-    assert api.set_value.await_count >= 14
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_embed_shows_failure_reason() -> None:
+    payload = {
+        "engine_state": {"state": "RUNNING"},
+        "scheduler": {
+            "last_action": "enter:BTCUSDT:LONG",
+            "last_error": "사이즈 제한 초과",
+        },
+        "config": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 32,
+        },
+        "capital_snapshot": {
+            "budget_usdt": 32,
+            "notional_usdt": 32,
+        },
+    }
+    em = _build_embed(payload, mode="simple")
+    text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
+    assert "마지막 결과" in text
+    assert "BLOCKED - 사유: 사이즈 제한 초과" in text
+    assert "증거금: 32.0000 USDT" in text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_embed_shows_human_reason_for_known_code() -> None:
+    payload = {
+        "engine_state": {"state": "RUNNING"},
+        "scheduler": {
+            "last_action": "hold",
+            "last_error": "vol_shock_no_entry",
+        },
+        "config": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 10,
+        },
+        "capital_snapshot": {
+            "budget_usdt": 10,
+            "notional_usdt": 10,
+        },
+    }
+    em = _build_embed(payload, mode="simple")
+    text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
+    assert "변동성 급등 구간이라 신규 진입을 보류합니다." in text
+    assert "BLOCKED - 사유: 변동성 급등 구간이라 신규 진입을 보류합니다." in text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_shows_human_reason_in_followup(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "hold",
+                    "last_error": "daily_loss_limit_reached:-0.30<= -0.20",
+                },
+            }
+        ),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)
+    assert any("일일 손실 제한에 걸림" in m for m in it.followup.messages)

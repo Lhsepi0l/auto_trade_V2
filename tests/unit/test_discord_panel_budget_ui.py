@@ -7,13 +7,14 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from apps.discord_bot.views.panel import BudgetCustomModal, PanelView
+from apps.discord_bot.views.panel import ADMIN_ONLY_MSG, MarginBudgetModal, PanelView
+from apps.discord_bot.ui_labels import MARGIN_BUDGET_BUTTON_LABEL
 
 
 class _FakeResponse:
     def __init__(self) -> None:
         self._done = False
-        self.modal = None
+        self.modal: discord.ui.Modal | None = None
         self.messages: List[str] = []
 
     def is_done(self) -> bool:
@@ -65,92 +66,74 @@ def _find_button(view: PanelView, label: str) -> discord.ui.Button:
     raise AssertionError(f"button not found: {label}")
 
 
-def _find_select(view: PanelView, placeholder: str) -> discord.ui.Select:
-    for item in view.children:
-        if isinstance(item, discord.ui.Select) and str(item.placeholder) == placeholder:
-            return item
-    raise AssertionError(f"select not found: {placeholder}")
-
-
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_budget_components_exist() -> None:
+async def test_margin_budget_only_button_in_simple_panel() -> None:
     api = SimpleNamespace(get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}))
     view = PanelView(api=api)  # type: ignore[arg-type]
-    _find_select(view, "예산 모드")
-    _find_select(view, "예산 프리셋")
-    _find_button(view, "프리셋 적용")
-    _find_button(view, "직접 입력...")
 
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_budget_preset_calls_set_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = SimpleNamespace(
-        set_config=AsyncMock(),
-        get_status=AsyncMock(
-            return_value={
-                "engine_state": {"state": "RUNNING"},
-                "config": {"capital_mode": "PCT_AVAILABLE", "capital_pct": 0.2, "capital_usdt": 100},
-            }
-        ),
+    assert any(isinstance(item, discord.ui.Button) and str(item.label) == MARGIN_BUDGET_BUTTON_LABEL for item in view.children)
+    assert not any(
+        isinstance(item, discord.ui.Select) and str(item.placeholder) == "예산 모드" for item in view.children
     )
-    view = PanelView(api=api)  # type: ignore[arg-type]
-    monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
-
-    it = _FakeInteraction()
-    mode = _find_select(view, "예산 모드")
-    mode._values = ["FIXED_USDT"]  # type: ignore[attr-defined]
-    await mode.callback(it)
-
-    it = _FakeInteraction()
-    preset = _find_select(view, "예산 프리셋")
-    preset._values = ["200"]  # type: ignore[attr-defined]
-    await preset.callback(it)
-
-    it = _FakeInteraction()
-    await _find_button(view, "프리셋 적용").callback(it)
-    api.set_config.assert_awaited_once_with({"capital_mode": "FIXED_USDT", "capital_usdt": "200"})
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_budget_modal_calls_set_config(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_admin_click_opens_modal_and_submit_calls_set_config(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         set_config=AsyncMock(),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
     )
     view = PanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
-    it = _FakeInteraction()
 
-    modal = BudgetCustomModal(api=api, view=view)  # type: ignore[arg-type]
-    modal.capital_pct._value = "0.2"  # type: ignore[attr-defined]
-    modal.capital_usdt._value = "100"  # type: ignore[attr-defined]
-    modal.margin_use_pct._value = "0.9"  # type: ignore[attr-defined]
-    modal.advanced_limits._value = "500,0.5,0.002"  # type: ignore[attr-defined]
-    await modal.on_submit(it)  # type: ignore[arg-type]
+    it_click = _FakeInteraction()
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(it_click)
+    assert isinstance(it_click.response.modal, MarginBudgetModal)
 
+    modal = it_click.response.modal
+    assert isinstance(modal, MarginBudgetModal)
+    modal.amount_usdt._value = "1,000"  # type: ignore[attr-defined]
+
+    it_submit = _FakeInteraction()
+    await modal.on_submit(it_submit)  # type: ignore[arg-type]
     api.set_config.assert_awaited_once_with(
-        {
-            "capital_pct": "0.2",
-            "capital_usdt": "100",
-            "margin_use_pct": "0.9",
-            "max_position_notional_usdt": "500",
-            "max_exposure_pct": "0.5",
-            "fee_buffer_pct": "0.002",
-        }
+        {"capital_mode": "MARGIN_BUDGET_USDT", "margin_budget_usdt": 1000.0}
     )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_budget_permission_gate_denies_non_admin(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = SimpleNamespace(set_config=AsyncMock(), get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}))
+async def test_non_admin_click_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        set_config=AsyncMock(),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
     view = PanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: False)
-    it = _FakeInteraction()
 
-    await _find_button(view, "프리셋 적용").callback(it)
-    assert any("관리자만 조작할 수 있습니다." in m for m in (it.response.messages + it.followup.messages))
+    it = _FakeInteraction()
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(it)
+
+    assert ADMIN_ONLY_MSG in (it.response.messages + it.followup.messages)
+    api.set_config.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_invalid_input_shows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        set_config=AsyncMock(),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = MarginBudgetModal(api=api, view=view)  # type: ignore[arg-type]
+    modal.amount_usdt._value = "abc"  # type: ignore[attr-defined]
+    it = _FakeInteraction()
+    await modal.on_submit(it)  # type: ignore[arg-type]
+
+    assert any("입력 오류" in m for m in it.response.messages + it.followup.messages)
     api.set_config.assert_not_awaited()
