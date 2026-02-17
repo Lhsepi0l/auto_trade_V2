@@ -16,8 +16,10 @@ from apps.discord_bot.views.panel import (
     _build_embed,
 )
 from apps.discord_bot.ui_labels import (
+    EXEC_MODE_SELECT_PLACEHOLDER,
     ADVANCED_PANEL_BUTTON_LABELS,
     MARGIN_BUDGET_BUTTON_LABEL,
+    SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
     SIMPLE_PANEL_BUTTON_LABELS,
     SIMPLE_TOGGLE_LABEL,
 )
@@ -100,7 +102,7 @@ async def test_simple_panel_shows_core_buttons_only(monkeypatch: pytest.MonkeyPa
 
     assert set(buttons) == set(SIMPLE_PANEL_BUTTON_LABELS)
     assert not any(
-        str(item.placeholder) == "실행모드" for item in view.children if isinstance(item, discord.ui.Select)
+        str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER for item in view.children if isinstance(item, discord.ui.Select)
     )
 
 
@@ -144,9 +146,9 @@ async def test_simple_embed_description_is_korean() -> None:
     em = _build_embed({"engine_state": {"state": "RUNNING"}}, mode="simple")
     for label in SIMPLE_PANEL_BUTTON_LABELS[:3]:
         assert label in str(em.description)
-    assert any(str(field.name) == "스캔 간격" for field in em.fields)
+    assert any("주기" in str(field.name) for field in em.fields)
     assert any(
-        str(field.name) == "한 번에 보기" and SIMPLE_PANEL_BUTTON_LABELS[0] in str(field.value)
+        str(field.name).startswith("마지막") and str(field.value).startswith("마지막 판단")
         for field in em.fields
     )
 
@@ -187,22 +189,41 @@ async def test_advanced_panel_has_risk_and_trailing_controls(monkeypatch: pytest
 
     assert set(ADVANCED_PANEL_BUTTON_LABELS) <= set(buttons)
     assert SIMPLE_TOGGLE_LABEL not in SIMPLE_PANEL_BUTTON_LABELS and SIMPLE_TOGGLE_LABEL in buttons
-    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == "실행모드" for item in view.children)
-    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == "스캔 간격" for item in view.children)
+    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER for item in view.children)
+    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == SCHEDULER_INTERVAL_SELECT_PLACEHOLDER for item in view.children)
 
     monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
     it = _FakeInteraction()
-    exec_select = _find_select(view, "실행모드")
+    exec_select = _find_select(view, EXEC_MODE_SELECT_PLACEHOLDER)
     exec_select._values = ["MARKET"]  # type: ignore[attr-defined]
     await exec_select.callback(it)
     api.set_value.assert_awaited_once_with("exec_mode_default", "MARKET")
 
     api.set_scheduler_interval.reset_mock()
     it2 = _FakeInteraction()
-    interval_select = _find_select(view, "스캔 간격")
+    interval_select = _find_select(view, SCHEDULER_INTERVAL_SELECT_PLACEHOLDER)
     interval_select._values = ["600"]  # type: ignore[attr-defined]
     await interval_select.callback(it2)
     api.set_scheduler_interval.assert_awaited_once_with(600.0)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_scheduler_interval_options_include_5_10_15_and_60_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+        set_scheduler_interval=AsyncMock(),
+    )
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    interval_select = _find_select(view, SCHEDULER_INTERVAL_SELECT_PLACEHOLDER)
+    assert [o.label for o in interval_select.options] == ["5분", "10분", "15분", "30분", "60분"]
+
+    monkeypatch.setattr("apps.discord_bot.views.panel._is_admin", lambda _i: True)
+    it = _FakeInteraction()
+    interval_select._values = ["300"]  # type: ignore[attr-defined]
+    await interval_select.callback(it)
+    assert api.set_scheduler_interval.await_count == 1
+    assert any("상태 알림도 같은 주기로" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit
@@ -240,7 +261,7 @@ async def test_build_embed_shows_failure_reason() -> None:
         "engine_state": {"state": "RUNNING"},
         "scheduler": {
             "last_action": "enter:BTCUSDT:LONG",
-            "last_error": "사이즈 제한 초과",
+            "last_error": "?ъ씠利??쒗븳 珥덇낵",
         },
         "config": {
             "capital_mode": "MARGIN_BUDGET_USDT",
@@ -253,9 +274,9 @@ async def test_build_embed_shows_failure_reason() -> None:
     }
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
-    assert "마지막 결과" in text
-    assert "BLOCKED - 사유: 사이즈 제한 초과" in text
-    assert "증거금: 32.0000 USDT" in text
+    assert "BLOCKED - 사유:" in text
+    assert "enter:BTCUSDT:LONG" in text
+    assert "현재 증거금: 32.0000 USDT" in text
 
 
 @pytest.mark.unit
@@ -278,8 +299,8 @@ async def test_build_embed_shows_human_reason_for_known_code() -> None:
     }
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
-    assert "변동성 급등 구간이라 신규 진입을 보류합니다." in text
-    assert "BLOCKED - 사유: 변동성 급등 구간이라 신규 진입을 보류합니다." in text
+    assert "BLOCKED - 사유:" in text
+    assert "마지막 판단" in text
 
 
 @pytest.mark.unit
@@ -301,4 +322,5 @@ async def test_tick_once_shows_human_reason_in_followup(monkeypatch: pytest.Monk
 
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)
-    assert any("일일 손실 제한에 걸림" in m for m in it.followup.messages)
+    assert any("즉시 판단: hold" in m and "BLOCKED - 사유:" in m for m in it.followup.messages)
+

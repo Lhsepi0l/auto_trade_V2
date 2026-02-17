@@ -158,6 +158,42 @@ async def test_status_start_stop_panic_set_flow() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_scheduler_interval_sets_notify_interval_same_value() -> None:
+    app = create_app(
+        test_mode=True,
+        test_overrides={
+            "disable_background_tasks": True,
+            "skip_binance_startup": True,
+        },
+    )
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            r = await client.get("/risk")
+            assert r.status_code == 200
+            assert float(r.json()["notify_interval_sec"]) == 1800.0
+
+            r = await client.post("/scheduler/interval", json={"tick_sec": 600})
+            assert r.status_code == 200
+            assert float(r.json()["tick_sec"]) == 600.0
+
+            r = await client.get("/risk")
+            assert r.status_code == 200
+            assert float(r.json()["notify_interval_sec"]) == 600.0
+
+            r = await client.post("/scheduler/interval", json={"tick_sec": 3600})
+            assert r.status_code == 200
+            assert float(r.json()["tick_sec"]) == 3600.0
+
+            r = await client.get("/risk")
+            assert r.status_code == 200
+            assert float(r.json()["notify_interval_sec"]) == 3600.0
+
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_trade_enter_returns_block_reason_on_precheck_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRADING_DRY_RUN", "false")
     monkeypatch.setenv("DRY_RUN_STRICT", "false")

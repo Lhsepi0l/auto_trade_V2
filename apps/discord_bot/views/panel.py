@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_ONLY_MSG = "관리자만 조작할 수 있습니다."
 HELP_SIMPLE = (
-    "간단 모드 버튼: "
+    "간단 모드에서 바로 쓸 수 있는 버튼은 "
     + "/".join(
         [
             START_BUTTON_LABEL,
@@ -41,8 +41,8 @@ HELP_SIMPLE = (
             ADVANCED_TOGGLE_LABEL,
         ]
     )
-    + " 를 사용할 수 있습니다.\n"
-    + "원하면 고급설정에서 고급 설정(리스크/트레일링/실행모드/스캔 간격)을 열 수 있습니다."
+    + " 입니다.\n"
+    + "판단 주기(스캔 간격)와 상태 알림 주기는 항상 함께 맞춰집니다."
 )
 HELP_ADVANCED = (
     "고급 모드 버튼: "
@@ -54,7 +54,7 @@ HELP_ADVANCED = (
             SIMPLE_TOGGLE_LABEL,
         ]
     )
-    + " 와 실행모드/스캔 간격 선택이 같이 표시됩니다."
+    + " 와 실행모드/판단 주기 선택이 같이 표시됩니다."
 )
 
 REASON_HINT_MAP: dict[str, str] = {
@@ -179,17 +179,31 @@ def _build_last_result(last_action: str, last_error: str | None) -> tuple[str, s
     return "-", "-"
 
 
+def _interval_label(sec: Any) -> str:
+    try:
+        sec_f = float(sec)
+    except Exception:
+        return "미지정"
+    if sec_f <= 0:
+        return "미지정"
+    tick_min = sec_f / 60.0
+    if tick_min.is_integer():
+        return f"{int(tick_min)}분"
+    if sec_f < 60:
+        return f"{sec_f:.0f}초"
+    return f"{tick_min:.1f}분"
+
+
 def _scan_interval_label(payload: Dict[str, Any]) -> str:
     sched = payload.get("scheduler") or {}
     tick_sec = float(sched.get("tick_sec") or 1800.0)
-    if tick_sec <= 0:
-        return "미지정"
-    tick_min = tick_sec / 60.0
-    if tick_min.is_integer():
-        return f"{int(tick_min)}분"
-    if tick_sec < 60:
-        return f"{tick_sec:.0f}초"
-    return f"{tick_sec/60:.1f}분"
+    return _interval_label(tick_sec)
+
+
+def _notify_interval_label(payload: Dict[str, Any]) -> str:
+    risk = payload.get("risk_config") or {}
+    notify_sec = float(risk.get("notify_interval_sec") or 1800)
+    return _interval_label(notify_sec)
 
 
 def _budget_display(payload: Dict[str, Any]) -> tuple[str, str]:
@@ -216,7 +230,7 @@ def _budget_display(payload: Dict[str, Any]) -> tuple[str, str]:
 
 
 
-def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, str]:
+def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, str, str]:
     eng = payload.get("engine_state") or {}
     dry_run = bool(payload.get("dry_run", False))
     state = str(eng.get("state", "UNKNOWN"))
@@ -233,7 +247,17 @@ def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, st
     margin_line = f"현재 증거금: {budget} USDT"
     expect_line = f"예상 주문금액: {order_amt} USDT"
 
-    return decision_hint, next_decision, margin_line, expect_line, f"마지막 판단: {last_action}\n마지막 결과: {last_result}"
+    scan_interval = _scan_interval_label(payload)
+    notify_interval = _notify_interval_label(payload)
+    interval_line = f"판단 주기: {scan_interval} / 상태 알림: {notify_interval}"
+    return (
+        decision_hint,
+        next_decision,
+        margin_line,
+        expect_line,
+        f"마지막 판단: {last_action}\n마지막 결과: {last_result}",
+        interval_line,
+    )
 
 
 def _build_advanced_lines(payload: Dict[str, Any]) -> list[str]:
@@ -280,12 +304,12 @@ def _build_embed(payload: Dict[str, Any], *, mode: Literal["simple", "advanced"]
                 ]
             )
         )
-    line1, next_decision, margin_line, order_line, judge_line = _build_simple_lines(payload)
+    line1, next_decision, margin_line, order_line, judge_line, interval_line = _build_simple_lines(payload)
     em.add_field(name="엔진 상태", value=line1, inline=False)
     em.add_field(name="다음 판단", value=next_decision, inline=True)
     em.add_field(name="현재 증거금", value=margin_line, inline=True)
     em.add_field(name="예상 주문금액", value=order_line, inline=True)
-    em.add_field(name="스캔 간격", value=_scan_interval_label(payload), inline=True)
+    em.add_field(name="운영 주기", value=interval_line, inline=True)
     em.add_field(name="마지막 결과", value=judge_line, inline=False)
     em.add_field(name="한 번에 보기", value=HELP_SIMPLE if mode == "simple" else HELP_ADVANCED, inline=False)
 
@@ -922,7 +946,12 @@ class AdvancedPanelView(PanelViewBase):
         try:
             await self.api.set_scheduler_interval(tick_sec)
             await self.refresh_message(interaction)
-            await interaction.followup.send(f"스캔 간격을 {int(tick_sec // 60)}분으로 변경했습니다.", ephemeral=True)
+            minutes = int(tick_sec // 60)
+            await interaction.followup.send(
+                f"판단 주기를 {minutes}분으로 변경했습니다.\n"
+                f"상태 알림도 같은 주기로({minutes}분) 맞췄습니다.",
+                ephemeral=True,
+            )
         except APIError as e:
             await interaction.followup.send(f"스캔 간격 변경 실패: {e}", ephemeral=True)
 
