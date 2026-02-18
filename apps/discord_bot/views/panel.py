@@ -184,10 +184,22 @@ def _normalize_last_action(raw: str | None) -> str:
     return value
 
 
-def _build_last_result(last_action: str, last_error: str | None) -> tuple[str, str]:
+def _normalize_last_decision(raw: str | None) -> str:
+    value = str(raw or "").strip()
+    if not value or value == "-":
+        return "-"
+    return value
+
+
+def _build_last_result(last_action: str, last_error: str | None, last_decision: str | None = None) -> tuple[str, str]:
     if last_error:
         human = _reason_to_human_readable(last_error)
         return "BLOCKED", f"사유: {human}"
+
+    decision = _normalize_last_decision(last_decision)
+    if last_action == "-" and decision != "-":
+        return "DECISION", _reason_to_human_readable(decision)
+
     action = _normalize_last_action(last_action)
     if action != "-":
         return "OK", str(last_action)
@@ -252,12 +264,15 @@ def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, st
 
     sched = payload.get("scheduler") or {}
     last_action = _normalize_last_action(str(sched.get("last_action") or "-"))
+    last_decision = str(sched.get("last_decision_reason") or "-")
     last_error = sched.get("last_error")
-    last_status, last_reason = _build_last_result(last_action, str(last_error) if last_error is not None else None)
+    last_status, last_reason = _build_last_result(
+        last_action, str(last_error) if last_error is not None else None, last_decision
+    )
     if last_reason:
         last_result = " - ".join([x for x in (last_status, str(last_reason)) if x not in {"-",""}]) or "-"
     else:
-        last_result = "-"
+        last_result = "아직 판단 없음"
 
     decision_hint = f"엔진: {state}\n드라이런: {'ON' if dry_run else 'OFF'}"
     next_decision = _next_decision_eta(payload)
