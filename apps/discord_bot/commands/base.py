@@ -166,7 +166,7 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
         "3) ?ㅻ쪟媛 ?⑤㈃ ?먯씤??癒쇱? ?쎄퀬 ?ㅼ젙???ы솗?명븯?몄슂.",
     ]
     em = discord.Embed(
-        title="珥덈낫?먯슜 ?꾩?留?,
+        title="상태·운영 상태 안내",
         description="\n".join(lines),
         color=discord.Color.blue(),
     )
