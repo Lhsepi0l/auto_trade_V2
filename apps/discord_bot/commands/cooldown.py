@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from apps.discord_bot.commands.base import _is_admin, _safe_defer
 from apps.discord_bot.services.api_client import APIError
 from apps.discord_bot.services.contracts import TraderAPI
 
@@ -28,10 +29,11 @@ class CooldownControl(commands.Cog):
 
     @app_commands.command(name="cooldown_clear", description="쿨다운/연속손실 카운터 즉시 해제")
     async def cooldown_clear(self, interaction: discord.Interaction) -> None:
-        try:
-            await interaction.response.defer(thinking=True)
-        except Exception:
-            pass
+        if not await _safe_defer(interaction):
+            return
+        if not _is_admin(interaction):
+            await interaction.followup.send("관리자 권한이 없습니다.", ephemeral=True)
+            return
         try:
             payload = await self.api.clear_cooldown()
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")

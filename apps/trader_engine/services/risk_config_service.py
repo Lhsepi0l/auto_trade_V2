@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
@@ -178,7 +178,12 @@ class RiskConfigService:
             except Exception as e:
                 raise ValueError(f"invalid_int_for_{key.value}") from e
 
-        if key in {RiskConfigKey.allow_market_when_wide_spread, RiskConfigKey.enable_watchdog, RiskConfigKey.trailing_enabled}:
+        if key in {
+            RiskConfigKey.allow_market_when_wide_spread,
+            RiskConfigKey.enable_watchdog,
+            RiskConfigKey.trailing_enabled,
+            RiskConfigKey.score_tf_15m_enabled,
+        }:
             v = value.lower()
             if v in ("1", "true", "t", "yes", "y", "on"):
                 return True
@@ -245,7 +250,7 @@ class RiskConfigService:
             txt = value.strip().lower().replace(" ", "")
             # Friendly inputs:
             # - 100 / 1000 / 2000 (percent of equity notionals)
-            # - 10x / x10 / 10배 (equity multiple => *100)
+            # - 10x / x10 (equity multiple => *100)
             if txt.endswith("%"):
                 txt = txt[:-1]
             if txt.endswith("x"):
@@ -256,11 +261,6 @@ class RiskConfigService:
             if txt.startswith("x"):
                 try:
                     return float(txt[1:]) * 100.0
-                except Exception as e:
-                    raise ValueError("invalid_max_notional_pct_multiple") from e
-            if txt.endswith("배"):
-                try:
-                    return float(txt[:-1]) * 100.0
                 except Exception as e:
                     raise ValueError("invalid_max_notional_pct_multiple") from e
             try:

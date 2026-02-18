@@ -30,8 +30,8 @@ class RiskConfig(BaseModel):
 
     # Strategy/execution controls (stored in the same singleton config row).
     min_hold_minutes: int = Field(ge=0, le=24 * 60, default=240)
-    score_conf_threshold: float = Field(ge=0, le=1, default=0.65)
-    score_gap_threshold: float = Field(ge=0, le=1, default=0.20)
+    score_conf_threshold: float = Field(ge=0, le=1, default=0.60)
+    score_gap_threshold: float = Field(ge=0, le=1, default=0.15)
     exec_mode_default: str = Field(default="LIMIT")
 
     exec_limit_timeout_sec: float = Field(gt=0, le=60, default=5.0)
@@ -66,9 +66,12 @@ class RiskConfig(BaseModel):
     atr_trail_max_pct: float = Field(ge=0.0, le=100.0, default=1.8)
 
     # Scoring config (rotation strategy)
-    tf_weight_4h: float = Field(ge=0, le=1, default=0.5)
-    tf_weight_1h: float = Field(ge=0, le=1, default=0.3)
-    tf_weight_30m: float = Field(ge=0, le=1, default=0.2)
+    tf_weight_10m: float = Field(ge=0, le=1, default=0.25)
+    tf_weight_15m: float = Field(ge=0, le=1, default=0.0)
+    tf_weight_4h: float = Field(ge=0, le=1, default=0.25)
+    tf_weight_1h: float = Field(ge=0, le=1, default=0.25)
+    tf_weight_30m: float = Field(ge=0, le=1, default=0.25)
+    score_tf_15m_enabled: bool = Field(default=False)
 
     vol_shock_atr_mult_threshold: float = Field(ge=1, le=10, default=2.5)
     atr_mult_mean_window: int = Field(ge=10, le=500, default=50)

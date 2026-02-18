@@ -5,6 +5,8 @@ from typing import Any, Dict, List
 
 from apps.trader_engine.services.notifier_service import _error_guidance
 
+_SCORING_TIMEFRAME_ORDER = ("10m", "15m", "30m", "1h", "4h")
+
 
 def _fmt_money(x: Any, *, digits: int = 4) -> str:
     try:
@@ -129,6 +131,39 @@ def _reason_to_kor(raw_reason: Any) -> str:
     return reason
 
 
+def _format_scoring_weights(weights: Dict[str, float]) -> str:
+    items: List[str] = []
+    for tf in _SCORING_TIMEFRAME_ORDER:
+        if tf not in weights:
+            continue
+        try:
+            pct = float(weights[tf]) * 100.0
+        except Exception:
+            continue
+        items.append(f"{tf}:{pct:.1f}%")
+    if items:
+        return ", ".join(items)
+    return "-"
+
+
+def _format_candidate_scores(scores: Dict[str, float]) -> str:
+    if not scores:
+        return "-"
+    items: List[str] = []
+    for tf in _SCORING_TIMEFRAME_ORDER:
+        if tf not in scores:
+            continue
+        try:
+            v = float(scores[tf])
+        except Exception:
+            continue
+        sign = "+" if v >= 0 else ""
+        items.append(f"{tf}:{sign}{v:.3f}")
+    if items:
+        return ", ".join(items)
+    return "-"
+
+
 def _position_side(amount: Any, side_hint: Any = None) -> str:
     if side_hint is not None:
         s = str(side_hint).strip().upper()
@@ -232,6 +267,12 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     candidate_symbol = str(cand.get("symbol") or "-")
     regime_raw = sched.get("regime_4h") or cand.get("regime_4h") or sched.get("last_regime")
     regime_kor, regime_code = _regime_to_kor(regime_raw)
+    scoring_weights = _as_dict(sched.get("scoring_weights") or summary.get("scoring_weights") or {})
+    candidate_score_by_timeframe = dict(sched.get("candidate_score_by_timeframe") or summary.get("candidate_score_by_timeframe") or {})
+    active_scoring_tfs = [str(tf) for tf in (sched.get("active_scoring_timeframes") or summary.get("active_scoring_timeframes") or [])]
+
+    if not active_scoring_tfs and scoring_weights:
+        active_scoring_tfs = [tf for tf in _SCORING_TIMEFRAME_ORDER if tf in scoring_weights]
 
     if candidate_symbol == "-":
         uni = risk.get("universe_symbols")
@@ -273,6 +314,16 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
                 arm_text = f"{_fmt_pct(arm)}" if arm is not None else "-"
                 dist_text = f"{_fmt_pct(dist)}" if dist is not None else "-"
                 lines.append(f"익절 트리거: ARM {arm_text}, 롤백거리 {dist_text} (트레일링 기준)")
+
+    if active_scoring_tfs:
+        lines.append(f"평가 기준봉: {', '.join(active_scoring_tfs)}")
+    weight_line = _format_scoring_weights(scoring_weights)
+    if weight_line != "-":
+        lines.append(f"기준봉 가중치: {weight_line}")
+
+    candidate_scores = _format_candidate_scores(candidate_score_by_timeframe)
+    if candidate_symbol != "-" and candidate_scores != "-":
+        lines.append(f"후보 TF 점수: {candidate_scores}")
 
     lines.append(f"최근 액션: {last_action}")
 

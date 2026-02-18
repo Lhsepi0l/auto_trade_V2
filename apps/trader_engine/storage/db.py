@@ -59,6 +59,9 @@ SCHEMA_MIGRATIONS: list[str] = [
         tf_weight_4h REAL,
         tf_weight_1h REAL,
         tf_weight_30m REAL,
+        tf_weight_10m REAL,
+        tf_weight_15m REAL,
+        score_tf_15m_enabled INTEGER,
         vol_shock_atr_mult_threshold REAL,
         atr_mult_mean_window INTEGER,
         updated_at TEXT NOT NULL
@@ -149,6 +152,9 @@ SCHEMA_MIGRATIONS: list[str] = [
         tf_weight_4h REAL,
         tf_weight_1h REAL,
         tf_weight_30m REAL,
+        tf_weight_10m REAL,
+        tf_weight_15m REAL,
+        score_tf_15m_enabled INTEGER,
         vol_shock_atr_mult_threshold REAL,
         atr_mult_mean_window INTEGER,
         updated_at TEXT NOT NULL
@@ -200,6 +206,9 @@ SCHEMA_MIGRATIONS: list[str] = [
         tf_weight_4h,
         tf_weight_1h,
         tf_weight_30m,
+        tf_weight_10m,
+        tf_weight_15m,
+        score_tf_15m_enabled,
         vol_shock_atr_mult_threshold,
         atr_mult_mean_window,
         updated_at
@@ -254,6 +263,9 @@ SCHEMA_MIGRATIONS: list[str] = [
         tf_weight_4h,
         tf_weight_1h,
         tf_weight_30m,
+        COALESCE(tf_weight_10m, 0.25) AS tf_weight_10m,
+        COALESCE(tf_weight_15m, 0.0) AS tf_weight_15m,
+        COALESCE(score_tf_15m_enabled, 0) AS score_tf_15m_enabled,
         vol_shock_atr_mult_threshold,
         atr_mult_mean_window,
         updated_at
@@ -475,6 +487,9 @@ def _ensure_columns(db: Database) -> None:
             ("tf_weight_4h", "REAL"),
             ("tf_weight_1h", "REAL"),
             ("tf_weight_30m", "REAL"),
+            ("tf_weight_10m", "REAL"),
+            ("tf_weight_15m", "REAL"),
+            ("score_tf_15m_enabled", "INTEGER"),
             ("vol_shock_atr_mult_threshold", "REAL"),
             ("atr_mult_mean_window", "INTEGER"),
             ("symbol_leverage_map", "TEXT"),
@@ -710,6 +725,39 @@ def _backfill_derived_columns(db: Database) -> None:
                 UPDATE risk_config
                 SET atr_trail_max_pct = 1.8
                 WHERE id=1 AND atr_trail_max_pct IS NULL
+                """.strip()
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("db_noncritical_step_failed", extra={"err": type(e).__name__}, exc_info=True)
+    if "tf_weight_10m" in cols:
+        try:
+            db.execute(
+                """
+                UPDATE risk_config
+                SET tf_weight_10m = 0.25
+                WHERE id=1 AND (tf_weight_10m IS NULL OR tf_weight_10m < 0)
+                """.strip()
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("db_noncritical_step_failed", extra={"err": type(e).__name__}, exc_info=True)
+    if "tf_weight_15m" in cols:
+        try:
+            db.execute(
+                """
+                UPDATE risk_config
+                SET tf_weight_15m = 0.0
+                WHERE id=1 AND (tf_weight_15m IS NULL OR tf_weight_15m < 0)
+                """.strip()
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("db_noncritical_step_failed", extra={"err": type(e).__name__}, exc_info=True)
+    if "score_tf_15m_enabled" in cols:
+        try:
+            db.execute(
+                """
+                UPDATE risk_config
+                SET score_tf_15m_enabled = 0
+                WHERE id=1 AND score_tf_15m_enabled IS NULL
                 """.strip()
             )
         except Exception as e:  # noqa: BLE001

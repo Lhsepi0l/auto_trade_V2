@@ -52,8 +52,11 @@ class RiskConfigSchema(BaseModel):
     tf_weight_4h: float
     tf_weight_1h: float
     tf_weight_30m: float
+    tf_weight_10m: float
+    tf_weight_15m: float
     vol_shock_atr_mult_threshold: float
     atr_mult_mean_window: int
+    score_tf_15m_enabled: bool
 
 
 class EngineStateSchema(BaseModel):
@@ -150,6 +153,10 @@ class SchedulerSnapshotSchema(BaseModel):
     last_decision_reason: Optional[str] = None
     last_action: Optional[str] = None
     last_error: Optional[str] = None
+    active_scoring_timeframes: List[str] = Field(default_factory=list)
+    candidate_score_by_timeframe: Dict[str, float] = Field(default_factory=dict)
+    scoring_weights: Dict[str, float] = Field(default_factory=dict)
+    min_bars_factor: float = 0.6
     symbol_leverage: Dict[str, float] = Field(default_factory=dict)
     leverage_sync_target: Optional[float] = None
     leverage_sync_updated_at: Optional[str] = None

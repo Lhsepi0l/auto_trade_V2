@@ -20,6 +20,7 @@ from apps.discord_bot.ui_labels import (
     RISK_ADVANCED_BUTTON_LABEL,
     RISK_BASIC_BUTTON_LABEL,
     SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
+    SCORING_SETUP_BUTTON_LABEL,
     SIMPLE_PANEL_BUTTON_LABELS,
     SIMPLE_TOGGLE_LABEL,
     START_BUTTON_LABEL,
@@ -59,6 +60,7 @@ HELP_ADVANCED = (
             SYMBOL_LEVERAGE_BUTTON_LABEL,
             UNIVERSE_SYMBOLS_BUTTON_LABEL,
             UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
+            SCORING_SETUP_BUTTON_LABEL,
             SIMPLE_TOGGLE_LABEL,
         ]
     )
@@ -607,6 +609,124 @@ class RiskAdvancedModal(discord.ui.Modal, title="리스크 고급"):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
 
 
+class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
+    tf_weights = discord.ui.TextInput(
+        label="시간봉 가중치(콤마 구분)",
+        placeholder="예: 10m=0.25,15m=0.0,30m=0.25,1h=0.25,4h=0.25",
+        required=True,
+        max_length=140,
+    )
+    score_tf_15m_enabled = discord.ui.TextInput(
+        label="15m 사용 (예/아니오)",
+        placeholder="예: 예",
+        required=True,
+    )
+    score_conf_threshold = discord.ui.TextInput(
+        label="신뢰도 임계값(0~1)",
+        placeholder="예: 0.60",
+        required=True,
+    )
+    score_gap_threshold = discord.ui.TextInput(
+        label="점수 갭 임계값(0~1)",
+        placeholder="예: 0.15",
+        required=True,
+    )
+
+    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(timeout=300)
+        self._api = api
+        self._view = view
+        d = defaults or {}
+        weights = {
+            "10m": d.get("tf_weight_10m", 0.25),
+            "15m": d.get("tf_weight_15m", 0.0),
+            "30m": d.get("tf_weight_30m", 0.25),
+            "1h": d.get("tf_weight_1h", 0.25),
+            "4h": d.get("tf_weight_4h", 0.25),
+        }
+        self.tf_weights.default = ",".join([f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")])
+        self.score_tf_15m_enabled.default = "예" if bool(d.get("score_tf_15m_enabled", False)) else "아니오"
+        self.score_conf_threshold.default = str(d.get("score_conf_threshold", "0.60"))
+        self.score_gap_threshold.default = str(d.get("score_gap_threshold", "0.15"))
+
+    @staticmethod
+    def _parse_weight_text(raw: str) -> Dict[str, float]:
+        parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+        parsed = {}
+        order = ["10m", "15m", "30m", "1h", "4h"]
+        if not parts:
+            return parsed
+
+        has_key = all("=" in p for p in parts)
+        if has_key:
+            for part in parts:
+                if "=" not in part:
+                    raise ValueError("시간봉 가중치는 key=value 형태 또는 숫자 5개 이어야 합니다.")
+                k, v = part.split("=", 1)
+                key = k.strip().lower().replace(" ", "")
+                if key not in {"10m", "15m", "30m", "1h", "4h"}:
+                    raise ValueError("지원하지 않는 시간봉이 포함되어 있습니다.")
+                parsed[key] = _parse_float_range(v, field=f"tf_weight_{key}", min_v=0.0, max_v=1.0)
+            return parsed
+
+        if len(parts) != 5:
+            raise ValueError("숫자 입력은 5개(10m,15m,30m,1h,4h)를 모두 넣어주세요.")
+        for key, val in zip(order, parts):
+            parsed[key] = _parse_float_range(val, field=f"tf_weight_{key}", min_v=0.0, max_v=1.0)
+        return parsed
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not _is_admin(interaction):
+            await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
+            return
+
+        try:
+            parsed_weights = self._parse_weight_text(self.tf_weights)
+            weight_10m = parsed_weights.get("10m", 0.25)
+            weight_15m = parsed_weights.get("15m", 0.0)
+            weight_30m = parsed_weights.get("30m", 0.25)
+            weight_1h = parsed_weights.get("1h", 0.25)
+            weight_4h = parsed_weights.get("4h", 0.25)
+            conf = _parse_float_range(
+                str(self.score_conf_threshold), field="score_conf_threshold", min_v=0.0, max_v=1.0
+            )
+            gap = _parse_float_range(
+                str(self.score_gap_threshold), field="score_gap_threshold", min_v=0.0, max_v=1.0
+            )
+            enabled_15m = _parse_bool_like(str(self.score_tf_15m_enabled), field="score_tf_15m_enabled")
+        except ValueError as e:
+            await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+            return
+
+        if weight_10m + weight_15m + weight_30m + weight_1h + weight_4h <= 0:
+            await interaction.response.send_message("입력 오류: 가중치 합계는 0보다 커야 합니다.", ephemeral=True)
+            return
+        if not enabled_15m:
+            weight_15m = 0.0
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        pairs = {
+            "tf_weight_10m": str(weight_10m),
+            "tf_weight_15m": str(weight_15m),
+            "tf_weight_30m": str(weight_30m),
+            "tf_weight_1h": str(weight_1h),
+            "tf_weight_4h": str(weight_4h),
+            "score_tf_15m_enabled": str(enabled_15m),
+            "score_conf_threshold": str(conf),
+            "score_gap_threshold": str(gap),
+        }
+        try:
+            for k, v in pairs.items():
+                await self._api.set_value(k, v)
+            await self._view.refresh_message(interaction)
+            await interaction.followup.send(
+                "판단식(시간봉/가중치/임계값) 설정을 업데이트했습니다.",
+                ephemeral=True,
+            )
+        except APIError as e:
+            await interaction.followup.send(f"판단식 설정 실패: {e}", ephemeral=True)
+
+
 class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
     amount_usdt = discord.ui.TextInput(
         label="증거금 (USDT, 최소 5)",
@@ -1069,6 +1189,16 @@ class PanelViewBase(discord.ui.View):
             logger.exception("panel_get_status_failed")
         return {}
 
+    async def _get_scoring_setup_defaults(self) -> Dict[str, Any]:
+        try:
+            payload = await self.api.get_status()
+            if not isinstance(payload, dict):
+                return {}
+            return dict(payload.get("config") or payload.get("risk_config") or {})
+        except Exception:
+            logger.exception("panel_get_status_failed")
+            return {}
+
     async def _swap_view(self, interaction: discord.Interaction, new_view: "PanelViewBase") -> None:
         payload = await self.api.get_status()
         if not isinstance(payload, dict):
@@ -1314,6 +1444,19 @@ class AdvancedPanelView(PanelViewBase):
         defaults: Dict[str, Any] = await self._get_risk_config()
         await interaction.response.send_modal(
             UniverseSymbolRemoveModal(
+                api=self.api,
+                view=self,
+                defaults=defaults,
+            )
+        )
+
+    @discord.ui.button(label=SCORING_SETUP_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
+    async def scoring_setup_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        defaults = await self._get_scoring_setup_defaults()
+        await interaction.response.send_modal(
+            ScoringSetupModal(
                 api=self.api,
                 view=self,
                 defaults=defaults,

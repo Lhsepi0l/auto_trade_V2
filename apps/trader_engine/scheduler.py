@@ -57,6 +57,10 @@ class SchedulerSnapshot:
 
     last_action: Optional[str] = None
     last_error: Optional[str] = None
+    active_scoring_timeframes: List[str] = field(default_factory=list)
+    candidate_score_by_timeframe: Dict[str, float] = field(default_factory=dict)
+    scoring_weights: Dict[str, float] = field(default_factory=dict)
+    min_bars_factor: float = 0.6
     symbol_leverage: Dict[str, float] = field(default_factory=dict)
     leverage_sync_target: Optional[float] = None
     leverage_sync_updated_at: Optional[str] = None
@@ -85,7 +89,7 @@ class TraderScheduler:
         execution: ExecutionService,
         notifier: Optional[Notifier] = None,
         report_notifier: Optional[Notifier] = None,
-        tick_sec: float = 1800.0,
+        tick_sec: float = 600.0,
         reverse_threshold: float = 0.55,
         oplog: Optional[OperationalLogger] = None,
         snapshot: Optional[SnapshotService] = None,
@@ -156,6 +160,10 @@ class TraderScheduler:
             last_scores={},
             last_candidate=None,
             last_decision_reason=None,
+            active_scoring_timeframes=[],
+            candidate_score_by_timeframe={},
+            scoring_weights={},
+            min_bars_factor=0.6,
             last_action=None,
             last_error=None,
         )
@@ -218,6 +226,10 @@ class TraderScheduler:
                 last_scores={},
                 last_candidate=None,
                 last_decision_reason=None,
+                active_scoring_timeframes=[],
+                candidate_score_by_timeframe={},
+                scoring_weights={},
+                min_bars_factor=0.6,
                 last_action=None,
                 last_error=None,
             )
@@ -233,6 +245,44 @@ class TraderScheduler:
                 self.snapshot = snap
 
             await self._sleep_until_next()
+
+    @staticmethod
+    def _resolve_scoring_setup(cfg) -> tuple[list[str], Dict[str, float]]:
+        weights: Dict[str, float] = {
+            "10m": float(getattr(cfg, "tf_weight_10m", 0.25)),
+            "15m": float(getattr(cfg, "tf_weight_15m", 0.0)),
+            "30m": float(getattr(cfg, "tf_weight_30m", 0.25)),
+            "1h": float(getattr(cfg, "tf_weight_1h", 0.25)),
+            "4h": float(getattr(cfg, "tf_weight_4h", 0.25)),
+        }
+
+        if not bool(getattr(cfg, "score_tf_15m_enabled", False)):
+            weights.pop("15m", None)
+
+        cleaned: Dict[str, float] = {}
+        for itv, wt in weights.items():
+            if float(wt) > 0:
+                cleaned[itv] = float(wt)
+
+        if not cleaned:
+            return ["10m", "30m", "1h", "4h"], {"10m": 0.25, "30m": 0.25, "1h": 0.25, "4h": 0.25}
+
+        total = sum(cleaned.values()) or 1.0
+        normalized = {itv: float(wt) / float(total) for itv, wt in cleaned.items() if float(wt) > 0}
+        order = ["10m", "15m", "30m", "1h", "4h"]
+        return [itv for itv in order if itv in normalized], normalized
+
+    @staticmethod
+    def _resolve_min_bars_factor(*, tick_sec: float, scoring_timeframes: List[str]) -> float:
+        # For faster tick intervals, loosen minimum bar requirements slightly
+        # to avoid blocking decisions at startup after interval changes.
+        if tick_sec <= 600:
+            return 0.42
+        if tick_sec <= 900:
+            return 0.48
+        if tick_sec <= 1800:
+            return 0.55
+        return 0.6
 
     async def _sleep_until_next(self) -> None:
         total = max(self._tick_sec, 1.0)
@@ -419,10 +469,18 @@ class TraderScheduler:
         await asyncio.to_thread(self._pnl.update_equity_peak, equity_usdt=equity)
 
         # Collect market data (multi TF) for universe.
+        scoring_tfs, scoring_weights = self._resolve_scoring_setup(cfg=cfg)
+        snap.active_scoring_timeframes = list(scoring_tfs)
+        snap.scoring_weights = dict(scoring_weights)
+        snap.min_bars_factor = self._resolve_min_bars_factor(
+            tick_sec=self._tick_sec,
+            scoring_timeframes=scoring_tfs,
+        )
+
         candles_by_symbol_interval: Dict[str, Dict[str, Any]] = {}
         for sym in enabled:
             by_itv: Dict[str, Any] = {}
-            for itv in ("30m", "1h", "4h"):
+            for itv in scoring_tfs:
                 cs = await asyncio.to_thread(self._market_data.get_klines, symbol=sym, interval=itv, limit=260)
                 by_itv[itv] = cs
             candles_by_symbol_interval[sym] = by_itv
@@ -431,6 +489,7 @@ class TraderScheduler:
             self._scoring.score_universe,
             cfg=cfg,
             candles_by_symbol_interval=candles_by_symbol_interval,
+            min_bars_factor=snap.min_bars_factor,
         )
         candidate: Optional[Candidate] = self._scoring.pick_candidate(scores=scores)
 
@@ -442,6 +501,7 @@ class TraderScheduler:
             ss = scores.get(candidate.symbol)
             vol_tag = "VOL_SHOCK" if (ss and ss.vol_shock) else "NORMAL"
             comp = float(ss.composite) if ss else 0.0
+            snap.candidate_score_by_timeframe = dict(candidate.score_by_timeframe or {})
             snap.candidate = {
                 "symbol": candidate.symbol,
                 "direction": candidate.direction,
@@ -710,6 +770,25 @@ class TraderScheduler:
 
         st_pnl = await asyncio.to_thread(self._pnl.get_or_bootstrap)
         m = await asyncio.to_thread(self._pnl.compute_metrics, st=st_pnl, equity_usdt=equity)
+        candidate_score_by_tf: Dict[str, Any] = {}
+        candidate_active_tfs: list[str] = []
+        if candidate:
+            candidate_score_by_tf = dict(candidate.score_by_timeframe or snap.candidate_score_by_timeframe or {})
+            candidate_active_tfs = list(candidate.active_timeframes or [])
+
+        scoring_weights = dict(snap.scoring_weights)
+        if not scoring_weights:
+            scoring_weights = {
+                "10m": 0.25,
+                "30m": 0.25,
+                "1h": 0.25,
+                "4h": 0.25,
+            }
+
+        candidate_score_by_tf = dict(candidate_score_by_tf)
+        if not candidate_score_by_tf and snap.candidate is not None:
+            candidate_score_by_tf = dict((snap.candidate or {}).get("score_by_timeframe", {}))
+
         payload = {
             "engine_state": st.value,
             "position_symbol": open_pos_symbol,
@@ -719,10 +798,16 @@ class TraderScheduler:
             "daily_pnl_pct": float(m.daily_pnl_pct),
             "drawdown_pct": float(m.drawdown_pct),
             "candidate_symbol": candidate.symbol if candidate else None,
+            "candidate_active_timeframes": candidate_active_tfs,
+            "candidate_score_by_timeframe": candidate_score_by_tf,
             "regime": candidate.regime_4h if candidate else None,
             "last_decision_reason": snap.last_decision_reason,
             "last_action": snap.last_action,
             "last_error": snap.last_error,
+            "active_scoring_timeframes": [k for k in snap.active_scoring_timeframes if k in scoring_weights],
+            "scoring_weights": scoring_weights,
+            "min_bars_factor": float(snap.min_bars_factor),
+            "tick_scan_seconds": float(self._tick_sec),
         }
         try:
             await self._notifier.send_status_snapshot(payload)
@@ -807,3 +892,4 @@ class TraderScheduler:
             await self._send_daily_report_payload(payload=payload, require_discord_webhook=False)
         except Exception:
             logger.exception("daily_report_send_failed", extra={"day": report_day})
+

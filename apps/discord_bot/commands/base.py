@@ -61,6 +61,9 @@ RISK_KEYS: List[str] = [
     "tf_weight_4h",
     "tf_weight_1h",
     "tf_weight_30m",
+    "tf_weight_10m",
+    "tf_weight_15m",
+    "score_tf_15m_enabled",
     "vol_shock_atr_mult_threshold",
     "atr_mult_mean_window",
 ]

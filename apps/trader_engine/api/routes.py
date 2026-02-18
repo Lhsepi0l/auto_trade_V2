@@ -275,6 +275,34 @@ def get_status(
     except Exception:
         logger.exception("snapshot_status_failed")
 
+    sched_meta = sched.__dict__ if sched is not None else {}
+    active_scoring_tfs = []
+    candidate_score_by_timeframe = {}
+    scoring_weights = {}
+    scheduler_min_bars_factor = None
+    scheduler_tick_sec = None
+    if isinstance(sched_meta, dict):
+        try:
+            active_scoring_tfs = list(sched_meta.get("active_scoring_timeframes") or [])
+        except Exception:
+            active_scoring_tfs = []
+        try:
+            candidate_score_by_timeframe = dict(sched_meta.get("candidate_score_by_timeframe") or {})
+        except Exception:
+            candidate_score_by_timeframe = {}
+        try:
+            scoring_weights = dict(sched_meta.get("scoring_weights") or {})
+        except Exception:
+            scoring_weights = {}
+        try:
+            scheduler_min_bars_factor = float(sched_meta.get("min_bars_factor") or 0.6)
+        except Exception:
+            scheduler_min_bars_factor = 0.6
+        try:
+            scheduler_tick_sec = float(sched_meta.get("tick_sec") or 0.0) or None
+        except Exception:
+            scheduler_tick_sec = None
+
     last_error = None
     if sched and isinstance(sched, SchedulerSnapshotSchema) and sched.last_error:
         last_error = sched.last_error
@@ -295,9 +323,12 @@ def get_status(
         "min_hold_minutes": cfg.min_hold_minutes,
         "score_conf_threshold": cfg.score_conf_threshold,
         "score_gap_threshold": cfg.score_gap_threshold,
+        "tf_weight_10m": cfg.tf_weight_10m,
+        "tf_weight_15m": cfg.tf_weight_15m,
         "exec_mode_default": cfg.exec_mode_default,
         "exec_limit_timeout_sec": cfg.exec_limit_timeout_sec,
         "exec_limit_retries": cfg.exec_limit_retries,
+        "score_tf_15m_enabled": bool(getattr(cfg, "score_tf_15m_enabled", False)),
         "spread_max_pct": cfg.spread_max_pct,
         "allow_market_when_wide_spread": cfg.allow_market_when_wide_spread,
         "capital_mode": cfg.capital_mode.value if hasattr(cfg.capital_mode, "value") else str(cfg.capital_mode),
@@ -321,12 +352,16 @@ def get_status(
         "atr_trail_k": cfg.atr_trail_k,
         "atr_trail_min_pct": cfg.atr_trail_min_pct,
         "atr_trail_max_pct": cfg.atr_trail_max_pct,
+        "active_scoring_timeframes": active_scoring_tfs,
+        "candidate_score_by_timeframe": candidate_score_by_timeframe,
+        "scoring_weights": scoring_weights,
+        "min_bars_factor": scheduler_min_bars_factor,
         "tf_weight_4h": cfg.tf_weight_4h,
         "tf_weight_1h": cfg.tf_weight_1h,
         "tf_weight_30m": cfg.tf_weight_30m,
         "vol_shock_atr_mult_threshold": cfg.vol_shock_atr_mult_threshold,
         "atr_mult_mean_window": cfg.atr_mult_mean_window,
-        "scheduler_tick_sec": float(getattr(scheduler, "tick_sec", 1800.0)),
+        "scheduler_tick_sec": float(scheduler_tick_sec if scheduler_tick_sec else getattr(scheduler, "tick_sec", 1800.0)),
         "scheduler_enabled": bool(settings.scheduler_enabled) if settings else False,
         "scheduler_running": scheduler_running,
     }
@@ -355,7 +390,7 @@ def get_status(
         ws_connected=bool(getattr(state, "ws_connected", False)),
         listenKey_last_keepalive_ts=getattr(getattr(request.app.state, "user_stream", None), "listen_key_last_keepalive_ts", None),
         last_ws_event_ts=getattr(getattr(request.app.state, "user_stream", None), "last_ws_event_ts", None),
-        safe_mode=bool(getattr(getattr(request.app.state, "user_stream", None), "safe_mode", False)),
+        safe_mode=bool(getattr(getattr(request.app.state, "user_stream", None), "safe_mode", False),
         last_ws_event_time=getattr(state, "last_ws_event_time", None),
         last_fill=(
             {

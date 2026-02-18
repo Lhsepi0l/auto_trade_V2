@@ -71,7 +71,7 @@ class TraderSettings(BaseSettings):
 
     # Scheduler (STEP6)
     scheduler_enabled: bool = Field(default=False, description="If true, run scheduler loop inside API process")
-    scheduler_tick_sec: int = Field(default=1800, description="Scheduler decision tick interval in seconds (default 30m)")
+    scheduler_tick_sec: int = Field(default=600, description="Scheduler decision tick interval in seconds")
     score_threshold: float = Field(default=0.35, description="Entry threshold for long/short score (0..1)")
     reverse_threshold: float = Field(default=0.55, description="Exit threshold for strong reverse signal (0..1)")
     vol_shock_threshold_pct: float = Field(default=2.0, description="ATR%% threshold to tag VOL_SHOCK")

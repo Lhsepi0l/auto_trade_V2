@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
 
 from apps.trader_engine.domain.models import RiskConfig
-from apps.trader_engine.services.indicators import AtrMult, atr_mult, clamp, ema, mean, roc, rsi
+from apps.trader_engine.services.indicators import AtrMult, atr_mult, clamp, ema, roc, rsi
 from apps.trader_engine.services.market_data_service import Candle
 
 
@@ -49,6 +49,8 @@ class SymbolScore:
     strength: float  # max(long, short)
     direction: Direction  # LONG/SHORT based on composite sign (HOLD only when neutral)
     timeframes: Dict[str, TimeframeIndicators]
+    score_by_timeframe: Dict[str, float] = field(default_factory=dict)
+    active_timeframes: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -61,6 +63,8 @@ class SymbolScore:
             "strength": float(self.strength),
             "direction": self.direction,
             "timeframes": {k: asdict(v) for k, v in self.timeframes.items()},
+            "score_by_timeframe": dict(self.score_by_timeframe),
+            "active_timeframes": list(self.active_timeframes),
         }
 
 
@@ -73,6 +77,8 @@ class Candidate:
     second_strength: float  # 0..1
     regime_4h: Regime
     vol_shock: bool
+    score_by_timeframe: Dict[str, float] = field(default_factory=dict)
+    active_timeframes: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -83,6 +89,8 @@ class Candidate:
             "second_strength": float(self.second_strength),
             "regime_4h": self.regime_4h,
             "vol_shock": bool(self.vol_shock),
+            "score_by_timeframe": dict(self.score_by_timeframe),
+            "active_timeframes": list(self.active_timeframes),
         }
 
 
@@ -112,11 +120,19 @@ class ScoringService:
         *,
         cfg: RiskConfig,
         candles_by_symbol_interval: Mapping[str, Mapping[str, Sequence[Candle]]],
+        min_bars_factor: float = 1.0,
     ) -> Dict[str, SymbolScore]:
         out: Dict[str, SymbolScore] = {}
+        interval_weights = self.get_timeframe_weights(cfg=cfg)
         for sym, by_itv in candles_by_symbol_interval.items():
             try:
-                out[str(sym).upper()] = self.score_symbol(cfg=cfg, symbol=str(sym).upper(), candles_by_interval=by_itv)
+                out[str(sym).upper()] = self.score_symbol(
+                    cfg=cfg,
+                    symbol=str(sym).upper(),
+                    candles_by_interval=by_itv,
+                    interval_weights=interval_weights,
+                    min_bars_factor=min_bars_factor,
+                )
             except Exception:
                 # Fail closed: skip on parse issues
                 continue
@@ -128,13 +144,14 @@ class ScoringService:
         cfg: RiskConfig,
         symbol: str,
         candles_by_interval: Mapping[str, Sequence[Candle]],
+        interval_weights: Optional[Mapping[str, float]] = None,
+        min_bars_factor: float = 1.0,
     ) -> SymbolScore:
         sym = symbol.strip().upper()
-        weights = {
-            "4h": float(cfg.tf_weight_4h),
-            "1h": float(cfg.tf_weight_1h),
-            "30m": float(cfg.tf_weight_30m),
-        }
+        weights = dict(interval_weights or self.get_timeframe_weights(cfg=cfg))
+        if not weights:
+            weights = self.get_timeframe_weights(cfg=cfg)
+
         wsum = sum(max(w, 0.0) for w in weights.values()) or 1.0
         for k in list(weights.keys()):
             weights[k] = max(weights[k], 0.0) / wsum
@@ -144,10 +161,21 @@ class ScoringService:
         vol_shock = False
         regime_4h: Regime = "CHOPPY"
 
-        for itv in ("4h", "1h", "30m"):
+        base_len = max(
+            self._ema_slow,
+            self._rsi_period + 1,
+            self._roc_period + 1,
+            self._atr_period + 1,
+        )
+        required_len = max(10, int(base_len * float(min_bars_factor)))
+
+        for itv in ("10m", "15m", "30m", "1h", "4h"):
+            if itv not in weights:
+                continue
+
             candles = list(candles_by_interval.get(itv) or [])
             closes = [float(c.close) for c in candles if float(c.close) > 0]
-            if len(closes) < max(self._ema_slow, self._rsi_period + 1, self._roc_period + 1, self._atr_period + 1):
+            if len(closes) < required_len:
                 continue
 
             # Use extra history for EMA stability.
@@ -166,7 +194,7 @@ class ScoringService:
             atr_mean_f = float(am.atr_pct_mean) if am is not None else 0.0
             atr_mult_f = float(am.mult) if am is not None else 0.0
 
-            if itv == "4h":
+            if itv in {"4h", "1h"}:
                 regime_4h = _regime_4h(ema_fast=e_fast, ema_slow=e_slow, rsi_v=rsi_v)
 
             # Trend score: EMA spread normalized to [-1, 1].
@@ -198,8 +226,11 @@ class ScoringService:
                 atr_pct=atr_pct_f,
                 atr_pct_mean=atr_mean_f,
                 atr_mult=atr_mult_f,
-                regime_4h=regime_4h if itv == "4h" else None,
+                regime_4h=regime_4h if itv in {"4h", "1h"} else None,
             )
+
+            # Track actual weighted components for downstream transparency.
+            score_by_timeframe[itv] = float(comp)
 
         combined = clamp(float(combined), -1.0, 1.0)
         long_score = max(combined, 0.0)
@@ -220,6 +251,8 @@ class ScoringService:
             strength=float(strength),
             direction=direction,
             timeframes=tf_ind,
+            score_by_timeframe=score_by_timeframe,
+            active_timeframes=[k for k in ("10m", "15m", "30m", "1h", "4h") if k in tf_ind],
         )
 
     def pick_candidate(
@@ -255,5 +288,30 @@ class ScoringService:
             second_strength=float(second_strength),
             regime_4h=best.regime_4h,
             vol_shock=bool(best.vol_shock),
+            score_by_timeframe=dict(best.score_by_timeframe),
+            active_timeframes=list(best.active_timeframes),
         )
 
+    @staticmethod
+    def get_timeframe_weights(cfg: RiskConfig) -> Dict[str, float]:
+        # Default composition is stable and explicit:
+        # 10m + 30m + 1h + 4h. 15m can be enabled via flag.
+        weights: Dict[str, float] = {
+            "10m": float(cfg.tf_weight_10m),
+            "15m": float(cfg.tf_weight_15m),
+            "30m": float(cfg.tf_weight_30m),
+            "1h": float(cfg.tf_weight_1h),
+            "4h": float(cfg.tf_weight_4h),
+        }
+        if not bool(getattr(cfg, "score_tf_15m_enabled", False)):
+            weights.pop("15m", None)
+
+        cleaned: Dict[str, float] = {}
+        for itv, wt in list(weights.items()):
+            if float(wt) > 0:
+                cleaned[itv] = float(wt)
+
+        if not cleaned:
+            return {"10m": 0.25, "30m": 0.25, "1h": 0.25, "4h": 0.25}
+
+        return cleaned
