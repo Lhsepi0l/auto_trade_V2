@@ -141,7 +141,7 @@ async def _safe_defer(interaction: discord.Interaction) -> bool:
         try:
             ch = interaction.channel
             if ch is not None and hasattr(ch, "send"):
-                await ch.send("?묐떟 ?쒓컙??珥덇낵?섏뿀?듬땲?? 紐낅졊?대? ?ㅼ떆 ?쒕룄??二쇱꽭??")
+                await ch.send("명령 처리 중 세션이 만료되었습니다. 이 메시지는 임시 알림입니다.")
         except Exception as e:  # noqa: BLE001
             logger.warning("discord_unknown_interaction_notify_failed", extra={"err": type(e).__name__}, exc_info=True)
         return False
@@ -160,10 +160,10 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
     advanced_buttons = list(ADVANCED_PANEL_BUTTON_LABELS)
     advanced_buttons_text = " / ".join(f"`{b}`" for b in advanced_buttons)
     lines = [
-        "泥섏쓬 ?쒖옉?대㈃ ???쒖꽌濡쒕쭔 ?ъ슜?섏꽭??",
-        "1) `/panel`濡??꾩옱 ?곹깭 ?뺤씤",
-        f"2) {beginner_buttons} 踰꾪듉?쇰줈 利됱떆 議곗옉",
-        "3) ?ㅻ쪟媛 ?⑤㈃ ?먯씤??癒쇱? ?쎄퀬 ?ㅼ젙???ы솗?명븯?몄슂.",
+        "현재 대시보드 기반으로 손쉽게 제어할 수 있습니다.",
+        "1) `/panel`에서 환경 설정 확인",
+        f"2) {beginner_buttons} 버튼으로 원하는 기능 실행",
+        "3) 실시간 상태 점검과 설정 반영까지 한 번에 확인 가능합니다.",
     ]
     em = discord.Embed(
         title="상태·운영 상태 안내",
@@ -171,54 +171,54 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
         color=discord.Color.blue(),
     )
     em.add_field(
-        name="媛??癒쇱?",
+        name="기본 설명",
         value=(
-            "`/panel` : ?댁쁺 ?⑤꼸 ?ㅽ뵂(?꾩옱 ?곹깭, ?ㅼ쓬 ?먮떒 ?쒓컖, ?ㅽ뙣 ?ъ쑀 ?쒖떆)\n"
-            "`/status` : ?띿뒪?몃줈 ?먯꽭???곹깭 ?뺤씤"
+            "`/panel` : 패널 관련 명령(설정 조회, 토글, 빠른 적용)\n"
+            "`/status` : 현재 봇 동작 상태 조회"
         ),
         inline=False,
     )
     em.add_field(
-        name="?듭떖 踰꾪듉",
+        name="빠른 버튼",
         value=(
-            f"{beginner_buttons} : ?붾㈃???쒖떆?섎뒗 ?쒖꽌??`{', '.join(simple_buttons)}`\n"
-            f"`{SIMPLE_PANEL_BUTTON_LABELS[0]}` : ?붿쭊 ?먮룞留ㅻℓ ?쒖옉\n"
-            f"`{SIMPLE_PANEL_BUTTON_LABELS[1]}` : ?붿쭊 ?먮룞留ㅻℓ 以묒?\n"
-            f"`{SIMPLE_PANEL_BUTTON_LABELS[2]}` : ?섎룞 ?뺣━ 紐⑤뱶(鍮꾩긽)\n"
-            f"`{SIMPLE_PANEL_BUTTON_LABELS[3]}` : 吏湲?諛붾줈 ??踰??ㅼ틪 ?ㅽ뻾\n"
-            f"`{MARGIN_BUDGET_BUTTON_LABEL}` : 二쇰Ц 湲곗? ?덉궛 議곗젙\n"
-            f"`{ADVANCED_TOGGLE_LABEL}` : 由ъ뒪???몃젅?쇰쭅/?ㅽ뻾紐⑤뱶 ?뺤옣 ?ㅼ젙 ?닿린\n"
+            f"{beginner_buttons} : 초보자용 빠른 실행 버튼 (`{', '.join(simple_buttons)}`)\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[0]}` : 봇 시작\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[1]}` : 봇 중지\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[2]}` : 포지션 마감(선택)\n"
+            f"`{SIMPLE_PANEL_BUTTON_LABELS[3]}` : 긴급 정리 및 상태확인\n"
+            f"`{MARGIN_BUDGET_BUTTON_LABEL}` : 예산 기반 자금 배분 설정\n"
+            f"`{ADVANCED_TOGGLE_LABEL}` : 고급 설정 패널 토글(자동/수동)\n"
         ),
         inline=False,
     )
     em.add_field(
-        name="李멸퀬",
+        name="주의사항",
         value=(
-            "遊뉗? 罹붾뱾 李⑦듃 吏?쒕? 湲곗??쇰줈 吏꾩엯 ?꾨낫瑜?怨꾩궛???먮떒?⑸땲??\n"
-            "蹂듭옟???꾨왂?앹? ???꾩슂 ?놁씠 `/panel`???ㅽ뙣 ?ъ쑀瑜??곕씪媛硫??⑸땲??"
+            "현재 운영 중인 포지션·손익은 `/status`에서 먼저 확인하고 변경하세요.\n"
+            "리스크가 높은 동작(`/panel`의 일괄 반영)은 신중히 사용하세요."
         ),
         inline=False,
     )
     if is_admin:
         em.add_field(
-            name="愿由ъ옄 ?꾩슜 怨좉툒?ㅼ젙",
+            name="운영자 권한 기능",
             value=(
-                "`/risk` : 由ъ뒪???ㅼ젙 議고쉶\n"
-                "`/set` : ?⑥씪 由ъ뒪??媛?蹂寃?n"
-                "`/preset` : ?꾨━???곸슜\n"
-                "`/profile` : ?꾨줈???쇨큵 ?곸슜\n"
-                "`/close` : ?뱀젙 ?щ낵 ?ъ????뺣━\n"
-                "`/closeall` : ?꾩껜 ?ъ????뺣━\n"
-                "`/cooldown_clear` : 荑⑤떎???먯떎 ?쒗븳 ?댁젣\n"
-                "`/report` : 1??由ы룷??利됱떆 ?꾩넚\n"
-                f"{advanced_buttons_text} : 怨좉툒 ?붾㈃?먯꽌 異붽? ?몄텧\n"
+                "`/risk` : 리스크 설정 조회\n"
+                "`/set` : 개별 리스크 키 값 수정\n"
+                "`/preset` : 프리셋 적용\n"
+                "`/profile` : 기본 템플릿 적용\n"
+                "`/close` : 단일 포지션 종료(close)\n"
+                "`/closeall` : 전체 포지션 종료(closeall)\n"
+                "`/cooldown_clear` : 쿨다운 강제 해제\n"
+                "`/report` : 일일 상태 리포트 수동 전송\n"
+                f"{advanced_buttons_text} : 운영용 고급 패널 보조 기능\n"
             ),
             inline=False,
         )
     else:
         em.add_field(
-            name="愿由ъ옄 ?꾩슜",
-            value="愿由ъ옄留??ъ슜 媛?ν빀?덈떎: `/set`, `/risk`, `/preset`, `/profile`, `/close`, `/closeall`, `/cooldown_clear`",
+            name="권한 안내",
+            value="권한이 부족합니다. 관리자 권한이 필요합니다: `/set`, `/risk`, `/preset`, `/profile`, `/close`, `/closeall`, `/cooldown_clear`",
             inline=False,
         )
     return em
@@ -245,7 +245,7 @@ class RemoteControl(commands.Cog):
         self.bot = bot
         self.api = api
 
-    @app_commands.command(name="status", description="?몃젅?대뜑 ?곹깭 ?붿빟 議고쉶")
+    @app_commands.command(name="status", description="전체 운영 상태 조회")
     async def status(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -254,29 +254,37 @@ class RemoteControl(commands.Cog):
             if not isinstance(payload, dict):
                 logger.warning("discord_status_payload_invalid_type", extra={"type": type(payload).__name__})
                 await interaction.followup.send(
-                    f"`/status` 응답이 잘못되었습니다. 타입={type(payload).__name__}`n`/status` endpoint 또는 bot 헬스체크를 점검하세요."
+                    f"`/status` 응답이 잘못되었습니다. 타입={type(payload).__name__}\n"
+                    "/status endpoint 또는 bot 헬스체크를 점검하세요."
                 )
                 return
             msg = _fmt_status_payload(payload)
             await interaction.followup.send(f"```text\n{msg}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="risk", description="?꾩옱 由ъ뒪???ㅼ젙 議고쉶")
+    @app_commands.command(name="risk", description="현재 리스크 설정 조회")
     async def risk(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
         try:
             payload = await self.api.get_risk()
+            if not isinstance(payload, dict):
+                logger.warning("discord_risk_payload_invalid_type", extra={"type": type(payload).__name__})
+                await interaction.followup.send(
+                    f"`/risk` 응답이 잘못되었습니다. 타입={type(payload).__name__}",
+                    ephemeral=True,
+                )
+                return
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="start", description="?붿쭊 ?쒖옉")
+    @app_commands.command(name="start", description="봇 시작")
     async def start(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -284,11 +292,11 @@ class RemoteControl(commands.Cog):
             payload = await self.api.start()
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="stop", description="?붿쭊 以묒?")
+    @app_commands.command(name="stop", description="봇 중지")
     async def stop(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -296,11 +304,11 @@ class RemoteControl(commands.Cog):
             payload = await self.api.stop()
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="panic", description="?⑤땳 紐⑤뱶 ?꾪솚 諛?湲닿툒 ?뺣━")
+    @app_commands.command(name="panic", description="긴급 종료 및 비상 정리")
     async def panic(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -308,27 +316,33 @@ class RemoteControl(commands.Cog):
             payload = await self.api.panic()
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="report", description="?쇱씪 由ы룷??利됱떆 ?꾩넚")
+    @app_commands.command(name="report", description="일간 리포트 수동 전송")
     async def report(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
         try:
             payload = await self.api.send_daily_report()
+            if not isinstance(payload, dict):
+                await interaction.followup.send(
+                    f"`/report` 응답이 잘못되었습니다. 타입={type(payload).__name__}",
+                    ephemeral=True,
+                )
+                return
             summary = payload.get("detail", {})
             day = payload.get("day", "-")
             sent = bool(payload.get("notifier_sent"))
             err = payload.get("notifier_error")
             lines = [
-                "?쇱씪 由ы룷???앹꽦 ?꾨즺",
+                "일간 리포트 수동 전송 결과",
                 f"day: {day}",
                 f"sent_to_discord: {sent}",
             ]
             if not sent and err:
-                lines.append(f"?꾩넚 ?ㅻ쪟: {err}")
+                lines.append(f"전송 오류: {err}")
             if isinstance(summary, dict):
                 lines.append(
                     (
@@ -338,11 +352,11 @@ class RemoteControl(commands.Cog):
                 )
             await interaction.followup.send("```text\n" + "\n".join(lines) + "\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?먮윭: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?덉쇅: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="help", description="珥덈낫?먯슜 ?ъ슜踰?蹂닿린")
+    @app_commands.command(name="help", description="봇 사용 가이드")
     async def help(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -350,10 +364,10 @@ class RemoteControl(commands.Cog):
             em = _build_help_embed(is_admin=_is_admin(interaction))
             await interaction.followup.send(embed=em, ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="close", description="?щ낵 ?⑥씪 泥?궛 (reduceOnly)")
-    @app_commands.describe(symbol="?щ낵 ?덉떆: BTCUSDT")
+    @app_commands.command(name="close", description="단일 포지션 종료 (reduceOnly)")
+    @app_commands.describe(symbol="심볼: BTCUSDT")
     async def close(self, interaction: discord.Interaction, symbol: str) -> None:
         if not await _safe_defer(interaction):
             return
@@ -361,11 +375,11 @@ class RemoteControl(commands.Cog):
             payload = await self.api.close_position(symbol.strip().upper())
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="closeall", description="?꾩껜 ?ъ???泥?궛")
+    @app_commands.command(name="closeall", description="전체 포지션 종료")
     async def closeall(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
@@ -373,9 +387,9 @@ class RemoteControl(commands.Cog):
             payload = await self.api.close_all()
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
     @app_commands.command(name="set", description="리스크 설정 키를 변경합니다")
     @app_commands.describe(
@@ -394,18 +408,18 @@ class RemoteControl(commands.Cog):
             k = key.strip()
             if k not in RISK_KEYS:
                 await interaction.followup.send(
-                    "?섎せ??key?낅땲?? ?덉떆:\n" + ", ".join(RISK_KEYS[:15]) + ", ...",
+                    "허용된 key가 아닙니다. 사용 가능한 key는 아래를 참고하세요:\n" + ", ".join(RISK_KEYS[:15]) + ", ...",
                     ephemeral=True,
                 )
                 return
             payload = await self.api.set_value(k, value)
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="preset", description="由ъ뒪???꾨━???곸슜")
+    @app_commands.command(name="preset", description="프리셋 적용")
     @app_commands.choices(name=[app_commands.Choice(name=p, value=p) for p in PRESETS])
     async def preset(
         self,
@@ -418,9 +432,9 @@ class RemoteControl(commands.Cog):
             payload = await self.api.preset(name.value)
             await interaction.followup.send(f"```json\n{_fmt_json(payload)}\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
 
     @app_commands.command(name="profile", description="사전 저장된 프리셋을 빠르게 적용")
@@ -441,6 +455,12 @@ class RemoteControl(commands.Cog):
             payload = _profile_payload(name.value, budget_usdt)
             await self.api.set_config(payload)
             risk = await self.api.get_risk()
+            if not isinstance(risk, dict):
+                await interaction.followup.send(
+                    f"`/profile` 응답이 잘못되었습니다. 타입={type(risk).__name__}",
+                    ephemeral=True,
+                )
+                return
             lines: List[str] = [
                 f"profile={name.value}",
                 f"max_leverage={risk.get('max_leverage')}",
@@ -452,9 +472,9 @@ class RemoteControl(commands.Cog):
             ]
             await interaction.followup.send("```text\n" + "\n".join(lines) + "\n```")
         except APIError as e:
-            await interaction.followup.send(f"API ?ㅻ쪟: {e}", ephemeral=True)
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
-            await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
+            await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
 
 
 async def setup_commands(bot: commands.Bot, api: TraderAPI) -> None:

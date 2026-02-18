@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -77,11 +77,12 @@ def _format_leverage_lines(enabled_symbols: list[str], sched: Dict[str, Any]) ->
                 t = _fmt_money(target)
                 items.append(f"{sym}:{c}/{t}")
         else:
-            items.append(f"{sym}:?-/{_fmt_money(target)}" if target is not None else f"{sym}:?")
+            items.append(f"{sym}:미동기화/{_fmt_money(target)}" if target is not None else f"{sym}:미확인")
+
     if items:
         lines.append("심볼 레버리지(현재/목표): " + ", ".join(items))
     if updated_at:
-        lines.append(f"레버리지 마지막 동기화: {_fmt_time(updated_at)}")
+        lines.append(f"레버리지 동기화 시간: {_fmt_time(updated_at)}")
     if err:
         lines.append(f"레버리지 동기화 상태: 실패 ({err})")
     elif target is not None:
@@ -90,6 +91,9 @@ def _format_leverage_lines(enabled_symbols: list[str], sched: Dict[str, Any]) ->
 
 
 def format_status_payload(payload: Dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return _truncate(f"status payload type error: {type(payload).__name__}")
+
     engine = payload.get("engine_state") or {}
     risk = payload.get("risk_config") or {}
     summary = payload.get("config_summary") or {}
@@ -113,11 +117,15 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     if isinstance(positions, dict):
         for sym in sorted(positions.keys()):
             row = positions.get(sym) or {}
+            if not isinstance(row, dict):
+                continue
             amt = row.get("position_amt", 0)
-            pnl = row.get("unrealized_pnl", 0)
+            unreal = row.get("unrealized_pnl", 0)
             lev = row.get("leverage", 0)
             entry = row.get("entry_price", 0)
-            pos_lines.append(f"- {sym}: 수량={amt}, 진입가={entry}, 손익={pnl}, 레버리지={lev}")
+            pos_lines.append(
+                f"- {sym}: 수량={amt}, 진입가={entry}, 미실현손익={unreal}, 레버리지={lev}"
+            )
 
     open_orders = binance.get("open_orders") or {}
     oo_total = 0
@@ -133,36 +141,42 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
             if isinstance(row, dict) and row.get("is_wide"):
                 spread_wide.append(f"- {sym}: spread_pct={_fmt_pct(row.get('spread_pct'))}")
 
-    # 엔진 위험/자금/최근 에러
-    dd = pnl.get("drawdown_pct")
-    dp = pnl.get("daily_pnl_pct")
+    # 봇 실행/자금/스케줄 상태
+    dd = pnl.get("drawdown_pct") if isinstance(pnl, dict) else None
+    dp = pnl.get("daily_pnl_pct") if isinstance(pnl, dict) else None
     if dp is None and isinstance(pnl, dict):
         dp = pnl.get("daily_realized_pnl", 0)
-    ls = pnl.get("lose_streak")
-    cd = pnl.get("cooldown_until")
+    ls = pnl.get("lose_streak") if isinstance(pnl, dict) else None
+    cd = pnl.get("cooldown_until") if isinstance(pnl, dict) else None
 
     lines: List[str] = []
-    lines.append(f"엔진 상태: {state}")
+    lines.append(f"봇 상태: {state}")
     lines.append(f"모의모드(DRY_RUN): {dry_run} (strict={dry_run_strict})")
-    lines.append(f"활성 심볼: {', '.join(enabled) if enabled else '(없음)'}")
+    lines.append(f"운영 심볼: {', '.join(enabled) if enabled else '(없음)'}")
     if disabled:
         d0 = []
         for d in disabled[:5]:
             if isinstance(d, dict):
                 d0.append(f"{d.get('symbol')}({d.get('reason')})")
-        lines.append(f"비활성 심볼: {', '.join(d0)}")
+        if d0:
+            lines.append(f"비활성 심볼: {', '.join(d0)}")
     lines.append(f"USDT 잔고: wallet={wallet}, available={available}")
     lines.append(f"오픈 주문 수: {oo_total}")
+
     if pos_lines:
-        lines.append("포지션:")
+        lines.append("포지션")
         lines.extend(pos_lines[:10])
 
     if spread_wide:
-        lines.append("확장된 스프레드:")
+        lines.append("확장된 스프레드 경고:")
         lines.extend(spread_wide[:5])
 
     if isinstance(pnl, dict) and pnl:
-        lines.append(f"손익 요약: 미실현손익 { _fmt_money(pnl.get('last_unrealized_pnl_usdt') or 0.0)} USDT, 일일손익 {_fmt_pct(dp if dp is not None else 0.0)}, DD {_fmt_pct(dd if dd is not None else 0.0)}")
+        unrealized = pnl.get("last_unrealized_pnl_usdt") if isinstance(pnl, dict) else 0
+        lines.append(
+            f"손익 요약: 미실현손익 {_fmt_money(unrealized or 0.0)} USDT, "
+            f"일일손익 {_fmt_pct(dp if dp is not None else 0.0)}, DD {_fmt_pct(dd if dd is not None else 0.0)}"
+        )
         if ls is not None:
             lines.append(f"연패: {ls}")
         if cd:
@@ -176,13 +190,13 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
 
         if isinstance(cand, dict) and cand.get("symbol"):
             lines.append(
-                f"후보: {cand.get('symbol')} {cand.get('direction')} "
+                f"추천: {cand.get('symbol')} {cand.get('direction')} "
                 f"강도={_fmt_money(cand.get('strength'))} 변동성={cand.get('vol_tag')}"
             )
         if isinstance(ai, dict) and ai.get("target_asset"):
             lines.append(
                 f"AI: {ai.get('target_asset')} {ai.get('direction')} "
-                f"신뢰도={_fmt_money(ai.get('confidence'))} 힌트={ai.get('exec_hint')} 태그={ai.get('risk_tag')}"
+                f"신뢰도={_fmt_money(ai.get('confidence'))} 힌트={ai.get('exec_hint')} 리스크={ai.get('risk_tag')}"
             )
 
         lines.extend(_format_leverage_lines(enabled, sched))
