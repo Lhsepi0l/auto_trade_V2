@@ -431,9 +431,9 @@ class OrderRecordRepo:
             INSERT INTO order_records(
                 ts_created, ts_updated, intent_id, cycle_id, run_id,
                 symbol, side, order_type, reduce_only, qty, price, time_in_force,
-                client_order_id, exchange_order_id, status, last_error
+                client_order_id, exchange_order_id, status, realized_pnl, last_error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'CREATED', NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'CREATED', NULL, NULL)
             """.strip(),
             (
                 now,
@@ -480,6 +480,7 @@ class OrderRecordRepo:
         status: str,
         exchange_order_id: Optional[str] = None,
         last_error: Optional[str] = None,
+        realized_pnl: Optional[float] = None,
     ) -> None:
         self._db.execute(
             """
@@ -487,10 +488,11 @@ class OrderRecordRepo:
             SET ts_updated=?,
                 status=?,
                 exchange_order_id=COALESCE(?, exchange_order_id),
+                realized_pnl=COALESCE(?, realized_pnl),
                 last_error=?
             WHERE client_order_id=?
             """.strip(),
-            (_utcnow_iso(), status, exchange_order_id, last_error, client_order_id),
+            (_utcnow_iso(), status, exchange_order_id, realized_pnl, last_error, client_order_id),
         )
 
     def get_by_client_order_id(self, client_order_id: str) -> Optional[Dict[str, Any]]:
@@ -534,6 +536,7 @@ class OrderRecordRepo:
             SELECT
                 COALESCE(SUM(CASE WHEN reduce_only=0 AND UPPER(status)='FILLED' THEN 1 ELSE 0 END), 0) AS entries,
                 COALESCE(SUM(CASE WHEN reduce_only=1 AND UPPER(status)='FILLED' THEN 1 ELSE 0 END), 0) AS closes,
+                COALESCE(SUM(CASE WHEN reduce_only=1 AND UPPER(status)='FILLED' THEN COALESCE(realized_pnl, 0) ELSE 0 END), 0) AS realized_pnl,
                 COALESCE(SUM(CASE WHEN UPPER(status)='ERROR' THEN 1 ELSE 0 END), 0) AS errors,
                 COALESCE(SUM(CASE WHEN UPPER(status)='CANCELED' THEN 1 ELSE 0 END), 0) AS canceled,
                 COALESCE(COUNT(*), 0) AS total_records
@@ -553,6 +556,7 @@ class OrderRecordRepo:
         return {
             "entries": int(row["entries"] or 0),
             "closes": int(row["closes"] or 0),
+            "realized_pnl": float(row["realized_pnl"] or 0.0),
             "errors": int(row["errors"] or 0),
             "canceled": int(row["canceled"] or 0),
             "total_records": int(row["total_records"] or 0),
@@ -575,6 +579,7 @@ class OrderRecordRepo:
                 qty,
                 price,
                 status,
+                realized_pnl,
                 last_error,
                 exchange_order_id
             FROM order_records

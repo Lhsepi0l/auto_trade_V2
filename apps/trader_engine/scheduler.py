@@ -859,6 +859,7 @@ class TraderScheduler:
                         "order_type": str(o.get("order_type")) if o.get("order_type") is not None else None,
                         "exchange_order_id": str(o.get("exchange_order_id")) if o.get("exchange_order_id") is not None else None,
                         "last_error": str(o.get("last_error")) if o.get("last_error") is not None else None,
+                        "realized_pnl": float(o["realized_pnl"]) if o.get("realized_pnl") is not None else None,
                     }
                     if status and not action:
                         action = status

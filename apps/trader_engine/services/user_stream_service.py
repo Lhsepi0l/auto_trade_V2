@@ -287,12 +287,14 @@ class UserStreamService:
         client_order_id = str(o.get("c") or o.get("clientOrderId") or "")
         status_raw = str(o.get("X") or "")
         order_id_raw = o.get("i") or o.get("orderId")
+        realized = _f(o.get("rp"))
         if self._order_records and client_order_id:
             try:
                 self._order_records.mark_status(
                     client_order_id=client_order_id,
                     status=_to_order_record_status(status_raw),
                     exchange_order_id=(str(order_id_raw) if order_id_raw is not None else None),
+                    realized_pnl=realized,
                     last_error=None,
                 )
             except Exception:
@@ -305,7 +307,6 @@ class UserStreamService:
         side = str(o.get("S") or "")
         last_qty = _f(o.get("l"))
         last_price = _f(o.get("L"))
-        realized = _f(o.get("rp"))
         reduce_only = bool(o.get("R"))
         order_status = str(o.get("X") or "")
 

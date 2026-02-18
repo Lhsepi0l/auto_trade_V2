@@ -73,6 +73,25 @@ def _fmt_float(v: Any, digits: int = 3) -> str:
         return str(v)
 
 
+def _fmt_signed_float(v: Any, digits: int = 3) -> str:
+    if v is None:
+        return "-"
+    try:
+        return f"{float(v):+.{digits}f}"
+    except Exception:
+        return str(v)
+
+
+def _fmt_realized_breakdown(v: float | None) -> str:
+    if v is None:
+        return ""
+    if v > 0:
+        return f"익절액={_fmt_signed_float(v, 4)} USDT"
+    if v < 0:
+        return f"손절액={_fmt_signed_float(v, 4)} USDT"
+    return f"실현손익={_fmt_signed_float(v, 4)} USDT"
+
+
 def _fmt_int(v: Any) -> str:
     if v is None:
         return "-"
@@ -135,6 +154,7 @@ def _fmt_report_orders(orders: list[Mapping[str, Any]]) -> list[str]:
         side = str(o.get("side") or "")
         qty = _to_float(o.get("qty"))
         price = _to_float(o.get("price"))
+        realized = _to_float(o.get("realized_pnl"))
         event_time = _fmt_event_time(o.get("ts_updated") or o.get("ts_created"))
         r_only = bool(int(o.get("reduce_only") or 0))
         t = _order_event_type_label(action, r_only, side)
@@ -152,6 +172,8 @@ def _fmt_report_orders(orders: list[Mapping[str, Any]]) -> list[str]:
             extra.append(f"수량={q}")
         if p != "-":
             extra.append(f"가격={p} USDT")
+        if realized is not None:
+            extra.append(_fmt_realized_breakdown(realized))
         if extra:
             base += " | " + " | ".join(extra)
         err = str(o.get("last_error") or "")
@@ -402,10 +424,12 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         notional = (qty_f * price_f) if (qty_f is not None and price_f is not None) else None
         if notional is not None:
             return (
-                f"[EVENT] FILL {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)} | notional=USD {_fmt_float(notional, 2)} | realized={_fmt_float(realized, 4)} USDT"
+                f"[EVENT] FILL {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)} | "
+                f"notional=USD {_fmt_float(notional, 2)} | {_fmt_realized_breakdown(_to_float(realized)) or f'실현손익={_fmt_signed_float(realized, 4)} USDT'}"
             )
         return (
-            f"[EVENT] FILL {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)} | realized={_fmt_float(realized, 4)} USDT"
+            f"[EVENT] FILL {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)} | "
+            f"{_fmt_realized_breakdown(_to_float(realized)) or f'실현손익={_fmt_signed_float(realized, 4)} USDT'}"
         )
 
     if kind == "DAILY_REPORT":
@@ -414,6 +438,7 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         engine_state = str(event.get("engine_state") or (detail or {}).get("engine_state") or "-")
         entries = _fmt_int((detail or {}).get("entries"))
         closes = _fmt_int((detail or {}).get("closes"))
+        realized_total = _fmt_signed_float((detail or {}).get("realized_pnl"), 4)
         blocks = _fmt_int((detail or {}).get("blocks"))
         errors = _fmt_int((detail or {}).get("errors"))
         canceled = _fmt_int((detail or {}).get("canceled"))
@@ -421,12 +446,27 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         orders = (detail or {}).get("orders", [])
         order_lines = _fmt_report_orders(orders) if isinstance(orders, list) else []
         order_summary = "\n".join(order_lines)
+        realized_values = []
+        if isinstance(orders, list):
+            for o in orders:
+                if not isinstance(o, Mapping):
+                    continue
+                rv = _to_float(o.get("realized_pnl"))
+                if rv is not None:
+                    realized_values.append(rv)
+        realized_profit = sum(v for v in realized_values if v and v > 0)
+        realized_loss = sum(v for v in realized_values if v and v < 0)
+        realized_profit_text = _fmt_signed_float(realized_profit, 4)
+        realized_loss_text = _fmt_signed_float(realized_loss, 4)
         return (
             "[일일 리포트]\n"
             f"일자: {day}\n"
             f"엔진 상태: {engine_state}\n"
             f"보고 시각: {reported_at}\n"
             f"진입/청산: {entries} / {closes}\n"
+            f"실현손익: {realized_total} USDT\n"
+            f"익절액: {realized_profit_text} USDT\n"
+            f"손절액: {realized_loss_text} USDT\n"
             f"오류/취소: {errors} / {canceled}\n"
             f"차단/총건수: {blocks} / {total_records}\n"
             f"주문 상세 (최대 12건):\n"

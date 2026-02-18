@@ -536,6 +536,19 @@ def _ensure_columns(db: Database) -> None:
             except Exception as e:  # noqa: BLE001
                 logger.warning("db_noncritical_step_failed", extra={"err": type(e).__name__}, exc_info=True)
 
+    order_cols = _table_columns(db, "order_records")
+    if order_cols:
+        adds4: list[tuple[str, str]] = [
+            ("realized_pnl", "REAL"),
+        ]
+        for name, typ in adds4:
+            if name in order_cols:
+                continue
+            try:
+                db.execute(f"ALTER TABLE order_records ADD COLUMN {name} {typ}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("db_noncritical_step_failed", extra={"err": type(e).__name__}, exc_info=True)
+
 
 def _backfill_derived_columns(db: Database) -> None:
     # Backfill ratio-unit loss limits from legacy percent-unit columns when present.
@@ -852,6 +865,7 @@ def _ensure_order_records_table(db: Database) -> None:
                 client_order_id TEXT NOT NULL UNIQUE,
                 exchange_order_id TEXT,
                 status TEXT NOT NULL,
+                realized_pnl REAL,
                 last_error TEXT
             );
             """.strip()
