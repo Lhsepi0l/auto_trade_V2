@@ -95,6 +95,72 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+def _fmt_event_time(v: Any) -> str:
+    if v is None:
+        return "-"
+    s = str(v).replace("T", " ").split(".")[0]
+    if s.endswith("+00:00"):
+        s = s[:-6]
+    return s
+
+
+def _order_event_type_label(action: str, reduce_only: bool, side: str) -> str:
+    s = str(action or "").upper()
+    side_u = str(side or "").strip().upper()
+    if s in {"ERROR", "FAILED"}:
+        return "실패"
+    if s in {"CANCELED", "CANCELLED"}:
+        return "취소"
+    if s == "CLOSE":
+        if side_u == "BUY":
+            return "숏 청산"
+        if side_u == "SELL":
+            return "롱 청산"
+        return "청산"
+    if s == "ENTRY":
+        return "진입"
+    return s or "-"
+
+
+def _fmt_report_orders(orders: list[Mapping[str, Any]]) -> list[str]:
+    if not isinstance(orders, list):
+        return []
+    lines: list[str] = []
+    for idx, o in enumerate(orders[:12], 1):
+        if not isinstance(o, Mapping):
+            continue
+        action = str(o.get("action") or o.get("status") or "-")
+        status = str(o.get("status") or "-")
+        symbol = str(o.get("symbol") or "-")
+        side = str(o.get("side") or "")
+        qty = _to_float(o.get("qty"))
+        price = _to_float(o.get("price"))
+        event_time = _fmt_event_time(o.get("ts_updated") or o.get("ts_created"))
+        r_only = bool(int(o.get("reduce_only") or 0))
+        t = _order_event_type_label(action, r_only, side)
+        is_close = "청산" in t
+        label = _position_label_from_close_side(side) if is_close else _position_label(side)
+        if t in {"실패", "취소"} and r_only:
+            label = _position_label_from_close_side(side)
+        base = f"{idx:02d}) {event_time} | {symbol} {label} {t}"
+        if status:
+            base += f" ({status})"
+        q = _fmt_float(qty, 4)
+        p = _fmt_float(price, 4)
+        extra: list[str] = []
+        if q != "-":
+            extra.append(f"수량={q}")
+        if p != "-":
+            extra.append(f"가격={p} USDT")
+        if extra:
+            base += " | " + " | ".join(extra)
+        err = str(o.get("last_error") or "")
+        if err:
+            base += f" | 사유={err}"
+        lines.append(base)
+    return lines
+
+
 def _side_to_ko(side: str) -> str:
     s = str(side or "").upper()
     if s == "BUY":
@@ -352,6 +418,9 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         errors = _fmt_int((detail or {}).get("errors"))
         canceled = _fmt_int((detail or {}).get("canceled"))
         total_records = _fmt_int((detail or {}).get("total_records"))
+        orders = (detail or {}).get("orders", [])
+        order_lines = _fmt_report_orders(orders) if isinstance(orders, list) else []
+        order_summary = "\n".join(order_lines)
         return (
             "[일일 리포트]\n"
             f"일자: {day}\n"
@@ -359,7 +428,9 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
             f"보고 시각: {reported_at}\n"
             f"진입/청산: {entries} / {closes}\n"
             f"오류/취소: {errors} / {canceled}\n"
-            f"차단/총건수: {blocks} / {total_records}"
+            f"차단/총건수: {blocks} / {total_records}\n"
+            f"주문 상세 (최대 12건):\n"
+            + (order_summary or "-")
         )
 
     if kind == "ACCOUNT_UPDATE":

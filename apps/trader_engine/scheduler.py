@@ -817,6 +817,7 @@ class TraderScheduler:
 
     def _build_daily_report_payload(self, *, day: str, st: Optional[EngineState] = None) -> Dict[str, Any]:
         details: Dict[str, Any] = {
+            "orders": [],
             "entries": 0,
             "closes": 0,
             "errors": 0,
@@ -828,6 +829,41 @@ class TraderScheduler:
         if self._order_records is not None:
             try:
                 details.update(self._order_records.get_daily_fill_stats(day=day))
+                raw_orders = self._order_records.get_daily_order_events(day=day, limit=30)
+                orders: list[Dict[str, Any]] = []
+                for o in raw_orders:
+                    status = str(o.get("status") or "").upper()
+                    reduce_only = bool(int(o.get("reduce_only") or 0))
+                    side = str(o.get("side") or "-").upper()
+                    if status == "FILLED":
+                        action = "CLOSE" if reduce_only else "ENTRY"
+                    elif status == "ERROR":
+                        action = "ERROR"
+                    elif status == "CANCELED":
+                        action = "CANCELED"
+                    else:
+                        action = status or "-"
+                    o2 = {
+                        "ts_created": str(o.get("ts_created") or ""),
+                        "ts_updated": str(o.get("ts_updated") or ""),
+                        "status": status,
+                        "action": action,
+                        "symbol": str(o.get("symbol") or "-").upper(),
+                        "side": side,
+                        "reduce_only": reduce_only,
+                        "qty": float(o["qty"]) if o.get("qty") is not None else None,
+                        "price": float(o["price"]) if o.get("price") is not None else None,
+                        "intent_id": str(o.get("intent_id")) if o.get("intent_id") is not None else None,
+                        "cycle_id": str(o.get("cycle_id")) if o.get("cycle_id") is not None else None,
+                        "run_id": str(o.get("run_id")) if o.get("run_id") is not None else None,
+                        "order_type": str(o.get("order_type")) if o.get("order_type") is not None else None,
+                        "exchange_order_id": str(o.get("exchange_order_id")) if o.get("exchange_order_id") is not None else None,
+                        "last_error": str(o.get("last_error")) if o.get("last_error") is not None else None,
+                    }
+                    if status and not action:
+                        action = status
+                    orders.append(o2)
+                details["orders"] = orders
             except Exception:
                 logger.exception("daily_report_order_stats_failed", extra={"day": day})
 

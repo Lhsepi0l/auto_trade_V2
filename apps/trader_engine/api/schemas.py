@@ -179,7 +179,25 @@ class SchedulerTickResponse(BaseModel):
     tick_sec: Optional[float] = None
 
 
+class DailyReportOrderSchema(BaseModel):
+    ts_created: str
+    ts_updated: str
+    status: str
+    symbol: str
+    side: str
+    reduce_only: bool = False
+    qty: Optional[float] = None
+    price: Optional[float] = None
+    intent_id: Optional[str] = None
+    cycle_id: Optional[str] = None
+    run_id: Optional[str] = None
+    order_type: Optional[str] = None
+    exchange_order_id: Optional[str] = None
+    last_error: Optional[str] = None
+
+
 class DailyReportDetailSchema(BaseModel):
+    orders: List[DailyReportOrderSchema] = Field(default_factory=list)
     entries: int = 0
     closes: int = 0
     errors: int = 0

@@ -558,6 +558,34 @@ class OrderRecordRepo:
             "total_records": int(row["total_records"] or 0),
         }
 
+    def get_daily_order_events(self, *, day: str, limit: int = 50) -> list[Dict[str, Any]]:
+        start_iso, end_iso = _day_bounds_utc(day)
+        rows = self._db.query_all(
+            """
+            SELECT
+                ts_created,
+                ts_updated,
+                intent_id,
+                cycle_id,
+                run_id,
+                symbol,
+                side,
+                order_type,
+                reduce_only,
+                qty,
+                price,
+                status,
+                last_error,
+                exchange_order_id
+            FROM order_records
+            WHERE ts_updated >= ? AND ts_updated < ?
+            ORDER BY ts_updated DESC
+            LIMIT ?
+            """.strip(),
+            (start_iso, end_iso, int(limit)),
+        )
+        return [dict(r) for r in rows]
+
 
 class RiskBlockRepo:
     def __init__(self, db: Database) -> None:
