@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 
@@ -29,14 +29,14 @@ class PanelControl(commands.Cog):
     @app_commands.command(name="panel", description="운영 패널 열기 (초보자용)")
     async def panel(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):
-            await interaction.response.send_message("관리자만 조작할 수 있습니다.", ephemeral=True)
+            await interaction.response.send_message("관리자 권한이 없습니다.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         ch = interaction.channel
         if ch is None or not hasattr(ch, "send"):
-            await interaction.followup.send("채널에서만 사용 가능합니다.", ephemeral=True)
+            await interaction.followup.send("현재 채널에서 패널을 생성할 수 없습니다.", ephemeral=True)
             return
 
         try:
@@ -58,11 +58,9 @@ class PanelControl(commands.Cog):
             if target_msg is not None:
                 await target_msg.edit(embed=embed, view=view)
                 self._panel_by_channel[channel_id] = int(target_msg.id)
-                await interaction.followup.send(f"패널을 새로고침했습니다. (message_id={target_msg.id})", ephemeral=True)
             else:
                 m = await ch.send(embed=embed, view=view)
                 self._panel_by_channel[channel_id] = int(m.id)
-                await interaction.followup.send(f"패널을 생성했습니다. (message_id={m.id})", ephemeral=True)
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
