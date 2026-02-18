@@ -94,30 +94,28 @@ def _to_float(v: Any) -> float | None:
 def _side_to_ko(side: str) -> str:
     s = str(side or "").upper()
     if s == "BUY":
-        return "濡?
+        return "매수"
     if s == "SELL":
-        return "??
+        return "매도"
     return s or "-"
 
 
 def _decision_reason_ko(reason: str) -> str:
     table = {
-        "no_candidate": "?꾩옱 吏꾩엯 ?꾨낫媛 ?놁뒿?덈떎.",
-        "vol_shock_no_entry": "蹂?숈꽦 湲됰벑 援ш컙?대씪 ?좉퇋 吏꾩엯??蹂대쪟?⑸땲??",
-        "confidence_below_threshold": "?좊ː???먯닔媛 湲곗?移섎낫????뒿?덈떎.",
-        "short_not_allowed_regime": "?꾩옱 援ш컙?먯꽌 ??吏꾩엯???쒗븳?⑸땲??",
-        "enter_candidate": "吏꾩엯 ?꾨낫媛 ?좏깮?섏뿀?듬땲??",
-        "vol_shock_close": "蹂?숈꽦 湲됰벑 援ш컙?대씪 ?ъ???醫낅즺瑜?蹂대쪟?⑸땲??",
-        "profit_hold": "?듭젅 ?좏샇媛 ?댁븘?덉뼱 ?湲??곹깭?낅땲??",
-        "same_symbol": "?꾩옱 蹂댁쑀 ?щ낵怨??숈씪???щ낵? 以묐났 吏꾩엯?????놁뒿?덈떎.",
-        "gap_below_threshold": "?먯닔 李⑥씠媛 湲곗?移섎낫???묒븘 ?湲고빀?덈떎.",
-        "rebalance_to_better_candidate": "???섏? ?꾨낫媛 ?섏? ?ы룊媛???대룞?⑸땲??",
+        "no_candidate": "진입 후보가 없어 진입하지 못했습니다.",
+        "vol_shock_no_entry": "변동성 급등으로 변동성 필터가 진입을 차단했습니다.",
+        "confidence_below_threshold": "신뢰도 점수가 임계값 아래여서 진입을 보류했습니다.",
+        "short_not_allowed_regime": "현재 시장 구간에서는 숏 진입이 허용되지 않습니다.",
+        "enter_candidate": "진입 후보가 선정되어 주문 준비를 시작했습니다.",
+        "vol_shock_close": "변동성 급등으로 청산 동작이 보류되었습니다.",
+        "profit_hold": "목표 수익이 미달해 포지션을 유지합니다.",
+        "same_symbol": "현재 탐색한 심볼이 이미 보유 중인 심볼과 같아 중복 진입하지 않습니다.",
+        "gap_below_threshold": "갭 크기가 임계값 이하라 판단이 생략되었습니다.",
+        "rebalance_to_better_candidate": "더 유리한 후보 심볼로 리밸런싱 전환이 예정되어 있습니다.",
     }
     if reason.startswith("min_hold_active:"):
-        return "理쒖냼 蹂댁쑀 ?쒓컙 議곌굔???쒖꽦 ?곹깭?낅땲??"
-    return table.get(reason, "誘명솗???ъ쑀")
-
-
+        return "최소 보유 기간 조건 미충족으로 중단합니다."
+    return table.get(reason, "알 수 없는 진입 사유입니다.")
 def _regime_ko(regime: str) -> str:
     v = str(regime or "").upper()
     if v == "BULL":
@@ -130,31 +128,29 @@ def _regime_ko(regime: str) -> str:
 
 
 _ERROR_GUIDE_TABLE: list[tuple[str, str, str]] = [
-    ("engine_in_panic", "?붿쭊??PANIC ?곹깭?낅땲??, "?ъ???醫낅즺 ??/panic濡?蹂듦뎄?섍퀬 ?ㅼ떆 ?쒖옉?섏꽭??"),
-    ("recovery_lock_active", "蹂듦뎄 ?쎌씠 ?쒖꽦 ?곹깭?낅땲??, "蹂듦뎄 ?湲??쒓컙???앸궃 ???ㅼ떆 ?쒕룄?섏꽭??"),
-    ("ws_down_safe_mode", "?ъ슜???곗씠??WebSocket???딄꼈?듬땲??, "API ??沅뚰븳/?ㅽ듃?뚰겕 ?곹깭瑜??뺤씤?섍퀬 Binance WebSocket???ъ뿰寃고븯?몄슂."),
-    ("multiple_open_positions_detected", "?щ낵???대? 2媛??댁긽 ?대┛ ?ъ??섏씠 ?덉뒿?덈떎", "湲곗〈 ?ъ??섏쓣 ?뺣━?????ㅼ떆 ?쒕룄?섏꽭??"),
-    ("symbol_not_allowed", "?대떦 ?щ낵???댁쁺 ?щ낵 紐⑸줉???놁뒿?덈떎", "?ㅼ젙?먯꽌 enabled_symbols/?щ낵 ?ㅼ젙???섏젙?????ㅼ?以꾨윭瑜??ъ떆?묓븯?몄슂."),
-    ("symbol_required", "?щ낵 媛믪씠 ?놁뒿?덈떎", "BTCUSDT泥섎읆 ?좏슚???щ낵???낅젰?섏꽭??"),
-    ("quantity_below_min_qty", "二쇰Ц ?섎웾??嫄곕옒??理쒖냼移섎낫???묒뒿?덈떎", "?섎웾???섎━嫄곕굹 二쇰Ц 湲덉븸?????ш쾶 ?ㅼ젙?섏꽭??"),
-    ("notional_below_min_notional", "二쇰Ц Notional??理쒖냼 湲덉븸蹂대떎 ?묒뒿?덈떎", "1??吏꾩엯 湲덉븸 ?먮뒗 per_trade_risk_pct瑜??섎젮 ?ㅼ떆 ?ㅽ뻾?섏꽭??"),
-    ("min_qty", "?섎웾??理쒖냼 ?섎웾蹂대떎 ?묒뒿?덈떎", "?대떦 ?щ낵??理쒖냼 二쇰Ц ?⑥쐞濡??щ젮???ㅼ떆 ?쒕룄?섏꽭??"),
-    ("hedge_mode_enabled", "怨꾩젙???ㅼ? 紐⑤뱶?낅땲??, "?좊Ъ 怨꾩젙??ONEWAY(?쇰컲) 紐⑤뱶濡??꾪솚?섏꽭??"),
-    ("adding_to_position_not_allowed", "異붽? 吏꾩엯??李⑤떒?섏뿀?듬땲??, "?ъ???泥?궛/由ъ뀑 議곌굔??留욎쓣 ?뚭퉴吏 ?湲????ъ떆?꾪븯?몄슂."),
-    ("single_asset_rule_unresolved", "?⑥씪 ?щ낵 洹쒖튃?먯꽌 ?ㅽ뻾??李⑤떒?섏뿀?듬땲??, "荑⑤떎?댁씠 ?앸굹嫄곕굹 ?ㅻⅨ ?щ낵 ?ъ??섏쓣 ?뺣━?????쒕룄?섏꽭??"),
-    ("risk_guard_failed", "由ъ뒪??媛?쒖뿉??李⑤떒?섏뿀?듬땲??, "由ъ뒪???ㅼ젙(?쇱씪 ?먯떎?쒕룄, DD, 荑⑤떎?? ?몄텧?쒕룄)???먭??섏꽭??"),
-    ("book_ticker_unavailable", "?꾩옱 媛寃??멸? 議고쉶媛 遺덉븞?뺥빀?덈떎", "?쇱떆?곸씤 ?쒖옣/?ㅽ듃?뚰겕 ?댁뒋?????덉쑝???좎떆 ???ъ떆?꾪븯?몄슂."),
-    ("market_fallback_blocked_by_spread_guard", "?ㅽ봽?덈뱶媛 而ㅼ꽌 ?쒖옣媛 二쇰Ц ?泥닿? 李⑤떒?섏뿀?듬땲??, "spread_max_pct瑜??꾪솕?섍굅???쒖옣媛 ?泥?洹쒖튃??議곗젙?섏꽭??"),
-    ("engine_not_running", "?붿쭊??RUNNING ?곹깭媛 ?꾨떃?덈떎", "?붿쭊???쒖옉?????ㅼ떆 ?쒕룄?섏꽭??"),
-    ("binance_auth_error", "諛붿씠?몄뒪 ?몄쬆 ?ㅻ쪟", "API Key/Secret, IP ?묎렐?쒗븳, 沅뚰븳 ?ㅼ젙???뺤씤?섏꽭??"),
+    ("engine_in_panic", "엔진이 PANIC 상태입니다. 즉시 복구가 필요합니다.", "자동/수동 모드 상태를 확인하고 안전 모드에서 벗어난 뒤 조치하세요."),
+    ("recovery_lock_active", "복구 락이 활성화되어 있습니다.", "복구 락이 해제될 때까지 진입/청산이 잠깐 중단됩니다."),
+    ("ws_down_safe_mode", "WebSocket이 불안정해 안전 모드가 활성화되었습니다.", "네트워크/API 상태를 확인한 뒤 Binance WebSocket 재연결을 기다립니다."),
+    ("multiple_open_positions_detected", "동일 계열 심볼에서 동일 방향 포지션이 2개 이상 감지됨", "동일 종목/방향 중복 포지션은 무시되고 추가 진입이 차단됩니다."),
+    ("symbol_not_allowed", "요청한 심볼이 허용 목록에 없습니다.", "설정 파일의 enabled_symbols에 심볼을 추가하거나 심볼 필터를 점검하세요."),
+    ("symbol_required", "심볼이 지정되지 않았습니다.", "BTCUSDT 또는 기본 심볼을 명시해 주세요."),
+    ("quantity_below_min_qty", "수량이 최소 주문 수량보다 작습니다.", "거래소 LOT_SIZE 최소 수량/단위를 확인해 수량을 상향 조정하세요."),
+    ("notional_below_min_notional", "명목가치가 최소 Notional 미달입니다.", "1회 최대 리스크 비중 또는 per_trade_risk_pct를 조정하세요."),
+    ("min_qty", "주문 수량이 최소 수량 조건 미달입니다.", "해당 심볼의 minQty 규칙을 반영해 수량을 맞추세요."),
+    ("hedge_mode_enabled", "헤지 모드가 활성화되어 있어 단방향 모드가 강제됩니다.", "거래 모드(ONEWAY)로 전환 후 재시도하세요."),
+    ("adding_to_position_not_allowed", "포지션 추가 진입이 허용되지 않습니다.", "현재 규칙 또는 증거금 여유를 확인해 재설정하세요."),
+    ("single_asset_rule_unresolved", "단일 자산 룰 충돌이 해결되지 않았습니다.", "룰 우선순위와 심볼 설정 충돌을 점검하세요."),
+    ("risk_guard_failed", "리스크 가드 조건 미충족입니다.", "리스크 가드 파라미터(DD, drawdown, max_notional)를 완화하거나 조정하세요."),
+    ("book_ticker_unavailable", "현재 책정 티커 조회가 불안정합니다.", "API 연결/권한/네트워크를 점검하세요."),
+    ("market_fallback_blocked_by_spread_guard", "스프레드 가드로 인해 시장 fallback이 차단됩니다.", "spread_max_pct를 완화하거나 주문 방식을 조정하세요."),
+    ("engine_not_running", "엔진이 RUNNING 상태가 아닙니다.", "엔진 로그를 확인 후 재시작 또는 수동 복구하세요."),
+    ("binance_auth_error", "바이낸스 인증 오류", "API Key/Secret, IP 제한, 권한 설정을 점검하세요."),
 ]
-
-
 def _normalize_error_code(err: str) -> str:
     return " ".join(str(err).strip().split()).lower()
 
 
-def _error_guidance(err: str) -> tuple[str, str] | None:
+def _error_guidance(err: str) -> tuple[str, str, str] | None:
     text = _normalize_error_code(err)
     if not text:
         return None
@@ -162,8 +158,8 @@ def _error_guidance(err: str) -> tuple[str, str] | None:
     if text.startswith("engine_not_running:"):
         return (
             "engine_not_running",
-            "?붿쭊??RUNNING ?곹깭媛 ?꾨떃?덈떎",
-            "?붿쭊??癒쇱? ?쒖옉?????ㅼ떆 ?쒕룄?섏꽭??"
+            "엔진이 RUNNING 상태가 아닙니다.",
+            "엔진 상태를 확인하고 재시작 후 재시도하세요."
         )
 
     m = re.match(r"binance_http_(\d+)_code_(-?\d+)", text)
@@ -171,21 +167,19 @@ def _error_guidance(err: str) -> tuple[str, str] | None:
         status = m.group(1)
         code = m.group(2)
         if status == "401":
-            return (f"binance_http_{status}_code_{code}", "?몄쬆 ?ㅻ쪟 ?먮뒗 沅뚰븳 遺議?, "API Key/Secret 諛??좊Ъ 嫄곕옒 沅뚰븳???뺤씤?섏꽭??")
+            return (f"binance_http_{status}_code_{code}", "인증 실패(401)", "API Key/Secret 권한, IP 제한, API 토큰 상태를 점검하세요.")
         if status == "403":
-            return (f"binance_http_{status}_code_{code}", "?묎렐??李⑤떒?섏뿀?듬땲??, "API Key 沅뚰븳 諛?IP ?쒗븳(?붿씠?몃━?ㅽ듃)???먭??섏꽭??")
+            return (f"binance_http_{status}_code_{code}", "권한 거부(403)", "거래소 API 권한, IP 화이트리스트, 계정 제약 조건을 점검하세요.")
         if status == "429":
-            return (f"binance_http_{status}_code_{code}", "Rate limit 珥덇낵", "?붿껌??以꾩씠怨??좎떆 ???ъ떆?꾪븯?몄슂.")
+            return (f"binance_http_{status}_code_{code}", "요청 제한 초과(429)", "요청 간격을 늘려서 재시도하세요.")
         if status and status.startswith("5"):
-            return (f"binance_http_{status}_code_{code}", "嫄곕옒???쇱떆 ?ㅻ쪟", "?좎떆 ???ъ떆?꾪븯怨? 吏?띾릺硫?諛붿씠?몄뒪 ?곹깭 ?섏씠吏瑜??뺤씤?섏꽭??")
-        return (f"binance_http_{status}_code_{code}", "嫄곕옒?뚭? ?붿껌??嫄곕??덉뒿?덈떎", "?щ낵/?ъ씠???섎웾/?덈쾭由ъ?瑜??뺤씤 ???ㅼ떆 ?쒕룄?섏꽭??")
+            return (f"binance_http_{status}_code_{code}", "바이낸스 서버 오류", "일시 장애 가능성이 있으니 잠시 후 재시도 후, 잔고/계정 상태를 확인하세요.")
+        return (f"binance_http_{status}_code_{code}", "예상치 못한 HTTP 오류", "요청 파라미터, 심볼, 네트워크 상태를 함께 점검하세요.")
 
     for code, issue, action in _ERROR_GUIDE_TABLE:
         if code in text:
             return (code, issue, action)
     return None
-
-
 def _format_fail_line(symbol: str, raw_error: str) -> str:
     err = str(raw_error)
     g = _error_guidance(err)
@@ -348,4 +342,5 @@ def build_notifier(discord_webhook_url: str) -> Notifier:
         logger.info("discord_webhook_disabled")
         return LoggingNotifier()
     return DiscordWebhookNotifier(url=url)
+
 
