@@ -405,23 +405,6 @@ def set_scheduler_interval(
         tick_sec = scheduler.set_tick_sec(req.tick_sec)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
-    notify_interval_sec = int(max(round(tick_sec), 10))
-    if notify_interval_sec > 3600:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"notify_interval_sec cannot exceed 3600 (requested={notify_interval_sec})",
-        )
-    try:
-        risk.set_value(RiskConfigKey.notify_interval_sec, str(notify_interval_sec))
-    except RiskConfigValidationError as e:
-        errs = _parse_set_validation_errors(e.message)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "validation_failed",
-                "errors": [x.model_dump() for x in errs],
-            },
-        ) from e
 
     return SchedulerControlResponse(
         tick_sec=tick_sec,

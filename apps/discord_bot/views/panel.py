@@ -19,6 +19,7 @@ from apps.discord_bot.ui_labels import (
     RISK_ADVANCED_BUTTON_LABEL,
     RISK_BASIC_BUTTON_LABEL,
     SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
+    NOTIFY_INTERVAL_SELECT_PLACEHOLDER,
     SIMPLE_PANEL_BUTTON_LABELS,
     SIMPLE_TOGGLE_LABEL,
     START_BUTTON_LABEL,
@@ -46,7 +47,7 @@ HELP_SIMPLE = (
         ]
     )
     + " 입니다.\n"
-    + "판단 주기(스캔 간격)와 상태 알림 주기는 항상 함께 맞춰집니다."
+    + "판단 주기(스캔 간격)와 상태 알림 주기는 각각 개별 설정 가능합니다."
 )
 HELP_ADVANCED = (
     "고급 모드 버튼: "
@@ -62,6 +63,7 @@ HELP_ADVANCED = (
         ]
     )
     + " 와 실행모드/판단 주기 선택이 같이 표시됩니다."
+    + " 상태알림 간격 선택도 같이 표시됩니다."
 )
 
 REASON_HINT_MAP: dict[str, str] = {
@@ -1215,6 +1217,42 @@ class AdvancedPanelView(PanelViewBase):
             )
         except APIError as e:
             await interaction.followup.send(f"스캔 간격 변경 실패: {e}", ephemeral=True)
+
+    @discord.ui.select(
+        placeholder=NOTIFY_INTERVAL_SELECT_PLACEHOLDER,
+        options=[
+            discord.SelectOption(label="10초", value="10"),
+            discord.SelectOption(label="30초", value="30"),
+            discord.SelectOption(label="1분", value="60"),
+            discord.SelectOption(label="5분", value="300"),
+            discord.SelectOption(label="10분", value="600"),
+            discord.SelectOption(label="15분", value="900"),
+            discord.SelectOption(label="30분", value="1800", default=True),
+            discord.SelectOption(label="60분", value="3600"),
+        ],
+        row=3,
+    )
+    async def notify_interval_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
+        if not await self._guard(interaction):
+            return
+        try:
+            notify_sec = float(str(select.values[0]))
+        except Exception:
+            await interaction.response.send_message("유효하지 않은 간격입니다.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._api.set_value("notify_interval_sec", str(int(notify_sec)))
+            await self.refresh_message(interaction)
+            if notify_sec >= 60:
+                minutes = int(notify_sec // 60)
+                await interaction.followup.send(f"상태 알림 주기를 {minutes}분으로 변경했습니다.", ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"상태 알림 주기를 {int(notify_sec)}초로 변경했습니다.", ephemeral=True
+                )
+        except APIError as e:
+            await interaction.followup.send(f"상태 알림 주기 변경 실패: {e}", ephemeral=True)
 
 
 PanelView = SimplePanelView
