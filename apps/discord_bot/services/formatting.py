@@ -129,17 +129,37 @@ def _reason_to_kor(raw_reason: Any) -> str:
     return reason
 
 
-def _first_position(positions: Any) -> tuple[str, str, float]:
+def _position_side(amount: Any, side_hint: Any = None) -> str:
+    if side_hint is not None:
+        s = str(side_hint).strip().upper()
+        if s in {"LONG", "BUY", "롱"}:
+            return "롱"
+        if s in {"SHORT", "SELL", "숏"}:
+            return "숏"
+    try:
+        v = float(amount)
+    except Exception:
+        return "-"
+    if v > 0:
+        return "롱"
+    if v < 0:
+        return "숏"
+    return "-"
+
+
+def _first_position(positions: Any) -> tuple[str, str, float, str]:
     if not isinstance(positions, dict):
-        return "-", "-", 0.0
+        return "-", "-", 0.0, "-"
 
     fallback_symbol = "-"
     fallback_unrealized = 0.0
+    fallback_side = "-"
     for sym, row in positions.items():
         if not isinstance(row, dict):
             continue
         if fallback_symbol == "-":
             fallback_symbol = str(sym)
+            fallback_side = _position_side(row.get("position_amt"), row.get("position_side"))
             try:
                 fallback_unrealized = float(row.get("unrealized_pnl") or 0.0)
             except Exception:
@@ -154,11 +174,11 @@ def _first_position(positions: Any) -> tuple[str, str, float]:
                 unrealized = float(row.get("unrealized_pnl") or 0.0)
             except Exception:
                 unrealized = 0.0
-            return str(sym), _fmt_money(amt), unrealized
+            return str(sym), _fmt_money(abs(amt)), unrealized, _position_side(amt, row.get("position_side"))
 
     if fallback_symbol == "-":
-        return "-", "-", 0.0
-    return fallback_symbol, _fmt_money(0.0), fallback_unrealized
+        return "-", "-", 0.0, "-"
+    return fallback_symbol, _fmt_money(0.0), fallback_unrealized, fallback_side
 
 
 def _collect_unrealized(positions: Any, pnl: Dict[str, Any]) -> float:
@@ -198,7 +218,7 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     enabled_symbols = [str(x) for x in (binance.get("enabled_symbols") or []) if str(x).strip()]
 
     positions = binance.get("positions")
-    pos_symbol, pos_qty, pos_unrealized = _first_position(positions)
+    pos_symbol, pos_qty, pos_unrealized, pos_side = _first_position(positions)
     unrealized_sum = _collect_unrealized(positions, pnl)
     if unrealized_sum == 0 and pos_unrealized != 0:
         unrealized_sum = pos_unrealized
@@ -231,7 +251,8 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     if pos_symbol == "-":
         lines.append("현재 포지션: -")
     else:
-        lines.append(f"현재 포지션: {pos_symbol} (수량 {pos_qty})")
+        side_label = f" [{pos_side}]" if pos_side != "-" else ""
+        lines.append(f"현재 포지션: {pos_symbol}{side_label} (수량 {pos_qty})")
 
     lines.append(
         "손익 요약: "

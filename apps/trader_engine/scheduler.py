@@ -692,6 +692,7 @@ class TraderScheduler:
             "engine_state": st.value,
             "position_symbol": open_pos_symbol,
             "position_amt": float(open_pos_amt),
+            "position_side": "LONG" if open_pos_amt > 0 else "SHORT" if open_pos_amt < 0 else None,
             "upnl": float(upnl_total),
             "daily_pnl_pct": float(m.daily_pnl_pct),
             "drawdown_pct": float(m.drawdown_pct),

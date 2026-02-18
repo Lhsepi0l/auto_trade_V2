@@ -119,11 +119,29 @@ def _decision_reason_ko(reason: str) -> str:
 def _regime_ko(regime: str) -> str:
     v = str(regime or "").upper()
     if v == "BULL":
-        return "bull"
+        return "상승"
     if v == "BEAR":
-        return "bear"
+        return "하락"
     if v:
         return v
+    return "-"
+
+
+def _position_side(position_amt: Any, position_side: Any = None) -> str:
+    if position_side is not None:
+        s = str(position_side).strip().upper()
+        if s in {"LONG", "BUY", "롱"}:
+            return "롱"
+        if s in {"SHORT", "SELL", "숏"}:
+            return "숏"
+    try:
+        v = float(position_amt or 0.0)
+    except Exception:
+        return "-"
+    if v > 0:
+        return "롱"
+    if v < 0:
+        return "숏"
     return "-"
 
 
@@ -300,11 +318,18 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
 def _format_status_line(snapshot: Mapping[str, Any]) -> str:
     engine_state = str(snapshot.get("engine_state") or "UNKNOWN")
     pos = snapshot.get("position_symbol")
-    amt = _fmt_float(snapshot.get("position_amt"), 4)
+    amt_raw = snapshot.get("position_amt")
+    side = _position_side(amt_raw, snapshot.get("position_side"))
+    try:
+        amt = _fmt_float(abs(float(amt_raw or 0.0)), 4)
+    except Exception:
+        amt = _fmt_float(amt_raw, 4)
     upnl = _fmt_float(snapshot.get("upnl"), 2)
     daily = _fmt_float(snapshot.get("daily_pnl_pct"), 2)
     dd = _fmt_float(snapshot.get("drawdown_pct"), 2)
-    regime = _regime_ko(str(snapshot.get("regime") or "-"))
+    regime_raw = str(snapshot.get("regime") or "-")
+    regime = _regime_ko(regime_raw)
+    regime_code = regime_raw.strip().upper() if regime_raw else "-"
     candidate = snapshot.get("candidate_symbol") or "-"
     dec = str(snapshot.get("last_decision_reason") or "-")
     dec_ko = _decision_reason_ko(dec)
@@ -313,26 +338,31 @@ def _format_status_line(snapshot: Mapping[str, Any]) -> str:
 
     pos_line = "-"
     if pos:
-        pos_line = f"{pos} (size {amt})"
+        side_label = f"[{side}] " if side != "-" else ""
+        pos_line = f"{pos} {side_label}(수량 {amt})"
 
     lines = [
-        "[STATUS]",
-        f"- state: {engine_state}",
-        f"- position: {pos_line}",
-        f"- pnl: upnl {upnl} USDT, day {daily}%, dd {dd}%",
-        f"- regime: {regime}, candidate: {candidate}",
-        f"- decision: {dec} -> {dec_ko}",
-        f"- last_action: {last_action}",
+        "[상태 알림]",
+        f"엔진 상태: {engine_state}",
+        f"현재 포지션: {pos_line}",
+        (
+            "손익 요약: "
+            f"미실현손익(uPnL) {upnl} USDT, "
+            f"일일손익 {daily}%, "
+            f"DD {dd}%"
+        ),
+        f"시장 판단: 레짐 {regime}({regime_code}), 후보 심볼 {candidate}",
+        f"이번 결정: {dec} -> {dec_ko}",
+        f"최근 액션: {last_action}",
     ]
     if str(last_error) != "-":
         err = str(last_error)
-        lines.append(f"- last_error: {err}")
+        lines.append(f"오류: {err}")
         guide = _error_guidance(err)
         if guide is not None:
             code, issue, action = guide
-            lines.append(f"- 에러 코드: {code}")
-            lines.append(f"- 원인: {issue}")
-            lines.append(f"- 권장 대응: {action}")
+            lines.append(f"권장 대응: {code} - {issue}")
+            lines.append(f"대응: {action}")
     return "\n".join(lines)
 
 
