@@ -164,3 +164,15 @@ class BinanceService:
             "open_orders": open_orders,
             "spreads": spreads,
         }
+
+    def get_symbol_leverage(self, *, symbols: Sequence[str]) -> Dict[str, float]:
+        # Return leverage per symbol from Binance. Symbols not returned by payload are omitted.
+        return self._client.get_symbol_leverage_usdtm(symbols=symbols)
+
+    def set_leverage(self, *, symbol: str, leverage: float) -> Mapping[str, Any]:
+        """Set leverage per symbol.
+
+        Returns raw exchange response; errors are propagated to caller for retry/logging.
+        """
+        leverage_int = int(max(1, round(float(leverage))))
+        return self._client.set_leverage(symbol=symbol, leverage=leverage_int)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -49,6 +49,10 @@ class SchedulerSnapshot:
 
     last_action: Optional[str] = None
     last_error: Optional[str] = None
+    symbol_leverage: Dict[str, float] = field(default_factory=dict)
+    leverage_sync_target: Optional[float] = None
+    leverage_sync_updated_at: Optional[str] = None
+    leverage_sync_error: Optional[str] = None
 
 
 class TraderScheduler:
@@ -236,16 +240,136 @@ class TraderScheduler:
         open_pos_amt = 0.0
         open_pos_upnl = 0.0
         upnl_total = 0.0
+
+        target_lev = float(cfg.max_leverage)
+        snap.leverage_sync_target = target_lev if target_lev > 0 else None
+        snap.symbol_leverage = {}
+        snap.leverage_sync_error = None
+        snap.leverage_sync_updated_at = None
+
         if isinstance(positions, dict):
             for sym, row in positions.items():
                 if not isinstance(row, dict):
                     continue
+                lev = float(row.get("leverage") or 0.0)
+                if lev > 0:
+                    snap.symbol_leverage.setdefault(str(sym).upper(), lev)
                 upnl_total += float(row.get("unrealized_pnl") or 0.0)
                 amt = float(row.get("position_amt") or 0.0)
                 if abs(amt) > 0:
                     open_pos_symbol = str(sym).upper()
                     open_pos_amt = amt
                     open_pos_upnl = float(row.get("unrealized_pnl") or 0.0)
+
+        # 1) Query current leverage from Binance for each enabled symbol.
+        # If this query fails, keep execution continuing but mark sync error so we don't
+        # blindly sync based on stale/missing leverage data.
+        leverage_query_error: Optional[str] = None
+        if target_lev > 0 and enabled:
+            try:
+                lev_map = await asyncio.to_thread(self._binance.get_symbol_leverage, symbols=enabled)
+                if not isinstance(lev_map, dict):
+                    lev_map = {}
+                for sym, lev in lev_map.items():
+                    if lev is None:
+                        continue
+                    sym_u = str(sym).upper()
+                    try:
+                        snap.symbol_leverage[sym_u] = float(lev)
+                    except Exception:
+                        continue
+            except Exception as e:  # noqa: BLE001
+                leverage_query_error = f"{type(e).__name__}: {e}"
+                snap.leverage_sync_error = leverage_query_error
+                logger.warning(
+                    "leverage_query_failed",
+                    extra={"error": leverage_query_error, "symbols": enabled},
+                )
+                if self._oplog:
+                    try:
+                        self._oplog.log_event(
+                            "LEVERAGE_SYNC",
+                            {
+                                "action": "query",
+                                "symbols": enabled,
+                                "result": "failed",
+                                "error": leverage_query_error,
+                            },
+                        )
+                    except Exception:
+                        logger.exception("oplog_leverage_sync_query_failed")
+
+        sync_error_items: List[str] = []
+        if target_lev > 0 and not leverage_query_error:
+            for sym in enabled:
+                sym = str(sym).upper()
+                cur = snap.symbol_leverage.get(sym)
+                if cur is None:
+                    sync_error_items.append(f"{sym}: leverage_unavailable")
+                    continue
+                if abs(cur - target_lev) < 1e-9:
+                    continue
+                try:
+                    out = await asyncio.to_thread(self._binance.set_leverage, symbol=sym, leverage=target_lev)
+                    logger.info(
+                        "leverage_sync_ok",
+                        extra={
+                            "symbol": sym,
+                            "target_leverage": target_lev,
+                            "current_leverage": cur,
+                            "response": out,
+                        },
+                    )
+                    if self._oplog:
+                        try:
+                            self._oplog.log_event(
+                                "LEVERAGE_SYNC",
+                                {
+                                    "action": "set",
+                                    "symbol": sym,
+                                    "target": target_lev,
+                                    "current": cur,
+                                    "result": "ok",
+                                },
+                            )
+                        except Exception:
+                            logger.exception("oplog_leverage_sync_failed")
+                    snap.symbol_leverage[sym] = target_lev
+                except Exception as e:  # noqa: BLE001
+                    msg = f"{sym}: {type(e).__name__}: {e}"
+                    sync_error_items.append(msg)
+                    logger.warning(
+                        "leverage_sync_failed",
+                        extra={
+                            "symbol": sym,
+                            "target_leverage": target_lev,
+                            "current_leverage": cur,
+                        },
+                    )
+                    if self._oplog:
+                        try:
+                            self._oplog.log_event(
+                                "LEVERAGE_SYNC",
+                                {
+                                    "action": "set",
+                                    "symbol": sym,
+                                    "target": target_lev,
+                                    "current": cur,
+                                    "result": "failed",
+                                    "error": msg,
+                                },
+                            )
+                        except Exception:
+                            logger.exception("oplog_leverage_sync_failed")
+        else:
+            if target_lev > 0 and leverage_query_error:
+                sync_error_items.append(f"query_failed: {leverage_query_error}")
+
+        if target_lev > 0 and not leverage_query_error:
+            snap.leverage_sync_updated_at = _utcnow().isoformat()
+        if sync_error_items:
+            snap.leverage_sync_error = "; ".join(sync_error_items)
+
         equity = wallet + upnl_total
 
         # Update equity peak tracking (also helps /status).

@@ -149,6 +149,10 @@ class SchedulerSnapshotSchema(BaseModel):
     last_decision_reason: Optional[str] = None
     last_action: Optional[str] = None
     last_error: Optional[str] = None
+    symbol_leverage: Dict[str, float] = Field(default_factory=dict)
+    leverage_sync_target: Optional[float] = None
+    leverage_sync_updated_at: Optional[str] = None
+    leverage_sync_error: Optional[str] = None
 
 
 class SchedulerIntervalRequest(BaseModel):

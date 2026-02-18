@@ -537,6 +537,29 @@ class BinanceUSDMClient:
             }
         return out
 
+
+    def get_symbol_leverage_usdtm(self, symbols: Sequence[str]) -> Dict[str, float]:
+        """Return leverage settings for symbols from Binance positionRisk endpoint."""
+        payload = self._request_json("GET", "/fapi/v2/positionRisk", signed=True)
+        if not isinstance(payload, list):
+            return {}
+
+        wanted = [str(s).upper().strip() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+
+        wanted_set = set(wanted)
+        out: Dict[str, float] = {}
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol", "")).upper()
+            if sym not in wanted_set:
+                continue
+            out[sym] = _as_float(row.get("leverage"))
+        return out
+
+
     def get_open_orders_usdtm(self, symbols: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
         out: Dict[str, List[Dict[str, Any]]] = {}
         for sym in symbols:
