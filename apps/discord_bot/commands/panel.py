@@ -32,7 +32,7 @@ class PanelControl(commands.Cog):
             await interaction.response.send_message("관리자 권한이 없습니다.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(ephemeral=True)
 
         ch = interaction.channel
         if ch is None or not hasattr(ch, "send"):
@@ -61,6 +61,12 @@ class PanelControl(commands.Cog):
             else:
                 m = await ch.send(embed=embed, view=view)
                 self._panel_by_channel[channel_id] = int(m.id)
+
+            try:
+                await interaction.delete_original_response()
+            except Exception:
+                # Keep panel UX clean even if interaction response cleanup fails.
+                pass
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
