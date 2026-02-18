@@ -30,6 +30,13 @@ def _utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def _safe_float(v: Any) -> float | None:
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
 @dataclass
 class SchedulerSnapshot:
     tick_started_at: str
@@ -548,8 +555,23 @@ class TraderScheduler:
                 snap.last_error = "close_symbol_missing"
                 return
             close_reason = "TAKE_PROFIT" if float(open_pos_upnl) >= 0 else "STOP_LOSS"
+            close_trigger_price = None
+            if isinstance(b, dict):
+                spread = (b.get("spreads") or {}).get(sym)
+                if isinstance(spread, dict):
+                    bid = _safe_float(spread.get("bid"))
+                    ask = _safe_float(spread.get("ask"))
+                    if bid is not None and ask is not None:
+                        close_trigger_price = (bid + ask) / 2.0
             try:
-                out = await self._execution.close_position(sym, reason=close_reason)
+                close_kwargs: Dict[str, Any] = {}
+                if close_reason == "TAKE_PROFIT" and close_trigger_price is not None:
+                    close_kwargs["take_profit_price"] = close_trigger_price
+                elif close_reason == "STOP_LOSS" and close_trigger_price is not None:
+                    close_kwargs["stop_loss_price"] = close_trigger_price
+                if close_trigger_price is not None:
+                    close_kwargs["trigger_price"] = close_trigger_price
+                out = await self._execution.close_position(sym, reason=close_reason, **close_kwargs)
                 snap.last_action = f"close:{sym}"
                 snap.last_error = None
                 logger.info("strategy_close", extra={"symbol": sym, "detail": out})

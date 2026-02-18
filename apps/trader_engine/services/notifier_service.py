@@ -65,6 +65,8 @@ class DiscordWebhookNotifier(Notifier):
 
 
 def _fmt_float(v: Any, digits: int = 3) -> str:
+    if v is None:
+        return "-"
     try:
         return f"{float(v):.{digits}f}"
     except Exception:
@@ -72,6 +74,8 @@ def _fmt_float(v: Any, digits: int = 3) -> str:
 
 
 def _fmt_int(v: Any) -> str:
+    if v is None:
+        return "-"
     try:
         return str(int(v))
     except Exception:
@@ -98,6 +102,87 @@ def _side_to_ko(side: str) -> str:
     if s == "SELL":
         return "매도"
     return s or "-"
+
+
+def _position_to_ko(side: str) -> str:
+    s = str(side or "").strip().upper()
+    if s in {"BUY", "LONG", "롱"}:
+        return "롱"
+    if s in {"SELL", "SHORT", "숏"}:
+        return "숏"
+    return "-"
+
+
+def _position_label(side: str) -> str:
+    p = _position_to_ko(side)
+    return f"[{p}]" if p != "-" else "[-]"
+
+
+def _position_label_from_close_side(side: str) -> str:
+    s = str(side or "").strip().upper()
+    if s == "BUY":
+        return "[숏]"
+    if s == "SELL":
+        return "[롱]"
+    return "[*]"
+
+
+def _detail_float(detail: Mapping[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key not in detail:
+            continue
+        try:
+            return float(detail[key])
+        except Exception:
+            pass
+    return None
+
+
+def _extract_event_qty(detail: Mapping[str, Any]) -> float | None:
+    qty = _detail_float(
+        detail,
+        "qty",
+        "position_amt",
+        "position_size",
+        "size",
+        "filled_qty",
+        "closed_qty",
+    )
+    if qty is not None:
+        return qty
+    order = _find_first_order(detail)
+    return _order_float(
+        order,
+        "executedQty",
+        "executed_qty",
+        "origQty",
+        "orig_qty",
+    )
+
+
+def _find_first_order(detail: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = detail.get("order")
+    if isinstance(direct, Mapping):
+        return direct
+    multi = detail.get("orders")
+    if isinstance(multi, list):
+        for entry in reversed(multi):
+            if isinstance(entry, Mapping):
+                return entry
+    return None
+
+
+def _order_float(order: Mapping[str, Any] | None, *keys: str) -> float | None:
+    if not isinstance(order, Mapping):
+        return None
+    for key in keys:
+        if key not in order:
+            continue
+        try:
+            return float(order[key])
+        except Exception:
+            pass
+    return None
 
 
 def _decision_reason_ko(reason: str) -> str:
@@ -217,19 +302,28 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
     detail = event.get("detail") if isinstance(event.get("detail"), Mapping) else {}
 
     if kind in {"ENTER", "REBALANCE"}:
-        side = str((detail or {}).get("side") or (detail or {}).get("direction") or "")
-        qty = (detail or {}).get("qty")
-        price = (detail or {}).get("price_ref")
+        d = detail or {}
+        side = str(d.get("position_side") or d.get("side") or d.get("direction") or "")
+        qty = _extract_event_qty(d)
+        price = _detail_float(d, "entry_price", "price_ref", "avg_price", "price")
         qty_f = _to_float(qty)
-        price_f = _to_float(price)
-        notional = (qty_f * price_f) if (qty_f is not None and price_f is not None) else None
-        action = "ENTER" if kind == "ENTER" else "REBALANCE"
+        if qty_f is not None and price is not None:
+            notional = qty_f * price
+        else:
+            notional = None
+        action = "진입" if kind == "ENTER" else "리밸런스 진입"
+        label = _position_label(side)
         if notional is not None:
             return (
-                f"[EVENT] {action}: {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)} | notional=USD {_fmt_float(notional, 2)}"
+                f"[이벤트] {action}: {symbol} {label} | "
+                f"수량={_fmt_float(qty_f, 4)} | "
+                f"진입가={_fmt_float(price, 4)} USDT | "
+                f"notional=USD {_fmt_float(notional, 2)}"
             )
         return (
-            f"[EVENT] {action}: {symbol} {_side_to_ko(side)} | qty={_fmt_float(qty)} | price={_fmt_float(price, 4)}"
+            f"[이벤트] {action}: {symbol} {label} | "
+            f"수량={_fmt_float(qty_f, 4)} | "
+            f"진입가={_fmt_float(price, 4)} USDT"
         )
 
     if kind == "FILL":
@@ -272,8 +366,57 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         return f"[EVENT] ACCOUNT_UPDATE positions={positions_count} balances={balances_count}"
 
     if kind in {"EXIT", "TAKE_PROFIT", "STOP_LOSS", "WATCHDOG_SHOCK", "TRAILING_PCT", "TRAILING_ATR"}:
-        reason = str((detail or {}).get("reason") or kind)
-        return f"[EVENT] {kind} {symbol} reason={reason}"
+        d = detail or {}
+        reason = str(d.get("reason") or kind)
+        close_reason = _fmt_dt(reason)
+        close_side = _position_label_from_close_side(str(d.get("side") or ""))
+        pos_side = d.get("position_side")
+        if pos_side is None:
+            pos_side = d.get("position")
+            if pos_side is None:
+                pos_side = None
+        label = close_side
+        if pos_side:
+            p = _position_to_ko(pos_side)
+            label = f"[{p}]"
+
+        qty = _extract_event_qty(d)
+        entry_price = _detail_float(d, "entry_price")
+        close_price = _detail_float(d, "close_price", "exit_price")
+        if close_price is None:
+            close_price = _order_float(_find_first_order(d), "avg_price", "price")
+        target_price = _detail_float(
+            d,
+            "take_profit_price",
+            "stop_loss_price",
+            "trigger_price",
+            "triggered_price",
+            "target_price",
+        )
+
+        action = "청산"
+        if kind == "TAKE_PROFIT":
+            action = "익절청산"
+        elif kind == "STOP_LOSS":
+            action = "손절청산"
+        elif kind.startswith("TRAILING"):
+            action = "트레일링청산"
+
+        lines = (
+            f"[이벤트] {action}: {symbol} {label} | "
+            f"수량={_fmt_float(qty, 4)} | "
+            f"진입가={_fmt_float(entry_price, 4)} USDT | "
+            f"청산가={_fmt_float(close_price, 4)} USDT"
+        )
+        if target_price is not None:
+            if kind == "TAKE_PROFIT":
+                lines += f" | 익절가={_fmt_float(target_price, 4)} USDT"
+            elif kind == "STOP_LOSS":
+                lines += f" | 손절가={_fmt_float(target_price, 4)} USDT"
+            else:
+                lines += f" | 기준가={_fmt_float(target_price, 4)} USDT"
+        lines += f" | 사유={close_reason}"
+        return lines
 
     if kind == "COOLDOWN":
         until = event.get("until") or (detail or {}).get("until")

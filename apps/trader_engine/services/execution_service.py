@@ -42,6 +42,13 @@ def _dec(x: Any) -> Decimal:
     return Decimal(str(x))
 
 
+def _safe_float(raw: Any) -> Optional[float]:
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
 def _floor_to_step(qty: Decimal, step: Decimal) -> Decimal:
     if step <= 0:
         return qty
@@ -481,16 +488,41 @@ class ExecutionService:
 
         return None, requested_qty, requested_notional, cap
 
-    async def close_position(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+    async def close_position(
+        self,
+        symbol: str,
+        *,
+        reason: str = "EXIT",
+        take_profit_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
+        target_price: Optional[float] = None,
+        trigger_price: Optional[float] = None,
+    ) -> Dict[str, Any]:
         locked = await self._acquire_exec_lock()
         if not locked:
             raise ExecutionRejected("EXECUTION_LOCK_BUSY")
         try:
-            return self._close_position_unlocked(symbol, reason=reason)
+            return self._close_position_unlocked(
+                symbol,
+                reason=reason,
+                take_profit_price=take_profit_price,
+                stop_loss_price=stop_loss_price,
+                target_price=target_price,
+                trigger_price=trigger_price,
+            )
         finally:
             self._exec_lock.release()
 
-    def _close_position_unlocked(self, symbol: str, *, reason: str = "EXIT") -> Dict[str, Any]:
+    def _close_position_unlocked(
+        self,
+        symbol: str,
+        *,
+        reason: str = "EXIT",
+        take_profit_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
+        target_price: Optional[float] = None,
+        trigger_price: Optional[float] = None,
+    ) -> Dict[str, Any]:
         self._require_not_panic()
         if self._dry_run and self._dry_run_strict:
             raise ExecutionRejected("dry_run_strict_close_blocked")
@@ -573,7 +605,58 @@ class ExecutionService:
             except Exception:
                 logger.exception("pnl_update_failed_on_close", extra={"symbol": sym})
 
-        out = {"symbol": sym, "closed": True, "canceled": len(canceled), "order": _safe_order(order), "reason": reason}
+        order_safe = _safe_order(order)
+        out_close_price = _safe_float(order_safe.get("avg_price"))
+        if out_close_price is None:
+            out_close_price = _safe_float(order_safe.get("price"))
+            if out_close_price is None:
+                out_close_price = _safe_float(order.get("avgPrice")) if isinstance(order, Mapping) else None
+                if out_close_price is None and isinstance(order, Mapping):
+                    out_close_price = _safe_float(order.get("avg_price"))
+                    if out_close_price is None:
+                        out_close_price = _safe_float(order.get("price"))
+        mark_price = None
+        try:
+            mark_price = float(_safe_float(trigger_price))
+        except Exception:
+            mark_price = None
+        if mark_price is None:
+            try:
+                mark_price = float(self._best_price_ref(symbol=sym, side=side))
+            except Exception:
+                mark_price = None
+
+        tp_price = _safe_float(take_profit_price)
+        sl_price = _safe_float(stop_loss_price)
+        target = _safe_float(target_price)
+        trig = _safe_float(trigger_price)
+        if tp_price is None and str(reason).upper() == "TAKE_PROFIT":
+            tp_price = trig
+        if sl_price is None and str(reason).upper() == "STOP_LOSS":
+            sl_price = trig
+        if target is None and trig is not None:
+            target = trig
+
+        out = {
+            "symbol": sym,
+            "closed": True,
+            "canceled": len(canceled),
+            "order": order_safe,
+            "reason": reason,
+            "position_side": "LONG" if amt > 0 else "SHORT",
+            "position_amt": float(amt),
+            "entry_price": float(pos.get("entry_price") or 0.0),
+            "close_price": float(out_close_price) if out_close_price is not None else 0.0,
+            "trigger_price": _safe_float(trigger_price),
+        }
+        if mark_price is not None:
+            out["mark_price"] = mark_price
+        if tp_price is not None:
+            out["take_profit_price"] = tp_price
+        if sl_price is not None:
+            out["stop_loss_price"] = sl_price
+        if target is not None:
+            out["target_price"] = target
         self._oplog_execution_from_order(
             intent_id=None,
             symbol=sym,
@@ -786,8 +869,10 @@ class ExecutionService:
                     "dry_run": True,
                     "intent_id": intent_id,
                     "side": side,
+                    "position_side": "LONG" if side == "BUY" else "SHORT",
                     "qty": float(qty),
                     "price_ref": float(price_ref),
+                    "entry_price": float(price_ref),
                     "notional_usdt_est": float(qty * price_ref),
                     "budget_cap_notional_usdt": float(cap.notional_usdt),
                 }
@@ -1156,6 +1241,8 @@ class ExecutionService:
                     except Exception as e:  # noqa: BLE001
                         logger.warning("pnl_set_last_entry_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
                 out = {"symbol": symbol, "hint": exec_hint.value, "intent_id": intent_id, "orders": [_safe_order(order)]}
+                out["position_side"] = "LONG" if side == "BUY" else "SHORT"
+                out["entry_price"] = float(price_ref)
                 self._oplog_execution_from_order(
                     intent_id=intent_id,
                     symbol=symbol,
@@ -1169,6 +1256,8 @@ class ExecutionService:
                         "symbol": symbol,
                         "detail": {
                             **out,
+                            "position_side": out.get("position_side"),
+                            "entry_price": float(price_ref),
                             "side": side,
                             "qty": float(qty),
                             "price_ref": float(price_ref),
@@ -1221,6 +1310,8 @@ class ExecutionService:
                         "symbol": symbol,
                         "detail": {
                             **out,
+                            "position_side": out.get("position_side"),
+                            "entry_price": float(price_ref),
                             "side": side,
                             "qty": float(qty),
                             "price_ref": float(price_ref),
@@ -1267,12 +1358,16 @@ class ExecutionService:
                         self._pnl.set_last_entry(symbol=symbol, at=datetime.now(tz=timezone.utc))
                     except Exception as e:  # noqa: BLE001
                         logger.warning("pnl_set_last_entry_failed", extra={"symbol": symbol, "err": type(e).__name__}, exc_info=True)
+                out["position_side"] = "LONG" if side == "BUY" else "SHORT"
+                out["entry_price"] = float(price_ref)
                 self._emit(
                     event_kind,
                     {
                         "symbol": symbol,
                         "detail": {
                             **out,
+                            "position_side": out.get("position_side"),
+                            "entry_price": float(price_ref),
                             "side": side,
                             "qty": float(qty),
                             "price_ref": float(price_ref),
