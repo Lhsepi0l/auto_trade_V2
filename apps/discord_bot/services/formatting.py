@@ -6,30 +6,11 @@ from typing import Any, Dict, List
 from apps.trader_engine.services.notifier_service import _error_guidance
 
 
-def _fmt_money(x: Any) -> str:
+def _fmt_money(x: Any, *, digits: int = 4) -> str:
     try:
-        return f"{float(x):.4f}"
+        return f"{float(x):.{digits}f}"
     except Exception:
         return str(x)
-
-
-def _truncate(s: str, *, limit: int = 1800) -> str:
-    if len(s) <= limit:
-        return s
-    return s[: limit - 3] + "..."
-
-
-def _fmt_time(ts: Any) -> str:
-    if not ts:
-        return "-"
-    if isinstance(ts, str):
-        return ts
-    try:
-        if isinstance(ts, datetime):
-            return ts.isoformat()
-    except Exception:
-        pass
-    return str(ts)
 
 
 def _fmt_pct(x: Any) -> str:
@@ -40,193 +21,266 @@ def _fmt_pct(x: Any) -> str:
         return str(x)
 
 
-def _remaining_sec(sched: Dict[str, Any] | None) -> str:
-    if not sched:
+def _fmt_time(ts: Any) -> str:
+    if not ts:
         return "-"
-    try:
-        tick_sec = float(sched.get("tick_sec") or 1800.0)
-        base_ts = sched.get("tick_finished_at") or sched.get("tick_started_at")
-        if not base_ts:
-            return "-"
-        dt = datetime.fromisoformat(str(base_ts))
-        next_ts = dt + timedelta(seconds=max(tick_sec, 1.0))
-        now = datetime.now(tz=timezone.utc)
-        remaining = int((next_ts - now).total_seconds())
-        if remaining < 0:
-            remaining = 0
-        return f"{remaining // 60}분 {remaining % 60}초"
-    except Exception:
+    if isinstance(ts, str):
+        return ts
+    if isinstance(ts, datetime):
+        return ts.isoformat()
+    return str(ts)
+
+
+def _truncate(s: str, *, limit: int = 1900) -> str:
+    if len(s) <= limit:
+        return s
+    return s[: limit - 3] + "..."
+
+
+def _as_dict(v: Any) -> Dict[str, Any]:
+    return v if isinstance(v, dict) else {}
+
+
+def _parse_ts(ts: Any) -> datetime | None:
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    if isinstance(ts, str):
+        s = ts.strip()
+        if not s:
+            return None
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(s)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except Exception:
+            return None
+    return None
+
+
+def _next_tick_eta(payload: Dict[str, Any]) -> str:
+    sched = _as_dict(payload.get("scheduler"))
+    tick_sec = float(sched.get("tick_sec") or 1800.0)
+    base_ts = sched.get("tick_finished_at") or sched.get("tick_started_at")
+    if base_ts is None:
+        return "확인 필요"
+    base = _parse_ts(base_ts)
+    if base is None:
+        return "확인 필요"
+    next_tick = base + timedelta(seconds=max(tick_sec, 1.0))
+    remain = int((next_tick - datetime.now(timezone.utc)).total_seconds())
+    if remain < 0:
+        remain = 0
+    return f"{remain // 60}분 {remain % 60}초 후"
+
+
+def _regime_to_kor(raw_regime: Any) -> tuple[str, str]:
+    code = str(raw_regime or "").strip().upper()
+    if not code or code in {"NONE", "UNKNOWN"}:
+        return "미판단", "-"
+    if code in {"BEAR", "DOWN"}:
+        return "하락", "BEAR"
+    if code in {"BULL", "UP"}:
+        return "상승", "BULL"
+    if code in {"NEUTRAL", "FLAT", "SIDEWAYS"}:
+        return "횡보", code
+    return "기타", code
+
+
+def _reason_to_kor(raw_reason: Any) -> str:
+    reason = str(raw_reason or "").strip()
+    if not reason:
         return "-"
+    reason_map: Dict[str, str] = {
+        "no_candidate": "진입 후보가 없어 판단을 건너뜁니다.",
+        "vol_shock_no_entry": "변동성 급등 구간이라 신규 진입이 보류됩니다.",
+        "confidence_below_threshold": "신뢰도 점수가 기준치 아래여서 진입을 보류합니다.",
+        "short_not_allowed_regime": "현재 구간에서는 숏 진입이 제한됩니다.",
+        "enter_candidate": "진입 후보를 확인해 주문 준비로 진행합니다.",
+        "vol_shock_close": "변동성 급등으로 청산 판단이 보류되었습니다.",
+        "profit_hold": "익절 조건 미달로 포지션을 유지합니다.",
+        "same_symbol": "현재 보유 심볼과 후보 심볼이 같아 중복 진입을 생략합니다.",
+        "gap_below_threshold": "점수 차이가 기준치 이하라 판단을 생략합니다.",
+        "rebalance_to_better_candidate": "더 유리한 후보로 리밸런싱 예정입니다.",
+        "close_symbol_missing": "종료 심볼 정보를 찾을 수 없습니다.",
+        "enter_symbol_missing": "진입 심볼 정보를 찾을 수 없습니다.",
+        "price_unavailable": "가격 데이터를 확인할 수 없습니다.",
+        "cooldown_active": "쿨다운 상태여서 판단이 보류됩니다.",
+        "daily_loss_limit_reached": "일일 손실 한도에 걸려 진입이 중단되었습니다.",
+        "dd_limit_reached": "DD 한도에 걸려 진입이 중단되었습니다.",
+        "lose_streak_cooldown": "연패 중이라 일시 중단됩니다.",
+        "equity_unavailable": "자산(Equity) 데이터가 유효하지 않습니다.",
+        "leverage_above_max_leverage": "레버리지가 허용 범위를 초과합니다.",
+        "single_asset_rule_violation": "단일 자산 룰 충돌로 주문이 차단됩니다.",
+        "exposure_above_max_exposure": "총 노출 한도 초과로 주문이 차단됩니다.",
+        "notional_above_max_notional": "주문 기준금액이 최대 허용 한도를 초과했습니다.",
+        "notional_unavailable": "명목 금액 계산값이 없습니다.",
+        "per_trade_risk_exceeded": "1회 위험 한도를 초과했습니다.",
+        "book_unavailable_market_disabled": "호가창 데이터가 유효하지 않습니다.",
+    }
+
+    for key in reason_map:
+        if reason.startswith(key):
+            return reason_map[key]
+    return reason
 
 
-def _format_leverage_lines(enabled_symbols: list[str], sched: Dict[str, Any]) -> List[str]:
-    lines: List[str] = []
-    lev_map = sched.get("symbol_leverage") or {}
-    target = sched.get("leverage_sync_target")
-    updated_at = sched.get("leverage_sync_updated_at")
-    err = sched.get("leverage_sync_error")
+def _first_position(positions: Any) -> tuple[str, str, float]:
+    if not isinstance(positions, dict):
+        return "-", "-", 0.0
 
-    items: List[str] = []
-    for sym in enabled_symbols:
-        current = lev_map.get(sym)
-        if isinstance(current, (int, float)):
-            if target is None:
-                items.append(f"{sym}:{_fmt_money(current)}")
-            else:
-                c = _fmt_money(current)
-                t = _fmt_money(target)
-                items.append(f"{sym}:{c}/{t}")
-        else:
-            items.append(f"{sym}:미동기화/{_fmt_money(target)}" if target is not None else f"{sym}:미확인")
+    fallback_symbol = "-"
+    fallback_unrealized = 0.0
+    for sym, row in positions.items():
+        if not isinstance(row, dict):
+            continue
+        if fallback_symbol == "-":
+            fallback_symbol = str(sym)
+            try:
+                fallback_unrealized = float(row.get("unrealized_pnl") or 0.0)
+            except Exception:
+                fallback_unrealized = 0.0
 
-    if items:
-        lines.append("심볼 레버리지(현재/목표): " + ", ".join(items))
-    if updated_at:
-        lines.append(f"레버리지 동기화 시간: {_fmt_time(updated_at)}")
-    if err:
-        lines.append(f"레버리지 동기화 상태: 실패 ({err})")
-    elif target is not None:
-        lines.append("레버리지 동기화 상태: OK")
-    return lines
+        try:
+            amt = float(row.get("position_amt") or 0.0)
+        except Exception:
+            continue
+        if abs(amt) > 1e-12:
+            try:
+                unrealized = float(row.get("unrealized_pnl") or 0.0)
+            except Exception:
+                unrealized = 0.0
+            return str(sym), _fmt_money(amt), unrealized
+
+    if fallback_symbol == "-":
+        return "-", "-", 0.0
+    return fallback_symbol, _fmt_money(0.0), fallback_unrealized
+
+
+def _collect_unrealized(positions: Any, pnl: Dict[str, Any]) -> float:
+    total = 0.0
+    if isinstance(positions, dict):
+        for row in positions.values():
+            if isinstance(row, dict):
+                try:
+                    total += float(row.get("unrealized_pnl") or 0.0)
+                except Exception:
+                    continue
+    if total != 0:
+        return total
+
+    if isinstance(pnl, dict):
+        try:
+            return float(pnl.get("last_unrealized_pnl_usdt") or 0.0)
+        except Exception:
+            pass
+    return 0.0
 
 
 def format_status_payload(payload: Dict[str, Any]) -> str:
     if not isinstance(payload, dict):
         return _truncate(f"status payload type error: {type(payload).__name__}")
 
-    engine = payload.get("engine_state") or {}
-    risk = payload.get("risk_config") or {}
-    summary = payload.get("config_summary") or {}
-    binance = payload.get("binance") or {}
-    pnl = payload.get("pnl") or {}
-    sched = payload.get("scheduler") or {}
-    dry_run = bool(payload.get("dry_run", False))
-    dry_run_strict = bool(payload.get("dry_run_strict", False))
-    last_error = payload.get("last_error", None)
+    engine = _as_dict(payload.get("engine_state"))
+    binance = _as_dict(payload.get("binance"))
+    pnl = _as_dict(payload.get("pnl"))
+    sched = _as_dict(payload.get("scheduler"))
+    risk = _as_dict(payload.get("risk_config"))
+    summary = _as_dict(payload.get("config_summary"))
+    capital = _as_dict(payload.get("capital_snapshot"))
+    watchdog = _as_dict(payload.get("watchdog"))
 
     state = str(engine.get("state", "UNKNOWN"))
-    enabled = [str(x) for x in (binance.get("enabled_symbols") or [])]
-    disabled = binance.get("disabled_symbols") or []
+    enabled_symbols = [str(x) for x in (binance.get("enabled_symbols") or []) if str(x).strip()]
 
-    bal = binance.get("usdt_balance") or {}
-    wallet = _fmt_money(bal.get("wallet", "n/a"))
-    available = _fmt_money(bal.get("available", "n/a"))
+    positions = binance.get("positions")
+    pos_symbol, pos_qty, pos_unrealized = _first_position(positions)
+    unrealized_sum = _collect_unrealized(positions, pnl)
+    if unrealized_sum == 0 and pos_unrealized != 0:
+        unrealized_sum = pos_unrealized
 
-    positions = binance.get("positions") or {}
-    pos_lines: List[str] = []
-    if isinstance(positions, dict):
-        for sym in sorted(positions.keys()):
-            row = positions.get(sym) or {}
-            if not isinstance(row, dict):
-                continue
-            amt = row.get("position_amt", 0)
-            unreal = row.get("unrealized_pnl", 0)
-            lev = row.get("leverage", 0)
-            entry = row.get("entry_price", 0)
-            pos_lines.append(
-                f"- {sym}: 수량={amt}, 진입가={entry}, 미실현손익={unreal}, 레버리지={lev}"
-            )
-
-    open_orders = binance.get("open_orders") or {}
-    oo_total = 0
-    if isinstance(open_orders, dict):
-        for v in open_orders.values():
-            if isinstance(v, list):
-                oo_total += len(v)
-
-    spread_wide: List[str] = []
-    spreads = binance.get("spreads") or {}
-    if isinstance(spreads, dict):
-        for sym, row in spreads.items():
-            if isinstance(row, dict) and row.get("is_wide"):
-                spread_wide.append(f"- {sym}: spread_pct={_fmt_pct(row.get('spread_pct'))}")
-
-    # 봇 실행/자금/스케줄 상태
+    daily_pnl = pnl.get("daily_pnl_pct") if isinstance(pnl, dict) else None
+    if daily_pnl is None and isinstance(pnl, dict):
+        daily_pnl = pnl.get("daily_realized_pnl")
     dd = pnl.get("drawdown_pct") if isinstance(pnl, dict) else None
-    dp = pnl.get("daily_pnl_pct") if isinstance(pnl, dict) else None
-    if dp is None and isinstance(pnl, dict):
-        dp = pnl.get("daily_realized_pnl", 0)
-    ls = pnl.get("lose_streak") if isinstance(pnl, dict) else None
-    cd = pnl.get("cooldown_until") if isinstance(pnl, dict) else None
+
+    cand = _as_dict(sched.get("candidate") or sched.get("last_candidate"))
+    candidate_symbol = str(cand.get("symbol") or "-")
+    regime_raw = sched.get("regime_4h") or cand.get("regime_4h") or sched.get("last_regime")
+    regime_kor, regime_code = _regime_to_kor(regime_raw)
+
+    if candidate_symbol == "-":
+        uni = risk.get("universe_symbols")
+        if isinstance(uni, list) and uni:
+            candidate_symbol = str(uni[0])
+
+    decision_raw = sched.get("last_decision_reason")
+    decision_code = str(decision_raw or "-").strip()
+    decision_human = _reason_to_kor(decision_raw)
+
+    last_action = str(sched.get("last_action") or "-")
+    last_error = payload.get("last_error")
 
     lines: List[str] = []
-    lines.append(f"봇 상태: {state}")
-    lines.append(f"모의모드(DRY_RUN): {dry_run} (strict={dry_run_strict})")
-    lines.append(f"운영 심볼: {', '.join(enabled) if enabled else '(없음)'}")
-    if disabled:
-        d0 = []
-        for d in disabled[:5]:
-            if isinstance(d, dict):
-                d0.append(f"{d.get('symbol')}({d.get('reason')})")
-        if d0:
-            lines.append(f"비활성 심볼: {', '.join(d0)}")
-    lines.append(f"USDT 잔고: wallet={wallet}, available={available}")
-    lines.append(f"오픈 주문 수: {oo_total}")
+    lines.append("[상태 알림]")
+    lines.append(f"엔진 상태: {state}")
+    if pos_symbol == "-":
+        lines.append("현재 포지션: -")
+    else:
+        lines.append(f"현재 포지션: {pos_symbol} (수량 {pos_qty})")
 
-    if pos_lines:
-        lines.append("포지션")
-        lines.extend(pos_lines[:10])
+    lines.append(
+        "손익 요약: "
+        f"미실현손익(uPnL) {_fmt_money(unrealized_sum)} USDT, "
+        f"일일손익 {_fmt_pct(daily_pnl) if daily_pnl is not None else '-'}, "
+        f"DD {_fmt_pct(dd) if dd is not None else '-'}"
+    )
+    lines.append(f"시장 판단: 레짐 {regime_kor}({regime_code}), 후보 심볼 {candidate_symbol}")
 
-    if spread_wide:
-        lines.append("확장된 스프레드 경고:")
-        lines.extend(spread_wide[:5])
+    if decision_code == "-":
+        lines.append("이번 결정: -")
+    else:
+        lines.append(f"이번 결정: {decision_code} -> {decision_human}")
 
-    if isinstance(pnl, dict) and pnl:
-        unrealized = pnl.get("last_unrealized_pnl_usdt") if isinstance(pnl, dict) else 0
-        lines.append(
-            f"손익 요약: 미실현손익 {_fmt_money(unrealized or 0.0)} USDT, "
-            f"일일손익 {_fmt_pct(dp if dp is not None else 0.0)}, DD {_fmt_pct(dd if dd is not None else 0.0)}"
-        )
-        if ls is not None:
-            lines.append(f"연패: {ls}")
-        if cd:
-            lines.append(f"쿨다운 해제 시각: {_fmt_time(cd)}")
+    lines.append(f"최근 액션: {last_action}")
 
-    if isinstance(sched, dict) and sched:
-        cand = sched.get("candidate") or {}
-        ai = sched.get("ai_signal") or {}
-        la = sched.get("last_action")
-        le = sched.get("last_error")
+    if enabled_symbols:
+        lines.append(f"운영 심볼: {', '.join(enabled_symbols)}")
 
-        if isinstance(cand, dict) and cand.get("symbol"):
-            lines.append(
-                f"추천: {cand.get('symbol')} {cand.get('direction')} "
-                f"강도={_fmt_money(cand.get('strength'))} 변동성={cand.get('vol_tag')}"
-            )
-        if isinstance(ai, dict) and ai.get("target_asset"):
-            lines.append(
-                f"AI: {ai.get('target_asset')} {ai.get('direction')} "
-                f"신뢰도={_fmt_money(ai.get('confidence'))} 힌트={ai.get('exec_hint')} 리스크={ai.get('risk_tag')}"
-            )
+    if capital:
+        budget = capital.get("budget_usdt")
+        notional = capital.get("notional_usdt")
+        blocked = capital.get("blocked")
+        if budget is not None:
+            lines.append(f"증거금: {_fmt_money(budget)} USDT")
+        if notional is not None:
+            lines.append(f"예상 주문금액: {_fmt_money(notional)} USDT")
+        if blocked is not None:
+            lines.append(f"예산 차단: {'예' if bool(blocked) else '아니오'}")
 
-        lines.extend(_format_leverage_lines(enabled, sched))
-        lines.append(f"다음 판단까지: {_remaining_sec(sched)}")
+    lines.append(f"다음 판단: {_next_tick_eta(payload)}")
 
-        if la:
-            lines.append(f"최근 액션: {la}")
-        if le:
-            lines.append(f"최근 오류: {le}")
+    ls = pnl.get("lose_streak") if isinstance(pnl, dict) else None
+    cooldown_until = pnl.get("cooldown_until") if isinstance(pnl, dict) else None
+    if ls is not None:
+        lines.append(f"연패: {ls}")
+    if cooldown_until:
+        lines.append(f"쿨다운 해제 시각: {_fmt_time(cooldown_until)}")
 
-    if isinstance(summary, dict) and summary:
-        lines.append(
-            f"설정: symbols={','.join(summary.get('universe_symbols') or [])} "
-            f"max_lev={summary.get('max_leverage')} "
-            f"dl={summary.get('daily_loss_limit_pct')} dd={summary.get('dd_limit_pct')} "
-            f"spread={summary.get('spread_max_pct')}"
-        )
-    elif isinstance(risk, dict):
-        lines.append(
-            f"리스크: per_trade={risk.get('per_trade_risk_pct')}% "
-            f"max_lev={risk.get('max_leverage')} notify={risk.get('notify_interval_sec')}s"
-        )
+    if watchdog.get("last_blocked_symbol"):
+        lines.append(f"차단 심볼: {watchdog.get('last_blocked_symbol')}")
 
     if last_error:
-        lines.append(f"오류: {last_error}")
-        guide = _error_guidance(str(last_error))
+        err_text = str(last_error)
+        lines.append(f"오류: {err_text}")
+        guide = _error_guidance(err_text)
         if guide is not None:
             code, issue, action = guide
-            lines.append(f"- error_code: {code}")
-            lines.append(f"- error_issue: {issue}")
-            lines.append(f"- recommended_action: {action}")
+            lines.append(f"권장 대응: {code} - {issue}")
+            lines.append(f"대응: {action}")
 
     return _truncate("\n".join(lines))

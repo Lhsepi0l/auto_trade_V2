@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -146,12 +146,9 @@ async def test_simple_embed_description_is_korean() -> None:
     em = _build_embed({"engine_state": {"state": "RUNNING"}}, mode="simple")
     for label in SIMPLE_PANEL_BUTTON_LABELS[:3]:
         assert label in str(em.description)
-    assert any("주기" in str(field.name) for field in em.fields)
-    assert any(
-        str(field.name).startswith("마지막") and str(field.value).startswith("마지막 판단")
-        for field in em.fields
-    )
-
+    assert any("엔진 상태" in str(field.name) for field in em.fields)
+    assert any("현재 증거금" in str(field.value) or "운영 주기" in str(field.value) for field in em.fields)
+    assert any(str(field.name) == "마지막 결과" and str(field.value).startswith("마지막 판단:") for field in em.fields)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -223,7 +220,7 @@ async def test_scheduler_interval_options_include_5_10_15_and_60_minutes(monkeyp
     interval_select._values = ["300"]  # type: ignore[attr-defined]
     await interval_select.callback(it)
     assert api.set_scheduler_interval.await_count == 1
-    assert any("상태 알림도 같은 주기로" in m for m in it.followup.messages)
+    assert any("판단 주기를" in m and "상태 알림도 같은 주기로" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit
@@ -261,7 +258,7 @@ async def test_build_embed_shows_failure_reason() -> None:
         "engine_state": {"state": "RUNNING"},
         "scheduler": {
             "last_action": "enter:BTCUSDT:LONG",
-            "last_error": "?ъ씠利??쒗븳 珥덇낵",
+            "last_error": "engine_in_panic",
         },
         "config": {
             "capital_mode": "MARGIN_BUDGET_USDT",
@@ -275,9 +272,7 @@ async def test_build_embed_shows_failure_reason() -> None:
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
     assert "BLOCKED - 사유:" in text
-    assert "enter:BTCUSDT:LONG" in text
-    assert "현재 증거금: 32.0000 USDT" in text
-
+    assert "현재 증거금 32.0000 USDT" in text
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -300,7 +295,7 @@ async def test_build_embed_shows_human_reason_for_known_code() -> None:
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
     assert "BLOCKED - 사유:" in text
-    assert "마지막 판단" in text
+    assert "변동성 급등 구간이라 신규 진입이 보류됩니다." in text
 
 
 @pytest.mark.unit
