@@ -390,7 +390,7 @@ def get_status(
         ws_connected=bool(getattr(state, "ws_connected", False)),
         listenKey_last_keepalive_ts=getattr(getattr(request.app.state, "user_stream", None), "listen_key_last_keepalive_ts", None),
         last_ws_event_ts=getattr(getattr(request.app.state, "user_stream", None), "last_ws_event_ts", None),
-        safe_mode=bool(getattr(getattr(request.app.state, "user_stream", None), "safe_mode", False),
+        safe_mode=bool(getattr(getattr(request.app.state, "user_stream", None), "safe_mode", False)),
         last_ws_event_time=getattr(state, "last_ws_event_time", None),
         last_fill=(
             {
