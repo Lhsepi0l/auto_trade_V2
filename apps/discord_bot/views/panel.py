@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -108,6 +109,65 @@ REASON_PREFIX_HINTS = {
     "dd_limit_reached:": "DD 제한에 걸림",
     "notional_": "주문 기준금액이 제한 조건을 벗어났습니다",
 }
+
+_SYMBOL_LEVERAGE_ERROR_MESSAGES: dict[str, str] = {
+    "symbol_leverage_exceeds_max_leverage": "개별 레버리지는 계정의 max_leverage 이하로 설정해야 합니다.",
+    "symbol_leverage_must_be_between_0_and_50": "개별 레버리지는 0~50 사이(0은 해제)로 입력해야 합니다.",
+    "symbol_leverage_must_be_float": "개별 레버리지는 숫자(실수)로 입력해야 합니다.",
+    "symbol_is_required": "심볼을 입력해주세요.",
+}
+
+
+def _extract_api_validation_message(error: APIError) -> tuple[str, list[dict[str, Any]]]:
+    raw = error.details
+    if not raw:
+        return str(error), []
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return str(error), []
+
+    if not isinstance(payload, dict):
+        return str(error), []
+    if payload.get("message") != "validation_failed":
+        return str(error), []
+
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return str(error), []
+
+    parsed: list[dict[str, Any]] = []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        field = item.get("field")
+        msg = item.get("message")
+        if isinstance(field, str) and isinstance(msg, str):
+            parsed.append({"field": field, "message": msg})
+    if not parsed:
+        return str(error), []
+    return "validation_failed", parsed
+
+
+def _format_symbol_leverage_error(error: APIError, *, symbol: str, max_leverage: Optional[float] = None) -> str:
+    base, errors = _extract_api_validation_message(error)
+    if base != "validation_failed" or not errors:
+        return f"설정 실패: {error}"
+
+    hints: list[str] = []
+    for item in errors:
+        msg_key = str(item.get("message") or "")
+        if msg_key in _SYMBOL_LEVERAGE_ERROR_MESSAGES:
+            hint = _SYMBOL_LEVERAGE_ERROR_MESSAGES[msg_key]
+            if msg_key == "symbol_leverage_exceeds_max_leverage" and max_leverage is not None:
+                hint = f"{hint} (현재 max_leverage = {max_leverage:g})"
+            hints.append(f"{symbol}: {hint}")
+        else:
+            hints.append(f"{symbol}: {msg_key or '입력값이 유효하지 않습니다.'}")
+
+    if not hints:
+        return f"설정 실패: {error}"
+    return "\n".join(hints)
 
 def _is_admin(interaction: discord.Interaction) -> bool:
     user = interaction.user
@@ -737,10 +797,31 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
             await interaction.response.send_message("심볼을 입력해주세요.", ephemeral=True)
             return
 
+        max_leverage = None
+        try:
+            status_payload = await self._api.get_status()
+            risk_cfg = status_payload.get("risk_config") if isinstance(status_payload, dict) else None
+            if isinstance(risk_cfg, dict):
+                raw = risk_cfg.get("max_leverage")
+                if raw is not None:
+                    max_leverage = float(raw)
+        except Exception:
+            max_leverage = None
+
         try:
             lev = _parse_float_range(str(self.leverage), field="leverage", min_v=0.0, max_v=50.0)
+            if max_leverage is not None and max_leverage > 0 and lev > max_leverage:
+                raise ValueError(f"symbol_leverage_exceeds_max_leverage (현재 max_leverage={max_leverage:g})")
         except ValueError as e:
-            await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+            msg = str(e)
+            if msg.startswith("symbol_leverage_exceeds_max_leverage"):
+                await interaction.response.send_message(
+                    f"입력 제한: {symbol} 개별 레버리지는 max_leverage 이하로만 설정 가능합니다."
+                    + (f" (현재 max_leverage={max_leverage:g})" if max_leverage is not None else ""),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -752,7 +833,10 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
             else:
                 await interaction.followup.send(f"{symbol} 개별 레버리지를 {lev} 배로 설정했습니다.", ephemeral=True)
         except APIError as e:
-            await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
+            await interaction.followup.send(
+                _format_symbol_leverage_error(error=e, symbol=symbol, max_leverage=max_leverage),
+                ephemeral=True,
+            )
 
 
 class UniverseSymbolsModal(discord.ui.Modal, title="운영 심볼 설정"):
