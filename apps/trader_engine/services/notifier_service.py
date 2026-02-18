@@ -353,11 +353,13 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
         canceled = _fmt_int((detail or {}).get("canceled"))
         total_records = _fmt_int((detail or {}).get("total_records"))
         return (
-            f"[DAILY REPORT] {day}\n"
-            f"- time: {reported_at}\n"
-            f"- state: {engine_state}\n"
-            f"- entries: {entries} / closes: {closes}\n"
-            f"- blocks: {blocks} / errors: {errors} / canceled: {canceled} (total {total_records})"
+            "[일일 리포트]\n"
+            f"일자: {day}\n"
+            f"엔진 상태: {engine_state}\n"
+            f"보고 시각: {reported_at}\n"
+            f"진입/청산: {entries} / {closes}\n"
+            f"오류/취소: {errors} / {canceled}\n"
+            f"차단/총건수: {blocks} / {total_records}"
         )
 
     if kind == "ACCOUNT_UPDATE":
