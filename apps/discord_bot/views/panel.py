@@ -177,11 +177,19 @@ def _reason_to_human_readable(raw_reason: str) -> str:
     return reason
 
 
+def _normalize_last_action(raw: str | None) -> str:
+    value = str(raw or "").strip()
+    if not value or value == "-":
+        return "-"
+    return value
+
+
 def _build_last_result(last_action: str, last_error: str | None) -> tuple[str, str]:
     if last_error:
         human = _reason_to_human_readable(last_error)
         return "BLOCKED", f"사유: {human}"
-    if last_action:
+    action = _normalize_last_action(last_action)
+    if action != "-":
         return "OK", str(last_action)
     return "-", "-"
 
@@ -243,10 +251,13 @@ def _build_simple_lines(payload: Dict[str, Any]) -> tuple[str, str, str, str, st
     state = str(eng.get("state", "UNKNOWN"))
 
     sched = payload.get("scheduler") or {}
-    last_action = str(sched.get("last_action") or "-")
+    last_action = _normalize_last_action(str(sched.get("last_action") or "-"))
     last_error = sched.get("last_error")
     last_status, last_reason = _build_last_result(last_action, str(last_error) if last_error is not None else None)
-    last_result = f"{last_status} - {last_reason}"
+    if last_reason:
+        last_result = " - ".join([x for x in (last_status, str(last_reason)) if x not in {"-",""}]) or "-"
+    else:
+        last_result = "-"
 
     decision_hint = f"엔진: {state}\n드라이런: {'ON' if dry_run else 'OFF'}"
     next_decision = _next_decision_eta(payload)
