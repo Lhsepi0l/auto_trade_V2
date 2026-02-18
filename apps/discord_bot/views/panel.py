@@ -1109,7 +1109,7 @@ class AdvancedPanelView(PanelViewBase):
             )
         )
 
-    @discord.ui.button(label=SIMPLE_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
+    @discord.ui.button(label=SIMPLE_TOGGLE_LABEL, style=discord.ButtonStyle.primary, row=1)
     async def simple_toggle_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -1142,7 +1142,7 @@ class AdvancedPanelView(PanelViewBase):
             return
         await interaction.response.send_modal(SymbolLeverageModal(api=self.api, view=self))
 
-    @discord.ui.button(label=UNIVERSE_SYMBOLS_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label=UNIVERSE_SYMBOLS_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
     async def universe_symbols_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -1155,7 +1155,7 @@ class AdvancedPanelView(PanelViewBase):
             )
         )
 
-    @discord.ui.button(label=UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label=UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
     async def universe_remove_symbol_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -1175,7 +1175,7 @@ class AdvancedPanelView(PanelViewBase):
             discord.SelectOption(label="MARKET", value="MARKET"),
             discord.SelectOption(label="SPLIT", value="SPLIT"),
         ],
-        row=3,
+        row=2,
     )
     async def exec_mode_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         if not await self._guard(interaction):
@@ -1230,7 +1230,7 @@ class AdvancedPanelView(PanelViewBase):
             discord.SelectOption(label="30분", value="1800", default=True),
             discord.SelectOption(label="60분", value="3600"),
         ],
-        row=4,
+        row=2,
     )
     async def notify_interval_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         if not await self._guard(interaction):
