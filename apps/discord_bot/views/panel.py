@@ -1230,7 +1230,7 @@ class AdvancedPanelView(PanelViewBase):
             discord.SelectOption(label="30분", value="1800", default=True),
             discord.SelectOption(label="60분", value="3600"),
         ],
-        row=3,
+        row=4,
     )
     async def notify_interval_select(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         if not await self._guard(interaction):
@@ -1242,7 +1242,7 @@ class AdvancedPanelView(PanelViewBase):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await self._api.set_value("notify_interval_sec", str(int(notify_sec)))
+            await self.api.set_value("notify_interval_sec", str(int(notify_sec)))
             await self.refresh_message(interaction)
             if notify_sec >= 60:
                 minutes = int(notify_sec // 60)
