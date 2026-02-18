@@ -10,6 +10,32 @@ from shared.utils.retry import retry
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_KLINE_INTERVALS = {
+    "1m",
+    "3m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "2h",
+    "4h",
+    "6h",
+    "8h",
+    "12h",
+    "1d",
+    "3d",
+    "1w",
+    "1M",
+}
+
+_INTERVAL_ALIASES = {
+    # "10m" is intentionally unsupported by Binance klines on this endpoint.
+    "10m": "15m",
+    "60m": "1h",
+    "120m": "2h",
+    "240m": "4h",
+}
+
 
 @dataclass(frozen=True)
 class Candle:
@@ -77,12 +103,36 @@ class MarketDataService:
         self._cache_ttl_sec = float(cache_ttl_sec)
         self._retry_attempts = int(retry_attempts)
         self._retry_backoff_sec = float(retry_backoff_sec)
+        self._interval_fallback_logged: set[str] = set()
         # key: (symbol, interval, limit) -> (fetched_at_ms, candles)
         self._cache: Dict[Tuple[str, str, int], Tuple[int, List[Candle]]] = {}
 
+    @staticmethod
+    def _normalize_interval(interval: str) -> str:
+        itv = str(interval).strip()
+        if not itv:
+            raise ValueError("interval is empty")
+
+        if itv in SUPPORTED_KLINE_INTERVALS:
+            return itv
+
+        fallback = _INTERVAL_ALIASES.get(itv)
+        if fallback is None:
+            raise ValueError(f"unsupported interval: {itv}")
+        return fallback
+
     def get_klines(self, *, symbol: str, interval: str, limit: int = 200) -> List[Candle]:
         sym = symbol.strip().upper()
-        itv = str(interval).strip()
+        raw_itv = str(interval).strip()
+        itv = self._normalize_interval(raw_itv)
+        if itv != raw_itv:
+            warn_key = f"{sym}:{raw_itv}->{itv}"
+            if warn_key not in self._interval_fallback_logged:
+                logger.warning(
+                    "market_data_interval_fallback",
+                    extra={"symbol": sym, "requested_interval": raw_itv, "resolved_interval": itv},
+                )
+                self._interval_fallback_logged.add(warn_key)
         lim = int(limit)
         key = (sym, itv, lim)
         now_ms = int(time.time() * 1000)
