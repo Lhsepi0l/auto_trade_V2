@@ -102,7 +102,7 @@ def _reason_to_kor(raw_reason: Any) -> str:
         "short_not_allowed_regime": "현재 구간에서는 숏 진입이 제한됩니다.",
         "enter_candidate": "진입 후보를 확인해 주문 준비로 진행합니다.",
         "vol_shock_close": "변동성 급등으로 청산 판단이 보류되었습니다.",
-        "profit_hold": "익절 조건 미달로 포지션을 유지합니다.",
+        "profit_hold": "익절 트리거 미달로 포지션을 유지합니다.",
         "same_symbol": "현재 보유 심볼과 후보 심볼이 같아 중복 진입을 생략합니다.",
         "gap_below_threshold": "점수 차이가 기준치 이하라 판단을 생략합니다.",
         "rebalance_to_better_candidate": "더 유리한 후보로 리밸런싱 예정입니다.",
@@ -266,6 +266,13 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
         lines.append("이번 결정: -")
     else:
         lines.append(f"이번 결정: {decision_code} -> {decision_human}")
+        if decision_code.startswith("profit_hold"):
+            arm = summary.get("trail_arm_pnl_pct")
+            dist = summary.get("trail_distance_pnl_pct")
+            if arm is not None or dist is not None:
+                arm_text = f"{_fmt_pct(arm)}" if arm is not None else "-"
+                dist_text = f"{_fmt_pct(dist)}" if dist is not None else "-"
+                lines.append(f"익절 트리거: ARM {arm_text}, 롤백거리 {dist_text} (트레일링 기준)")
 
     lines.append(f"최근 액션: {last_action}")
 

@@ -108,7 +108,7 @@ def _decision_reason_ko(reason: str) -> str:
         "short_not_allowed_regime": "현재 시장 구간에서는 숏 진입이 허용되지 않습니다.",
         "enter_candidate": "진입 후보가 선정되어 주문 준비를 시작했습니다.",
         "vol_shock_close": "변동성 급등으로 청산 동작이 보류되었습니다.",
-        "profit_hold": "목표 수익이 미달해 포지션을 유지합니다.",
+        "profit_hold": "익절 트리거 미달로 포지션을 유지합니다.",
         "same_symbol": "현재 탐색한 심볼이 이미 보유 중인 심볼과 같아 중복 진입하지 않습니다.",
         "gap_below_threshold": "갭 크기가 임계값 이하라 판단이 생략되었습니다.",
         "rebalance_to_better_candidate": "더 유리한 후보 심볼로 리밸런싱 전환이 예정되어 있습니다.",
@@ -333,6 +333,8 @@ def _format_status_line(snapshot: Mapping[str, Any]) -> str:
     candidate = snapshot.get("candidate_symbol") or "-"
     dec = str(snapshot.get("last_decision_reason") or "-")
     dec_ko = _decision_reason_ko(dec)
+    if dec == "profit_hold":
+        dec_ko = f"익절 트리거 미달로 포지션을 유지합니다. (현재 미실현손익: {upnl} USDT)"
     last_action = snapshot.get("last_action") or "-"
     last_error = snapshot.get("last_error") or "-"
 
