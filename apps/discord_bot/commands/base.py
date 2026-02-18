@@ -9,7 +9,10 @@ from discord.ext import commands
 
 from apps.discord_bot.services.api_client import APIError
 from apps.discord_bot.services.contracts import TraderAPI
-from apps.discord_bot.services.formatting import format_status_payload as _fmt_status_payload
+from apps.discord_bot.services.formatting import (
+    format_status_payload as _fmt_status_payload,
+    format_report_payload as _fmt_report_payload,
+)
 from apps.discord_bot.ui_labels import (
     ADVANCED_PANEL_BUTTON_LABELS,
     ADVANCED_TOGGLE_LABEL,
@@ -335,25 +338,8 @@ class RemoteControl(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            summary = payload.get("detail", {})
-            day = payload.get("day", "-")
-            sent = bool(payload.get("notifier_sent"))
-            err = payload.get("notifier_error")
-            lines = [
-                "일간 리포트 수동 전송 결과",
-                f"day: {day}",
-                f"sent_to_discord: {sent}",
-            ]
-            if not sent and err:
-                lines.append(f"전송 오류: {err}")
-            if isinstance(summary, dict):
-                lines.append(
-                    (
-                        f"entries={summary.get('entries', 0)} closes={summary.get('closes', 0)} "
-                        f"errors={summary.get('errors', 0)} canceled={summary.get('canceled', 0)} blocks={summary.get('blocks', 0)}"
-                    ).strip()
-                )
-            await interaction.followup.send("```text\n" + "\n".join(lines) + "\n```")
+            msg = _fmt_report_payload(payload)
+            await interaction.followup.send(f"```text\n{msg}\n```")
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001

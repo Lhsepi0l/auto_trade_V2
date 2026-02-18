@@ -15,6 +15,13 @@ def _fmt_money(x: Any, *, digits: int = 4) -> str:
         return str(x)
 
 
+def _fmt_int(x: Any) -> str:
+    try:
+        return str(int(x))
+    except Exception:
+        return str(x)
+
+
 def _fmt_pct(x: Any) -> str:
     try:
         v = float(x)
@@ -361,5 +368,41 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
             code, issue, action = guide
             lines.append(f"권장 대응: {code} - {issue}")
             lines.append(f"대응: {action}")
+
+    return _truncate("\n".join(lines))
+
+
+def format_report_payload(payload: Dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return _truncate(f"report payload type error: {type(payload).__name__}")
+
+    day = str(payload.get("day") or "-")
+    engine_state = str(payload.get("engine_state") or "-")
+    reported_at = _fmt_time(payload.get("reported_at"))
+    detail = _as_dict(payload.get("detail"))
+    kind = str(payload.get("kind") or "DAILY_REPORT")
+    sent = bool(payload.get("notifier_sent"))
+    notifier_error = payload.get("notifier_error")
+
+    entries = _fmt_int(detail.get("entries"))
+    closes = _fmt_int(detail.get("closes"))
+    errors = _fmt_int(detail.get("errors"))
+    canceled = _fmt_int(detail.get("canceled"))
+    total_records = _fmt_int(detail.get("total_records"))
+    blocks = _fmt_int(detail.get("blocks"))
+
+    lines: List[str] = []
+    lines.append(f"[{kind}]")
+    lines.append(f"일자: {day}")
+    lines.append(f"엔진 상태: {engine_state}")
+    lines.append(f"보고 시각: {reported_at}")
+    lines.append(f"진입/청산: {entries} / {closes}")
+    lines.append(f"오류/취소: {errors} / {canceled}")
+    lines.append(f"차단/총건수: {blocks} / {total_records}")
+    lines.append(f"디스코드 전송: {'성공' if sent else '실패'}")
+    if not sent and notifier_error:
+        lines.append(f"전송 오류: {notifier_error}")
+    if entries == "0" and closes == "0" and errors == "0" and canceled == "0" and blocks == "0" and total_records == "0":
+        lines.append("결과: 집계 대상 데이터가 없습니다.")
 
     return _truncate("\n".join(lines))
