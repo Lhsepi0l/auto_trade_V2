@@ -13,11 +13,12 @@ from apps.trader_engine.services.binance_service import BinanceService
 from apps.trader_engine.services.engine_service import EngineService
 from apps.trader_engine.services.execution_service import ExecutionRejected, ExecutionService
 from apps.trader_engine.services.market_data_service import MarketDataService
-from apps.trader_engine.services.notifier_service import Notifier
+from apps.trader_engine.services.notifier_service import LoggingNotifier, Notifier
 from apps.trader_engine.services.pnl_service import PnLService
 from apps.trader_engine.services.risk_config_service import RiskConfigService
 from apps.trader_engine.services.scoring_service import Candidate, ScoringService, SymbolScore
 from apps.trader_engine.services.sizing_service import SizingService
+from apps.trader_engine.storage.repositories import OrderRecordRepo, RiskBlockRepo
 from apps.trader_engine.services.strategy_service import PositionState, StrategyDecision, StrategyService
 from apps.trader_engine.services.oplog import OperationalLogger
 from apps.trader_engine.services.snapshot_service import SnapshotService
@@ -76,10 +77,13 @@ class TraderScheduler:
         sizing: SizingService,
         execution: ExecutionService,
         notifier: Optional[Notifier] = None,
+        report_notifier: Optional[Notifier] = None,
         tick_sec: float = 1800.0,
         reverse_threshold: float = 0.55,
         oplog: Optional[OperationalLogger] = None,
         snapshot: Optional[SnapshotService] = None,
+        order_records: Optional[OrderRecordRepo] = None,
+        risk_blocks: Optional[RiskBlockRepo] = None,
     ) -> None:
         self._engine = engine
         self._risk = risk
@@ -92,11 +96,15 @@ class TraderScheduler:
         self._sizing = sizing
         self._execution = execution
         self._notifier = notifier
+        self._report_notifier = report_notifier or notifier
         self._oplog = oplog
         self._snapshot = snapshot
+        self._order_records = order_records
+        self._risk_blocks = risk_blocks
 
         self._reverse_threshold = float(reverse_threshold)
         self._last_status_notify_ts = 0.0
+        self._last_daily_report_date: Optional[str] = None
         self._tick_change_event = asyncio.Event()
         self._tick_min_sec = 30.0
         self._tick_sec = max(float(tick_sec), self._tick_min_sec)
@@ -154,6 +162,17 @@ class TraderScheduler:
             snap.tick_finished_at = _utcnow().isoformat()
             self.snapshot = snap
         return snap
+
+    async def send_daily_report(self, *, report_day: Optional[str] = None) -> Dict[str, Any]:
+        day = report_day or datetime.now(tz=timezone.utc).date().isoformat()
+        payload = self._build_daily_report_payload(day=day)
+        notifier_sent, notifier_error = await self._send_daily_report_payload(
+            payload=payload,
+            require_discord_webhook=True,
+        )
+        payload["notifier_sent"] = notifier_sent
+        payload["notifier_error"] = notifier_error
+        return payload
 
     @property
     def tick_sec(self) -> float:
@@ -243,6 +262,21 @@ class TraderScheduler:
 
         target_lev = float(cfg.max_leverage)
         snap.leverage_sync_target = target_lev if target_lev > 0 else None
+        symbol_target_map: dict[str, float] = {}
+        for key, raw in (cfg.symbol_leverage_map or {}).items():
+            sym = str(key or "").strip().upper()
+            if not sym:
+                continue
+            try:
+                lev = float(raw)
+            except Exception:
+                continue
+            if lev <= 0:
+                continue
+            if lev > 50.0:
+                lev = 50.0
+            symbol_target_map[sym] = lev
+
         snap.symbol_leverage = {}
         snap.leverage_sync_error = None
         snap.leverage_sync_updated_at = None
@@ -265,7 +299,7 @@ class TraderScheduler:
         # If this query fails, keep execution continuing but mark sync error so we don't
         # blindly sync based on stale/missing leverage data.
         leverage_query_error: Optional[str] = None
-        if target_lev > 0 and enabled:
+        if enabled:
             try:
                 lev_map = await asyncio.to_thread(self._binance.get_symbol_leverage, symbols=enabled)
                 if not isinstance(lev_map, dict):
@@ -300,22 +334,24 @@ class TraderScheduler:
                         logger.exception("oplog_leverage_sync_query_failed")
 
         sync_error_items: List[str] = []
-        if target_lev > 0 and not leverage_query_error:
+        if not leverage_query_error:
             for sym in enabled:
                 sym = str(sym).upper()
+                target = symbol_target_map.get(sym, target_lev)
+                target = float(target) if target is not None else target_lev
                 cur = snap.symbol_leverage.get(sym)
                 if cur is None:
                     sync_error_items.append(f"{sym}: leverage_unavailable")
                     continue
-                if abs(cur - target_lev) < 1e-9:
+                if abs(cur - target) < 1e-9:
                     continue
                 try:
-                    out = await asyncio.to_thread(self._binance.set_leverage, symbol=sym, leverage=target_lev)
+                    out = await asyncio.to_thread(self._binance.set_leverage, symbol=sym, leverage=target)
                     logger.info(
                         "leverage_sync_ok",
                         extra={
                             "symbol": sym,
-                            "target_leverage": target_lev,
+                            "target_leverage": target,
                             "current_leverage": cur,
                             "response": out,
                         },
@@ -327,14 +363,14 @@ class TraderScheduler:
                                 {
                                     "action": "set",
                                     "symbol": sym,
-                                    "target": target_lev,
-                                    "current": cur,
-                                    "result": "ok",
+                            "target": target,
+                            "current": cur,
+                            "result": "ok",
                                 },
                             )
                         except Exception:
                             logger.exception("oplog_leverage_sync_failed")
-                    snap.symbol_leverage[sym] = target_lev
+                    snap.symbol_leverage[sym] = target
                 except Exception as e:  # noqa: BLE001
                     msg = f"{sym}: {type(e).__name__}: {e}"
                     sync_error_items.append(msg)
@@ -342,7 +378,7 @@ class TraderScheduler:
                         "leverage_sync_failed",
                         extra={
                             "symbol": sym,
-                            "target_leverage": target_lev,
+                            "target_leverage": target,
                             "current_leverage": cur,
                         },
                     )
@@ -353,8 +389,8 @@ class TraderScheduler:
                                 {
                                     "action": "set",
                                     "symbol": sym,
-                                    "target": target_lev,
-                                    "current": cur,
+                            "target": target,
+                            "current": cur,
                                     "result": "failed",
                                     "error": msg,
                                 },
@@ -365,7 +401,7 @@ class TraderScheduler:
             if target_lev > 0 and leverage_query_error:
                 sync_error_items.append(f"query_failed: {leverage_query_error}")
 
-        if target_lev > 0 and not leverage_query_error:
+        if not leverage_query_error:
             snap.leverage_sync_updated_at = _utcnow().isoformat()
         if sync_error_items:
             snap.leverage_sync_error = "; ".join(sync_error_items)
@@ -541,7 +577,7 @@ class TraderScheduler:
                 self._sizing.compute_live,
                 symbol=target_symbol,
                 risk=cfg,
-                leverage=cfg.max_leverage,
+                leverage=self._risk.get_leverage_for_symbol(symbol=target_symbol),
             )
         else:
             # Compute sizing: use 30m ATR% as stop distance proxy (fallback 1%).
@@ -641,6 +677,8 @@ class TraderScheduler:
         candidate: Optional[Candidate],
         snap: SchedulerSnapshot,
     ) -> None:
+        await self._maybe_send_daily_report(st=st)
+
         if not self._notifier:
             return
         interval = max(int(cfg_notify_interval_sec), 10)
@@ -668,3 +706,81 @@ class TraderScheduler:
             self._last_status_notify_ts = now_mono
         except Exception:
             logger.exception("status_notify_failed")
+
+    def _build_daily_report_payload(self, *, day: str, st: Optional[EngineState] = None) -> Dict[str, Any]:
+        details: Dict[str, Any] = {
+            "entries": 0,
+            "closes": 0,
+            "errors": 0,
+            "canceled": 0,
+            "total_records": 0,
+            "blocks": 0,
+        }
+
+        if self._order_records is not None:
+            try:
+                details.update(self._order_records.get_daily_fill_stats(day=day))
+            except Exception:
+                logger.exception("daily_report_order_stats_failed", extra={"day": day})
+
+        if self._risk_blocks is not None:
+            try:
+                details["blocks"] = int(self._risk_blocks.get_daily_block_count(day=day))
+            except Exception:
+                logger.exception("daily_report_block_stats_failed", extra={"day": day})
+
+        engine_state = st or self._engine.get_state().state
+        engine_state_value = engine_state.value if isinstance(engine_state, EngineState) else str(engine_state)
+
+        return {
+            "kind": "DAILY_REPORT",
+            "day": day,
+            "engine_state": engine_state_value,
+            "reported_at": datetime.now(tz=timezone.utc).isoformat(),
+            "detail": details,
+        }
+
+    async def _send_daily_report_payload(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        require_discord_webhook: bool = False,
+    ) -> tuple[bool, Optional[str]]:
+        if self._report_notifier is None:
+            return False, "notifier_missing"
+        if require_discord_webhook and isinstance(self._report_notifier, LoggingNotifier):
+            return False, "discord_webhook_not_configured"
+        try:
+            await self._report_notifier.send_event(payload)
+            return True, None
+        except Exception as e:  # noqa: BLE001
+            logger.exception("daily_report_send_failed", extra={"day": payload.get("day")})
+            return False, f"{type(e).__name__}: {e}"
+
+    async def _maybe_send_daily_report(self, *, st: EngineState) -> None:
+        if self._order_records is None and self._risk_blocks is None:
+            return
+
+        if not self._report_notifier:
+            if self._last_daily_report_date is None:
+                self._last_daily_report_date = datetime.now(tz=timezone.utc).date().isoformat()
+            else:
+                self._last_daily_report_date = datetime.now(tz=timezone.utc).date().isoformat()
+            return
+
+        now_day = datetime.now(tz=timezone.utc).date().isoformat()
+        if self._last_daily_report_date is None:
+            self._last_daily_report_date = now_day
+            return
+
+        if self._last_daily_report_date == now_day:
+            return
+
+        report_day = self._last_daily_report_date
+        self._last_daily_report_date = now_day
+
+        payload = self._build_daily_report_payload(day=report_day, st=st)
+        try:
+            await self._send_daily_report_payload(payload=payload, require_discord_webhook=False)
+        except Exception:
+            logger.exception("daily_report_send_failed", extra={"day": report_day})

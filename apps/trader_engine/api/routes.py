@@ -17,11 +17,13 @@ from apps.trader_engine.api.schemas import (
     RiskConfigSchema,
     SetValueResponse,
     SetValueRequest,
+    SetSymbolLeverageRequest,
     StatusResponse,
     SchedulerControlResponse,
     SchedulerIntervalRequest,
     SchedulerTickResponse,
     SchedulerSnapshotSchema,
+    DailyReportResponse,
     WatchdogStatusSchema,
     PanicResponseSchema,
     PanicResultSchema,
@@ -77,6 +79,43 @@ def _risk_service(request: Request) -> RiskConfigService:
 
 def _binance_service(request: Request) -> BinanceService:
     return request.app.state.binance_service  # type: ignore[attr-defined]
+
+
+def _user_stream_service(request: Request):  # type: ignore[no-untyped-def]
+    return request.app.state.user_stream  # type: ignore[attr-defined]
+
+
+def _sync_universe_symbols_runtime(request: Request, symbols: list[str]) -> str:
+    normalized = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    if not normalized:
+        normalized = ["BTCUSDT", "ETHUSDT", "XAUUSDT"]
+
+    binance_enabled: list[str]
+    try:
+        binance_enabled = _binance_service(request).set_allowed_symbols(normalized)
+    except Exception as e:
+        logger.warning("universe_symbols_runtime_binance_sync_failed", extra={"err": str(e), "symbols": normalized})
+        binance_enabled = normalized
+
+    try:
+        _execution_service(request).set_allowed_symbols(binance_enabled)
+    except Exception as e:
+        logger.warning("universe_symbols_runtime_execution_sync_failed", extra={"err": str(e), "symbols": binance_enabled})
+
+    try:
+        user_stream = _user_stream_service(request)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("universe_symbols_runtime_user_stream_missing", extra={"err": type(e).__name__})
+    else:
+        try:
+            user_stream.set_tracked_symbols(binance_enabled)
+        except Exception as e:
+            logger.warning(
+                "universe_symbols_runtime_user_stream_sync_failed",
+                extra={"err": str(e), "symbols": binance_enabled},
+            )
+
+    return "runtime symbols updated"
 
 
 def _execution_service(request: Request) -> ExecutionService:
@@ -216,7 +255,7 @@ def get_status(
         if not symbol:
             symbol = "BTCUSDT"
 
-        cap = sizing.compute_live(symbol=symbol, risk=cfg, leverage=float(cfg.max_leverage))
+        cap = sizing.compute_live(symbol=symbol, risk=cfg, leverage=risk.get_leverage_for_symbol(symbol=symbol))
         capital_snapshot = CapitalSnapshotSchema(
             symbol=symbol,
             available_usdt=float(cap.available_usdt),
@@ -405,6 +444,12 @@ async def run_scheduler_tick(
     )
 
 
+@router.post("/report", response_model=DailyReportResponse)
+async def report(scheduler: TraderScheduler = Depends(_scheduler_service)) -> DailyReportResponse:
+    payload = await scheduler.send_daily_report()
+    return DailyReportResponse(**payload)
+
+
 @router.post("/start", response_model=EngineStateSchema)
 def start(request: Request, engine: EngineService = Depends(_engine_service)) -> EngineStateSchema:
     try:
@@ -541,9 +586,17 @@ def set_value(
     request: Request,
     req: SetValueRequest,
     risk: RiskConfigService = Depends(_risk_service),
-) -> SetValueResponse:
+    ) -> SetValueResponse:
+    if req.key == RiskConfigKey.symbol_leverage_map:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use /symbol-leverage endpoint",
+        )
     try:
         cfg = risk.set_value(req.key, req.value)
+        runtime_sync = None
+        if req.key == RiskConfigKey.universe_symbols:
+            runtime_sync = _sync_universe_symbols_runtime(request, list(cfg.universe_symbols))
         budget_keys = {
             "capital_mode",
             "capital_pct",
@@ -566,9 +619,29 @@ def set_value(
             key=req.key.value,
             requested_value=req.value,
             applied_value=applied_payload.get(req.key.value),
-            summary=f"Applied {req.key.value}={applied_payload.get(req.key.value)}",
+            summary=f"Applied {req.key.value}={applied_payload.get(req.key.value)}"
+            + (f" / {runtime_sync}" if runtime_sync else ""),
             risk_config=RiskConfigSchema(**applied_payload),
         )
+    except RiskConfigValidationError as e:
+        errs = _parse_set_validation_errors(e.message)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "validation_failed",
+                "errors": [x.model_dump() for x in errs],
+            },
+        ) from e
+
+
+@router.post("/symbol-leverage", response_model=RiskConfigSchema)
+def set_symbol_leverage(
+    req: SetSymbolLeverageRequest,
+    risk: RiskConfigService = Depends(_risk_service),
+) -> RiskConfigSchema:
+    try:
+        cfg = risk.set_symbol_leverage(symbol=req.symbol, leverage=req.leverage)
+        return RiskConfigSchema(**cfg.model_dump())
     except RiskConfigValidationError as e:
         errs = _parse_set_validation_errors(e.message)
         raise HTTPException(

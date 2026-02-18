@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from apps.trader_engine.services.notifier_service import _error_guidance
+
 
 def _fmt_money(x: Any) -> str:
     try:
@@ -206,5 +208,11 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
 
     if last_error:
         lines.append(f"오류: {last_error}")
+        guide = _error_guidance(str(last_error))
+        if guide is not None:
+            code, issue, action = guide
+            lines.append(f"- error_code: {code}")
+            lines.append(f"- error_issue: {issue}")
+            lines.append(f"- recommended_action: {action}")
 
     return _truncate("\n".join(lines))

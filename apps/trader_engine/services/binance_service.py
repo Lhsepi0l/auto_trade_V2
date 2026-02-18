@@ -99,6 +99,16 @@ class BinanceService:
             logger.warning("binance_startup_failed", extra={"err": type(e).__name__})
             return st
 
+    def set_allowed_symbols(self, allowed_symbols: Sequence[str]) -> list[str]:
+        requested = [s.strip().upper() for s in allowed_symbols if s and s.strip()]
+        if not requested:
+            requested = sorted(FIXED_TARGET_SYMBOLS)
+        self._ignored_symbols = [s for s in requested if s not in FIXED_TARGET_SYMBOLS]
+        self._allowed_symbols = [s for s in requested if s in FIXED_TARGET_SYMBOLS]
+        # Re-run startup flow to refresh enabled/disabled symbols against exchange status.
+        st = self.startup()
+        return list(st.enabled_symbols)
+
     def get_status(self) -> Mapping[str, Any]:
         if not self._startup:
             self.startup()

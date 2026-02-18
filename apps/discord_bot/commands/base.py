@@ -210,6 +210,7 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
                 "`/close` : 특정 심볼 포지션 정리\n"
                 "`/closeall` : 전체 포지션 정리\n"
                 "`/cooldown_clear` : 쿨다운/손실 제한 해제\n"
+                "`/report` : 1일 리포트 즉시 전송\n"
                 f"{advanced_buttons_text} : 고급 화면에서 추가 노출\n"
             ),
             inline=False,
@@ -305,6 +306,36 @@ class RemoteControl(commands.Cog):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
             await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
+
+    @app_commands.command(name="report", description="일일 리포트 즉시 전송")
+    async def report(self, interaction: discord.Interaction) -> None:
+        if not await _safe_defer(interaction):
+            return
+        try:
+            payload = await self.api.send_daily_report()
+            summary = payload.get("detail", {})
+            day = payload.get("day", "-")
+            sent = bool(payload.get("notifier_sent"))
+            err = payload.get("notifier_error")
+            lines = [
+                "일일 리포트 생성 완료",
+                f"day: {day}",
+                f"sent_to_discord: {sent}",
+            ]
+            if not sent and err:
+                lines.append(f"전송 오류: {err}")
+            if isinstance(summary, dict):
+                lines.append(
+                    (
+                        f"entries={summary.get('entries', 0)} closes={summary.get('closes', 0)} "
+                        f"errors={summary.get('errors', 0)} canceled={summary.get('canceled', 0)} blocks={summary.get('blocks', 0)}"
+                    ).strip()
+                )
+            await interaction.followup.send("```text\n" + "\n".join(lines) + "\n```")
+        except APIError as e:
+            await interaction.followup.send(f"API 에러: {e}", ephemeral=True)
+        except Exception as e:  # noqa: BLE001
+            await interaction.followup.send(f"예외: {type(e).__name__}: {e}", ephemeral=True)
 
     @app_commands.command(name="help", description="초보자용 사용법 보기")
     async def help(self, interaction: discord.Interaction) -> None:

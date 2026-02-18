@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -17,6 +18,7 @@ class RiskConfig(BaseModel):
 
     # Hardcap is enforced again in RiskService, but keep it here too.
     max_leverage: float = Field(ge=1, le=50)
+    symbol_leverage_map: dict[str, float] = Field(default_factory=dict)
 
     # Loss limits are negative ratios (allowed range: -1..0)
     # Example: -0.02 == -2%
@@ -117,6 +119,32 @@ class RiskConfig(BaseModel):
         if hi < lo:
             raise ValueError("atr_trail_max_pct_must_be_gte_min_pct")
         return hi
+
+    @field_validator("symbol_leverage_map", mode="before")
+    @classmethod
+    def _parse_symbol_leverage_map(cls, v):  # type: ignore[no-untyped-def]
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except Exception as e:
+                raise ValueError("symbol_leverage_map_invalid_json") from e
+        if not isinstance(v, dict):
+            raise ValueError("symbol_leverage_map_must_be_object")
+        out: dict[str, float] = {}
+        for key, raw in v.items():
+            sym = str(key).strip().upper()
+            if not sym:
+                continue
+            try:
+                lev = float(raw)
+            except Exception as e:
+                raise ValueError("symbol_leverage_map_value_must_be_float") from e
+            if lev <= 0 or lev > 50.0:
+                raise ValueError("symbol_leverage_map_value_out_of_range")
+            out[sym] = lev
+        return out
 
     @field_validator("max_position_notional_usdt")
     @classmethod

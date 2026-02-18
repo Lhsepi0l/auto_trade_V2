@@ -15,6 +15,7 @@ class RiskConfigKey(str, Enum):
     max_exposure_pct = "max_exposure_pct"
     max_notional_pct = "max_notional_pct"
     max_leverage = "max_leverage"
+    symbol_leverage_map = "symbol_leverage_map"
     # Loss limits are stored as ratios (e.g. -0.02 for -2%)
     daily_loss_limit_pct = "daily_loss_limit_pct"
     dd_limit_pct = "dd_limit_pct"

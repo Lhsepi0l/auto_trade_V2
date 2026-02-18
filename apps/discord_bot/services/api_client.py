@@ -105,6 +105,13 @@ class TraderAPIClient:
             out[k] = await self.set_value(str(k), str(v))
         return out
 
+    async def set_symbol_leverage(self, symbol: str, leverage: float) -> Any:
+        return await self._request_json(
+            "POST",
+            "/symbol-leverage",
+            json_body={"symbol": symbol, "leverage": float(leverage)},
+        )
+
     async def get_scheduler(self) -> Any:
         return await self._request_json("GET", "/scheduler")
 
@@ -113,6 +120,9 @@ class TraderAPIClient:
 
     async def tick_scheduler_now(self) -> Any:
         return await self._request_json("POST", "/scheduler/tick")
+
+    async def send_daily_report(self) -> Any:
+        return await self._request_json("POST", "/report")
 
     async def preset(self, name: str) -> Any:
         return await self._request_json("POST", "/preset", json_body={"name": name})

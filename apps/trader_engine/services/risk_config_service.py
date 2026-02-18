@@ -85,6 +85,8 @@ class RiskConfigService:
     def set_value(self, key: RiskConfigKey, value: str) -> RiskConfig:
         cfg = self.get_config()
         updated = cfg.model_copy()
+        if key == RiskConfigKey.symbol_leverage_map:
+            raise RiskConfigValidationError("symbol_leverage_map_is_set_via_symbol_leverage_endpoint")
 
         try:
             parsed: Any = self._parse_value(key, value)
@@ -106,6 +108,57 @@ class RiskConfigService:
 
         self._risk_config_repo.upsert(validated)
         logger.info("risk_config_value_set", extra={"key": key.value})
+        return validated
+
+    def get_leverage_for_symbol(self, *, symbol: str) -> float:
+        cfg = self.get_config()
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            return float(cfg.max_leverage)
+
+        cfg_map = cfg.symbol_leverage_map or {}
+        if sym in cfg_map:
+            try:
+                lev = float(cfg_map[sym])
+            except Exception:
+                return float(cfg.max_leverage)
+            if 1.0 <= lev <= float(cfg.max_leverage):
+                return lev
+            if lev > float(cfg.max_leverage):
+                return float(cfg.max_leverage)
+        return float(cfg.max_leverage)
+
+    def set_symbol_leverage(self, *, symbol: str, leverage: float) -> RiskConfig:
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            raise RiskConfigValidationError("symbol_is_required")
+        cfg = self.get_config()
+
+        try:
+            lev = float(leverage)
+        except Exception as e:
+            raise RiskConfigValidationError("symbol_leverage_must_be_float") from e
+
+        if lev < 0.0 or lev > 50.0:
+            raise RiskConfigValidationError("symbol_leverage_must_be_between_0_and_50")
+
+        if lev > float(cfg.max_leverage):
+            raise RiskConfigValidationError("symbol_leverage_exceeds_max_leverage")
+
+        payload = cfg.model_dump()
+        m = dict(payload.get("symbol_leverage_map") or {})
+        if lev <= 0:
+            m.pop(sym, None)
+        else:
+            m[sym] = lev
+
+        try:
+            validated = RiskConfig(**payload | {"symbol_leverage_map": m})
+        except Exception as e:
+            raise RiskConfigValidationError(str(e)) from e
+
+        self._risk_config_repo.upsert(validated)
+        logger.info("risk_config_symbol_leverage_set", extra={"symbol": sym, "leverage": lev})
         return validated
 
     @staticmethod

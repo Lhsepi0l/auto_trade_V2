@@ -54,6 +54,10 @@ class TraderSettings(BaseSettings):
 
     # Optional notifications (if empty => disabled)
     discord_webhook_url: str = Field(default="", description="Discord webhook for critical alerts (optional)")
+    discord_report_webhook_url: str = Field(
+        default="",
+        description="Discord webhook for daily reports only (optional, fallback to discord_webhook_url)",
+    )
 
     # Execution (trade) controls (MVP)
     exec_limit_timeout_sec: float = Field(default=3.0)

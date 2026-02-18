@@ -121,6 +121,10 @@ class UserStreamService:
         self._safe_mode_alerted = False
         self._reconnect_requested = False
 
+    def set_tracked_symbols(self, tracked_symbols: Sequence[str]) -> list[str]:
+        self._tracked_symbols = [str(s).strip().upper() for s in (tracked_symbols or []) if str(s).strip()]
+        return list(self._tracked_symbols)
+
     def start(self) -> None:
         if self._task and not self._task.done():
             return

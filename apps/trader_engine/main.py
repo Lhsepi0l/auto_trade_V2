@@ -35,6 +35,7 @@ from apps.trader_engine.storage.db import close, connect, migrate
 from apps.trader_engine.storage.repositories import (
     EngineStateRepo,
     OrderRecordRepo,
+    RiskBlockRepo,
     PnLStateRepo,
     RiskConfigRepo,
     StatusSnapshotRepo,
@@ -77,6 +78,7 @@ def _build_lifespan(
         _status_snapshot_repo = StatusSnapshotRepo(db)  # reserved for later wiring
         pnl_state_repo = PnLStateRepo(db)
         order_record_repo = OrderRecordRepo(db)
+        risk_block_repo = RiskBlockRepo(db)
         trailing_state_repo = TrailingStateRepo(db)
         oplog = OperationalLogger.create(db=db, component="engine")
 
@@ -121,8 +123,11 @@ def _build_lifespan(
         )
 
         notifier = build_notifier(settings.discord_webhook_url)
+        report_notifier = build_notifier(settings.discord_report_webhook_url or settings.discord_webhook_url)
         if test_overrides and test_overrides.get("notifier") is not None:
             notifier = test_overrides["notifier"]
+        if test_overrides and test_overrides.get("report_notifier") is not None:
+            report_notifier = test_overrides["report_notifier"]
 
         sizing_service = SizingService(client=binance_client)
         reconcile_service = ReconcileService(
@@ -182,10 +187,13 @@ def _build_lifespan(
         sizing=sizing_service,
         execution=execution_service,
         notifier=notifier,
+        report_notifier=report_notifier,
         tick_sec=float(settings.scheduler_tick_sec),
         reverse_threshold=float(settings.reverse_threshold),
         oplog=oplog,
         snapshot=snapshot_service,
+        order_records=order_record_repo,
+        risk_blocks=risk_block_repo,
     )
         watchdog = WatchdogService(
         client=binance_client,
@@ -216,6 +224,7 @@ def _build_lifespan(
         app.state.instance_lock = instance_lock
         app.state.instance_lock_path = settings.instance_lock_path
         app.state.notifier = notifier
+        app.state.report_notifier = report_notifier
         app.state.db = db
         app.state.engine_service = engine_service
         app.state.risk_config_service = risk_config_service

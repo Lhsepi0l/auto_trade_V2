@@ -14,6 +14,7 @@ class RiskConfigSchema(BaseModel):
     max_exposure_pct: Optional[float] = None
     max_notional_pct: float
     max_leverage: float
+    symbol_leverage_map: Dict[str, float] = Field(default_factory=dict)
     daily_loss_limit_pct: float
     dd_limit_pct: float
     lose_streak_n: int
@@ -171,6 +172,25 @@ class SchedulerTickResponse(BaseModel):
     tick_sec: Optional[float] = None
 
 
+class DailyReportDetailSchema(BaseModel):
+    entries: int = 0
+    closes: int = 0
+    errors: int = 0
+    canceled: int = 0
+    total_records: int = 0
+    blocks: int = 0
+
+
+class DailyReportResponse(BaseModel):
+    kind: str = "DAILY_REPORT"
+    day: str
+    engine_state: str
+    reported_at: str
+    detail: DailyReportDetailSchema
+    notifier_sent: bool = False
+    notifier_error: Optional[str] = None
+
+
 class WatchdogStatusSchema(BaseModel):
     symbol: Optional[str] = None
     last_mark_price: Optional[float] = None
@@ -249,6 +269,11 @@ class StatusResponse(BaseModel):
 class SetValueRequest(BaseModel):
     key: RiskConfigKey
     value: str
+
+
+class SetSymbolLeverageRequest(BaseModel):
+    symbol: str
+    leverage: float
 
 
 class PresetRequest(BaseModel):

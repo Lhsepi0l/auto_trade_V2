@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
@@ -22,8 +23,11 @@ from apps.discord_bot.ui_labels import (
     SIMPLE_TOGGLE_LABEL,
     START_BUTTON_LABEL,
     STOP_BUTTON_LABEL,
+    UNIVERSE_SYMBOLS_BUTTON_LABEL,
+    UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
     TICK_ONCE_BUTTON_LABEL,
     TRAILING_BUTTON_LABEL,
+    SYMBOL_LEVERAGE_BUTTON_LABEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,9 @@ HELP_ADVANCED = (
             RISK_BASIC_BUTTON_LABEL,
             RISK_ADVANCED_BUTTON_LABEL,
             TRAILING_BUTTON_LABEL,
+            SYMBOL_LEVERAGE_BUTTON_LABEL,
+            UNIVERSE_SYMBOLS_BUTTON_LABEL,
+            UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
             SIMPLE_TOGGLE_LABEL,
         ]
     )
@@ -264,6 +271,11 @@ def _build_advanced_lines(payload: Dict[str, Any]) -> list[str]:
     risk = payload.get("risk_config") or {}
     cfg = payload.get("config") or {}
     wd = payload.get("watchdog") or {}
+    symbol_map = risk.get("symbol_leverage_map") or {}
+    symbol_items = [
+        f"{str(sym)}={float(lev)}"
+        for sym, lev in sorted(symbol_map.items(), key=lambda item: str(item[0]))
+    ]
 
     lines = [
         "리스크: "
@@ -276,12 +288,15 @@ def _build_advanced_lines(payload: Dict[str, Any]) -> list[str]:
             ]
         ),
         f"실행모드={cfg.get('exec_mode_default')}",
+        f"운영 심볼={_join_symbols_preview(list(risk.get('universe_symbols') or []), limit=180)}",
         "트레일링="
         + (
             f"ON({risk.get('trailing_mode')}, 시작={risk.get('trail_arm_pnl_pct')}%, "
             f"distance={risk.get('trail_distance_pnl_pct') if risk.get('trailing_mode') == 'PCT' else (wd.get('last_trailing_distance_pct') or '-') }%)"
         ),
     ]
+    if symbol_items:
+        lines.append("심볼 레버리지=" + ", ".join(symbol_items))
     return lines
 
 
@@ -299,6 +314,9 @@ def _build_embed(payload: Dict[str, Any], *, mode: Literal["simple", "advanced"]
                     RISK_BASIC_BUTTON_LABEL,
                     RISK_ADVANCED_BUTTON_LABEL,
                     TRAILING_BUTTON_LABEL,
+                    SYMBOL_LEVERAGE_BUTTON_LABEL,
+                    UNIVERSE_SYMBOLS_BUTTON_LABEL,
+                    UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
                     EXEC_MODE_SELECT_PLACEHOLDER,
                     SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
                 ]
@@ -344,6 +362,34 @@ def _parse_bool_like(raw: str, *, field: str) -> bool:
     if s in {"0", "false", "f", "no", "n", "off", "아니오", "아니요", "끄기"}:
         return False
     raise ValueError(f"{field}: true/false(예/아니오) 형식으로 입력해주세요")
+
+
+def _parse_universe_symbols(raw: str) -> list[str]:
+    s = str(raw or "").strip()
+    if not s:
+        raise ValueError("심볼 목록이 비어 있습니다. BTCUSDT,ETHUSDT 형식으로 입력하세요.")
+    normalized_raw = s.replace("\n", ",").replace(";", ",").replace("，", ",")
+    parts = [p.strip().upper() for p in re.split(r"[\s,]+", normalized_raw) if p.strip()]
+    if not parts:
+        raise ValueError("심볼 형식이 유효하지 않습니다. BTCUSDT,ETHUSDT 형식으로 입력하세요.")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in parts:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _join_symbols_preview(symbols: list[str], *, limit: int = 150) -> str:
+    if not symbols:
+        return "-"
+    text = ",".join(symbols)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
 
 
 def _parse_float_range(raw: str, *, field: str, min_v: float, max_v: float) -> float:
@@ -631,6 +677,163 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
 
 
+class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
+    symbol = discord.ui.TextInput(
+        label="심볼",
+        required=True,
+        placeholder="예: BTCUSDT",
+        max_length=16,
+    )
+    leverage = discord.ui.TextInput(
+        label="레버리지 (0 입력 시 해제)",
+        required=True,
+        placeholder="예: 20 또는 0",
+    )
+
+    def __init__(
+        self,
+        *,
+        api: TraderAPI,
+        view: "PanelViewBase",
+    ) -> None:
+        super().__init__(timeout=300)
+        self._api = api
+        self._view = view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not _is_admin(interaction):
+            await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
+            return
+
+        symbol = str(self.symbol).strip().upper()
+        if not symbol:
+            await interaction.response.send_message("심볼을 입력해주세요.", ephemeral=True)
+            return
+
+        try:
+            lev = _parse_float_range(str(self.leverage), field="leverage", min_v=0.0, max_v=50.0)
+        except ValueError as e:
+            await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._api.set_symbol_leverage(symbol=symbol, leverage=lev)
+            await self._view.refresh_message(interaction)
+            if lev <= 0:
+                await interaction.followup.send(f"{symbol} 개별 레버리지를 해제했습니다.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"{symbol} 개별 레버리지를 {lev} 배로 설정했습니다.", ephemeral=True)
+        except APIError as e:
+            await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
+
+
+class UniverseSymbolsModal(discord.ui.Modal, title="운영 심볼 설정"):
+    universe_symbols = discord.ui.TextInput(
+        label="운영 심볼 목록(콤마 구분)",
+        required=True,
+        placeholder="예: BTCUSDT,ETHUSDT,XAUUSDT",
+        max_length=300,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        *,
+        api: TraderAPI,
+        view: "PanelViewBase",
+        defaults: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(timeout=300)
+        self._api = api
+        self._view = view
+        raw: list[str] = []
+        cfg = defaults or {}
+        symbols = cfg.get("universe_symbols")
+        if isinstance(symbols, (list, tuple)):
+            raw = [str(x).strip().upper() for x in symbols if str(x).strip()]
+        if raw:
+            self.universe_symbols.default = ",".join(raw)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not _is_admin(interaction):
+            await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
+            return
+
+        try:
+            symbols = _parse_universe_symbols(str(self.universe_symbols))
+        except ValueError as e:
+            await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._api.set_value("universe_symbols", ",".join(symbols))
+            await self._view.refresh_message(interaction)
+            await interaction.followup.send(f"운영 심볼을 {len(symbols)}개로 설정했습니다.", ephemeral=True)
+        except APIError as e:
+            await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
+
+
+class UniverseSymbolRemoveModal(discord.ui.Modal, title="운영 심볼 해제"):
+    symbol = discord.ui.TextInput(
+        label="해제할 심볼",
+        required=True,
+        placeholder="예: XAUUSDT",
+        max_length=16,
+    )
+
+    def __init__(
+        self,
+        *,
+        api: TraderAPI,
+        view: "PanelViewBase",
+        defaults: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(timeout=300)
+        self._api = api
+        self._view = view
+        self._defaults = defaults or {}
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not _is_admin(interaction):
+            await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
+            return
+
+        symbol = str(self.symbol).strip().upper()
+        if not symbol:
+            await interaction.response.send_message("심볼을 입력해주세요.", ephemeral=True)
+            return
+
+        current = self._defaults.get("universe_symbols", [])
+        if not isinstance(current, list):
+            try:
+                payload = await self._api.get_status()
+                risk_cfg = payload.get("risk_config") if isinstance(payload, dict) else {}
+                current = risk_cfg.get("universe_symbols", [])
+            except Exception:
+                current = []
+        if not isinstance(current, list):
+            current = []
+
+        current_set = [str(x).strip().upper() for x in current if str(x).strip()]
+        filtered = [x for x in current_set if x != symbol]
+        if not filtered:
+            await interaction.response.send_message("해제 후 남은 심볼이 0개가 될 수 없습니다.", ephemeral=True)
+            return
+        if symbol not in current_set:
+            await interaction.response.send_message(f"{symbol}는 현재 운영 심볼 목록에 없습니다.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._api.set_value("universe_symbols", ",".join(filtered))
+            await self._view.refresh_message(interaction)
+            await interaction.followup.send(f"{symbol}를 운영 심볼에서 해제했습니다.", ephemeral=True)
+        except APIError as e:
+            await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
+
+
 class PanelViewBase(discord.ui.View):
     def __init__(self, *, api: TraderAPI, message_id: Optional[int] = None) -> None:
         super().__init__(timeout=None)
@@ -904,6 +1107,38 @@ class AdvancedPanelView(PanelViewBase):
             return
         defaults: Dict[str, Any] = await self._get_risk_config()
         await interaction.response.send_modal(TrailingConfigModal(api=self.api, view=self, defaults=defaults))
+
+    @discord.ui.button(label=SYMBOL_LEVERAGE_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
+    async def symbol_leverage_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(SymbolLeverageModal(api=self.api, view=self))
+
+    @discord.ui.button(label=UNIVERSE_SYMBOLS_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
+    async def universe_symbols_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        defaults: Dict[str, Any] = await self._get_risk_config()
+        await interaction.response.send_modal(
+            UniverseSymbolsModal(
+                api=self.api,
+                view=self,
+                defaults=defaults,
+            )
+        )
+
+    @discord.ui.button(label=UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=4)
+    async def universe_remove_symbol_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        defaults: Dict[str, Any] = await self._get_risk_config()
+        await interaction.response.send_modal(
+            UniverseSymbolRemoveModal(
+                api=self.api,
+                view=self,
+                defaults=defaults,
+            )
+        )
 
     @discord.ui.select(
         placeholder=EXEC_MODE_SELECT_PLACEHOLDER,

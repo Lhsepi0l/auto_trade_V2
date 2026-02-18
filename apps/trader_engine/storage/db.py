@@ -24,6 +24,7 @@ SCHEMA_MIGRATIONS: list[str] = [
         max_exposure_pct REAL NOT NULL,
         max_notional_pct REAL NOT NULL,
         max_leverage REAL NOT NULL,
+        symbol_leverage_map TEXT,
         -- Legacy percent-unit fields kept for backward compatibility (e.g. -2 for -2%)
         daily_loss_limit REAL NOT NULL,
         dd_limit REAL NOT NULL,
@@ -106,6 +107,7 @@ SCHEMA_MIGRATIONS: list[str] = [
         max_exposure_pct REAL,
         max_notional_pct REAL NOT NULL,
         max_leverage REAL NOT NULL,
+        symbol_leverage_map TEXT,
         -- Legacy percent-unit fields kept for backward compatibility (e.g. -2 for -2%)
         daily_loss_limit REAL NOT NULL,
         dd_limit REAL NOT NULL,
@@ -158,6 +160,7 @@ SCHEMA_MIGRATIONS: list[str] = [
         max_exposure_pct,
         max_notional_pct,
         max_leverage,
+        symbol_leverage_map,
         daily_loss_limit,
         dd_limit,
         daily_loss_limit_pct,
@@ -201,7 +204,7 @@ SCHEMA_MIGRATIONS: list[str] = [
         atr_mult_mean_window,
         updated_at
     )
-    SELECT
+        SELECT
         id,
         per_trade_risk_pct,
         CASE
@@ -211,6 +214,7 @@ SCHEMA_MIGRATIONS: list[str] = [
         END AS max_exposure_pct,
         max_notional_pct,
         max_leverage,
+        NULL AS symbol_leverage_map,
         daily_loss_limit,
         dd_limit,
         daily_loss_limit_pct,
@@ -473,6 +477,7 @@ def _ensure_columns(db: Database) -> None:
             ("tf_weight_30m", "REAL"),
             ("vol_shock_atr_mult_threshold", "REAL"),
             ("atr_mult_mean_window", "INTEGER"),
+            ("symbol_leverage_map", "TEXT"),
         ]
         for name, typ in adds:
             if name in risk_cols:

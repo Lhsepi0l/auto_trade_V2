@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
 from apps.trader_engine.domain.enums import EngineState
@@ -11,6 +11,17 @@ from apps.trader_engine.storage.db import Database
 
 def _utcnow_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _day_bounds_utc(day: str) -> tuple[str, str]:
+    raw = str(day or "").strip()
+    if not raw:
+        raw = datetime.now(tz=timezone.utc).date().isoformat()
+    raw = raw.split("T", 1)[0]
+    d = date.fromisoformat(raw)
+    start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    return start.isoformat(), end.isoformat()
 
 
 def _parse_dt(value: str) -> datetime:
@@ -72,6 +83,7 @@ class RiskConfigRepo:
                 max_exposure_pct,
                 max_notional_pct,
                 max_leverage,
+                symbol_leverage_map,
                 daily_loss_limit,
                 dd_limit,
                 daily_loss_limit_pct,
@@ -121,6 +133,7 @@ class RiskConfigRepo:
                 max_exposure_pct=excluded.max_exposure_pct,
                 max_notional_pct=excluded.max_notional_pct,
                 max_leverage=excluded.max_leverage,
+                symbol_leverage_map=excluded.symbol_leverage_map,
                 daily_loss_limit=excluded.daily_loss_limit,
                 dd_limit=excluded.dd_limit,
                 daily_loss_limit_pct=excluded.daily_loss_limit_pct,
@@ -169,6 +182,7 @@ class RiskConfigRepo:
                 cfg.max_exposure_pct,
                 cfg.max_notional_pct,
                 cfg.max_leverage,
+                json.dumps(cfg.symbol_leverage_map, ensure_ascii=True, sort_keys=True),
                 daily_loss_limit_legacy,
                 dd_limit_legacy,
                 float(cfg.daily_loss_limit_pct),
@@ -500,6 +514,56 @@ class OrderRecordRepo:
             return _parse_dt(str(row["ts_created"])).timestamp()
         except Exception:
             return None
+
+    def get_daily_fill_stats(self, *, day: str) -> Dict[str, int]:
+        start_iso, end_iso = _day_bounds_utc(day)
+        row = self._db.query_one(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN reduce_only=0 AND UPPER(status)='FILLED' THEN 1 ELSE 0 END), 0) AS entries,
+                COALESCE(SUM(CASE WHEN reduce_only=1 AND UPPER(status)='FILLED' THEN 1 ELSE 0 END), 0) AS closes,
+                COALESCE(SUM(CASE WHEN UPPER(status)='ERROR' THEN 1 ELSE 0 END), 0) AS errors,
+                COALESCE(SUM(CASE WHEN UPPER(status)='CANCELED' THEN 1 ELSE 0 END), 0) AS canceled,
+                COALESCE(COUNT(*), 0) AS total_records
+            FROM order_records
+            WHERE ts_updated >= ? AND ts_updated < ?
+            """.strip(),
+            (start_iso, end_iso),
+        )
+        if not row:
+            return {
+                "entries": 0,
+                "closes": 0,
+                "errors": 0,
+                "canceled": 0,
+                "total_records": 0,
+            }
+        return {
+            "entries": int(row["entries"] or 0),
+            "closes": int(row["closes"] or 0),
+            "errors": int(row["errors"] or 0),
+            "canceled": int(row["canceled"] or 0),
+            "total_records": int(row["total_records"] or 0),
+        }
+
+
+class RiskBlockRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get_daily_block_count(self, *, day: str) -> int:
+        start_iso, end_iso = _day_bounds_utc(day)
+        row = self._db.query_one(
+            """
+            SELECT COALESCE(COUNT(*), 0) AS cnt
+            FROM risk_blocks
+            WHERE ts >= ? AND ts < ?
+            """.strip(),
+            (start_iso, end_iso),
+        )
+        if not row:
+            return 0
+        return int(row["cnt"] or 0)
 
 
 class TrailingStateRepo:

@@ -143,6 +143,10 @@ class ExecutionService:
         self._exec_lock = asyncio.Lock()
         self._exec_lock_timeout_sec = max(float(exec_lock_timeout_sec), 0.01)
 
+    def set_allowed_symbols(self, allowed_symbols: Sequence[str]) -> list[str]:
+        self._allowed_symbols = [s.strip().upper() for s in allowed_symbols if s and s.strip()]
+        return list(self._allowed_symbols)
+
     async def _acquire_exec_lock(self) -> bool:
         try:
             await asyncio.wait_for(self._exec_lock.acquire(), timeout=self._exec_lock_timeout_sec)
@@ -681,7 +685,7 @@ class ExecutionService:
             # Optional leverage validation only (no auto-adjust).
             cfg = self._risk.get_config()
             lev = intent.get("leverage")
-            lev_f = float(cfg.max_leverage)
+            lev_f = self._risk.get_leverage_for_symbol(symbol=symbol)
             if lev is not None:
                 try:
                     lev_f = float(lev)
