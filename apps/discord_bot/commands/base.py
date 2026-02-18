@@ -377,8 +377,11 @@ class RemoteControl(commands.Cog):
         except Exception as e:  # noqa: BLE001
             await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
 
-    @app_commands.command(name="set", description="由ъ뒪???ㅼ젙 媛?蹂寃?)
-    @app_commands.describe(key="由ъ뒪???ㅼ젙 ??, value="??媛?臾몄옄??")
+    @app_commands.command(name="set", description="리스크 설정 키를 변경합니다")
+    @app_commands.describe(
+        key="리스크 설정 키",
+        value="새로 설정할 값",
+    )
     async def set_value(
         self,
         interaction: discord.Interaction,
@@ -420,10 +423,10 @@ class RemoteControl(commands.Cog):
             await interaction.followup.send(f"?ㅻ쪟: {type(e).__name__}: {e}", ephemeral=True)
 
 
-    @app_commands.command(name="profile", description="由ъ뒪???덉궛 ?꾨줈???쇨큵 ?곸슜")
+    @app_commands.command(name="profile", description="사전 저장된 프리셋을 빠르게 적용")
     @app_commands.describe(
-        name="?곸슜???꾨줈??,
-        budget_usdt="利앷굅湲??덉궛(?좏깮). ?낅젰 ??margin_budget_usdt 媛숈씠 ?곸슜",
+        name="프리셋 이름",
+        budget_usdt="예산(선택). 입력 시 margin_budget_usdt 설정",
     )
     @app_commands.choices(name=[app_commands.Choice(name=p, value=p) for p in PROFILE_KEYS])
     async def profile(
