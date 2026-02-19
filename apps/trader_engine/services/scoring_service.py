@@ -201,13 +201,24 @@ class ScoringService:
                 )
                 continue
             try:
-                scored, per_symbol_reasons = self.score_symbol(
+                score_result = self.score_symbol(
                     cfg=cfg,
                     symbol=str(sym).upper(),
                     candles_by_interval=by_itv,
                     interval_weights=interval_weights,
                     min_bars_factor=_safe_float(min_bars_factor, default=0.42),
                 )
+                if isinstance(score_result, tuple):
+                    if len(score_result) == 2:
+                        scored, per_symbol_reasons = score_result  # type: ignore[misc]
+                    else:
+                        raise ValueError("score_symbol_tuple_shape")
+                elif isinstance(score_result, SymbolScore):
+                    scored = score_result
+                    per_symbol_reasons = {}
+                else:
+                    raise ValueError("score_symbol_invalid_return")
+
                 for k, v in per_symbol_reasons.items():
                     key = str(k)
                     reasons[key] = _safe_int(reasons.get(key, 0)) + _safe_int(v)
