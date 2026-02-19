@@ -650,7 +650,17 @@ class TraderScheduler:
             snap.last_error = "enter_symbol_missing"
             return
         dir_s = str(dec.enter_direction or "").upper()
-        direction = Direction.LONG if dir_s == "LONG" else Direction.SHORT
+        if dir_s == "LONG":
+            direction = Direction.LONG
+        elif dir_s == "SHORT":
+            direction = Direction.SHORT
+        else:
+            logger.warning(
+                "invalid_enter_direction",
+                extra={"enter_direction": str(dec.enter_direction), "symbol": target_symbol},
+            )
+            snap.last_error = f"invalid_enter_direction:{dec.enter_direction}"
+            return
 
         capital_mode = str(cfg.capital_mode.value if hasattr(cfg.capital_mode, "value") else cfg.capital_mode).upper()
         use_margin_budget_mode = capital_mode == CapitalMode.MARGIN_BUDGET_USDT.value
