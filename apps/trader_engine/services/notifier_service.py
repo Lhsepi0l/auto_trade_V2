@@ -295,9 +295,11 @@ def _regime_ko(regime: str) -> str:
         return "상승"
     if v == "BEAR":
         return "하락"
+    if v in {"", "-", "N/A", "NONE", "UNKNOWN", "UNKNOWN_REGIME"}:
+        return "미판단"
     if v:
         return v
-    return "-"
+    return "미판단"
 
 
 def _position_side(position_amt: Any, position_side: Any = None) -> str:
@@ -585,7 +587,7 @@ def _format_status_line(snapshot: Mapping[str, Any]) -> str:
     dd = _fmt_float(snapshot.get("drawdown_pct"), 2)
     regime_raw = str(snapshot.get("regime") or "-")
     regime = _regime_ko(regime_raw)
-    regime_code = regime_raw.strip().upper() if regime_raw else "-"
+    regime_code = regime_raw.strip().upper() if regime_raw and regime_raw != "-" else "N/A"
     candidate = snapshot.get("candidate_symbol") or "-"
     dec = str(snapshot.get("last_decision_reason") or "-")
     dec_ko = _decision_reason_ko(dec)
