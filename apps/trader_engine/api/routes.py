@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -47,6 +48,61 @@ from apps.trader_engine.scheduler import TraderScheduler
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _build_scheduler_snapshot_fallback(cfg: Any, scheduler: TraderScheduler, engine_state: EngineState, binance: BinanceService) -> SchedulerSnapshotSchema:
+    scoring_tfs, scoring_weights = TraderScheduler._resolve_scoring_setup(cfg=cfg)
+    tick_sec = float(getattr(scheduler, "tick_sec", 600.0))
+    min_bars_factor = TraderScheduler._resolve_min_bars_factor(
+        tick_sec=tick_sec,
+        scoring_timeframes=scoring_tfs,
+    )
+    enabled = list(getattr(binance, "enabled_symbols", ["BTCUSDT", "ETHUSDT", "XAUUSDT"]))
+    engine_state_value = engine_state.value if hasattr(engine_state, "value") else str(engine_state)
+    return SchedulerSnapshotSchema(
+        tick_started_at=_utcnow_iso(),
+        tick_finished_at=None,
+        tick_sec=tick_sec,
+        engine_state=engine_state_value,
+        enabled_symbols=enabled,
+        candidate=None,
+        ai_signal=None,
+        scores={},
+        last_scores={},
+        last_candidate=None,
+        last_decision_reason="scheduler_warming_up",
+        last_action="warmup",
+        last_error="scheduler snapshot not initialized yet",
+        active_scoring_timeframes=scoring_tfs,
+        candidate_score_by_timeframe={},
+        scoring_weights=scoring_weights,
+        scoring_rejection_reasons={},
+        scoring_scan_stats={
+            "scoring_timeframes": scoring_tfs,
+            "score_scan_weights": scoring_weights,
+            "min_bars_factor": min_bars_factor,
+            "requested_symbols": len(enabled),
+        },
+        candidate_selection_reasons={},
+        scoring_setup_signature={
+            "timeframes": scoring_tfs,
+            "weights": scoring_weights,
+            "min_bars_factor": float(min_bars_factor),
+            "tick_sec": float(tick_sec),
+            "score_tf_15m_enabled": bool(getattr(cfg, "score_tf_15m_enabled", False)),
+        },
+        last_scoring_validation_ts=None,
+        min_bars_factor=float(min_bars_factor),
+        scoring_drift_detected=False,
+        scoring_drift_details=[],
+        scoring_rejection_hotspot="",
+        candidate_reject_stage="",
+        candidate_rejection_hotspot="",
+    )
 
 
 def _parse_set_validation_errors(raw: str) -> list[FieldValidationErrorSchema]:
@@ -219,11 +275,17 @@ def get_status(
     except Exception:
         logger.exception("pnl_status_failed")
 
-    sched = (
-        SchedulerSnapshotSchema(**request.app.state.scheduler.snapshot.__dict__)  # type: ignore[attr-defined]
-        if getattr(request.app.state, "scheduler", None) and getattr(request.app.state.scheduler, "snapshot", None)
-        else None
-    )
+    if getattr(request.app.state, "scheduler", None) and getattr(request.app.state.scheduler, "snapshot", None):
+        sched = SchedulerSnapshotSchema(**request.app.state.scheduler.snapshot.__dict__)  # type: ignore[attr-defined]
+    elif getattr(request.app.state, "scheduler", None):
+        sched = _build_scheduler_snapshot_fallback(
+            cfg=cfg,
+            scheduler=request.app.state.scheduler,  # type: ignore[attr-defined]
+            engine_state=state.state,
+            binance=binance,
+        )
+    else:
+        sched = None
     wd = (
         WatchdogStatusSchema(**request.app.state.watchdog.metrics.__dict__)  # type: ignore[attr-defined]
         if getattr(request.app.state, "watchdog", None) and getattr(request.app.state.watchdog, "metrics", None)

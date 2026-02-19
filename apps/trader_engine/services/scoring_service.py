@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import logging
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
 
 from apps.trader_engine.domain.models import RiskConfig
@@ -129,6 +130,7 @@ class ScoringService:
         candles_by_symbol_interval: Mapping[str, Mapping[str, Sequence[Candle]]],
         min_bars_factor: float = 1.0,
     ) -> ScoringResult:
+        logger = logging.getLogger(__name__)
         out: Dict[str, SymbolScore] = {}
         reasons: Dict[str, int] = {
             "symbols_seen": 0,
@@ -154,9 +156,23 @@ class ScoringService:
                     continue
                 out[str(sym).upper()] = scored
                 reasons["scored"] += 1
-            except Exception:
+            except Exception as e:
                 # Fail closed: skip on parse issues.
                 reasons["skipped_scoring_exception"] += 1
+                exc_name = type(e).__name__
+                exc_key = f"scoring_exception_{exc_name}"
+                reasons[exc_key] = int(reasons.get(exc_key, 0)) + 1
+                logger.warning(
+                    "scoring_error",
+                    extra={
+                        "symbol": str(sym).upper(),
+                        "error": str(e),
+                        "error_type": exc_name,
+                        "timeframes": sorted(list(by_itv.keys())),
+                        "min_bars_factor": float(min_bars_factor),
+                    },
+                    exc_info=True,
+                )
                 continue
         return ScoringResult(
             scores=out,
