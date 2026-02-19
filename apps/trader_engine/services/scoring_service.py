@@ -568,18 +568,21 @@ class ScoringService:
         else:
             direction = "LONG" if long_score >= short_score else "SHORT"
 
-        return SymbolScore(
-            symbol=sym,
-            composite=float(combined),
-            long_score=float(long_score),
-            short_score=float(short_score),
-            regime_4h=regime_4h,
-            vol_shock=bool(vol_shock),
-            strength=float(strength),
-            direction=direction,
-            timeframes=tf_ind,
-            score_by_timeframe=score_by_timeframe,
-            active_timeframes=[k for k in ("10m", "15m", "30m", "1h", "4h") if k in tf_ind],
+        return (
+            SymbolScore(
+                symbol=sym,
+                composite=float(combined),
+                long_score=float(long_score),
+                short_score=float(short_score),
+                regime_4h=regime_4h,
+                vol_shock=bool(vol_shock),
+                strength=float(strength),
+                direction=direction,
+                timeframes=tf_ind,
+                score_by_timeframe=score_by_timeframe,
+                active_timeframes=[k for k in ("10m", "15m", "30m", "1h", "4h") if k in tf_ind],
+            ),
+            reason_counts,
         )
 
     def pick_candidate(
