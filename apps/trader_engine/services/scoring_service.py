@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, dataclass, field
 import logging
+from collections.abc import Sequence as _Sequence
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
 
 from apps.trader_engine.domain.models import RiskConfig
@@ -211,6 +212,52 @@ class ScoringService:
         vol_shock = False
         regime_4h: Regime = "CHOPPY"
 
+        def _extract_float(v: Any) -> Optional[float]:
+            try:
+                if v is None:
+                    return None
+                fv = float(v)
+            except Exception:
+                return None
+            if fv <= 0:
+                return None
+            return fv
+
+        def _to_candle(v: Any) -> Optional[Candle]:
+            if isinstance(v, Candle):
+                return v
+            if isinstance(v, _Sequence) and not isinstance(v, (str, bytes)):
+                if len(v) < 7:
+                    return None
+                try:
+                    return Candle(
+                        open_time_ms=int(v[0]),
+                        open=float(v[1]),
+                        high=float(v[2]),
+                        low=float(v[3]),
+                        close=float(v[4]),
+                        volume=float(v[5]),
+                        close_time_ms=int(v[6]),
+                    )
+                except Exception:
+                    return None
+            if isinstance(v, Mapping):
+                try:
+                    return Candle(
+                        open_time_ms=int(v.get("open_time", v.get("openTime", v.get("open_time_ms", 0)))),
+                        open=float(v["open"]),
+                        high=float(v["high"]),
+                        low=float(v["low"]),
+                        close=float(v["close"]),
+                        volume=float(v["volume"]),
+                        close_time_ms=int(
+                            v.get("close_time", v.get("closeTime", v.get("close_time_ms", 0)))
+                        ),
+                    )
+                except Exception:
+                    return None
+            return None
+
         base_len = max(
             self._ema_slow,
             self._rsi_period + 1,
@@ -228,10 +275,31 @@ class ScoringService:
             if not candles:
                 reason_counts[f"tf_no_candles_{itv}"] = reason_counts.get(f"tf_no_candles_{itv}", 0) + 1
                 continue
-            closes = [float(c.close) for c in candles if float(c.close) > 0]
+            normalized: List[Candle] = []
+            bad_rows = 0
+            for row in candles:
+                parsed = _to_candle(row)
+                if parsed is None:
+                    bad_rows += 1
+                    continue
+                close = _extract_float(parsed.close)
+                if close is None:
+                    bad_rows += 1
+                    continue
+                if parsed.volume < 0:
+                    bad_rows += 1
+                    continue
+                normalized.append(parsed)
+
+            if bad_rows > 0:
+                reason_counts[f"tf_bad_rows_{itv}"] = reason_counts.get(f"tf_bad_rows_{itv}", 0) + bad_rows
+
+            closes = [float(c.close) for c in normalized]
             if len(closes) < required_len:
                 reason_counts[f"tf_insufficient_bars_{itv}"] = reason_counts.get(f"tf_insufficient_bars_{itv}", 0) + 1
                 continue
+            # Keep indicator calculations stable with valid history only.
+            candles = normalized
 
             # Use extra history for EMA stability.
             hist = closes[-(self._ema_slow * 3) :]
