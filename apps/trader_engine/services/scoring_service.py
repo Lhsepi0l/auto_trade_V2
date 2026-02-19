@@ -173,6 +173,19 @@ class ScoringService:
             "skipped_scoring_exception": 0,
         }
         interval_weights = self.get_timeframe_weights(cfg=cfg)
+        scan_weights = {}
+        try:
+            scan_total = 0.0
+            for k, raw_w in interval_weights.items():
+                w = _safe_nonneg_float(raw_w, default=0.0)
+                if w > 0:
+                    scan_weights[str(k)] = w
+                    scan_total += w
+            if scan_total > 0:
+                scan_weights = {k: v / scan_total for k, v in scan_weights.items()}
+        except Exception:
+            logger.exception("scoring_scan_weight_normalize_failed", extra={"symbol_count": _safe_int(len(candles_by_symbol_interval))})
+            scan_weights = {}
         for sym, by_itv in candles_by_symbol_interval.items():
             reasons["symbols_seen"] = _safe_int(reasons.get("symbols_seen", 0)) + 1
             if not isinstance(by_itv, Mapping):
@@ -258,7 +271,7 @@ class ScoringService:
                 "scored_symbols": reasons["scored"],
                 "scoring_timeframes": sorted(interval_weights.keys()),
                 "min_bars_factor": float(min_bars_factor),
-                "score_scan_weights": dict(interval_weights),
+                "score_scan_weights": dict(scan_weights) if scan_weights else dict(interval_weights),
             },
         )
 
@@ -390,7 +403,26 @@ class ScoringService:
                     },
                 )
                 continue
-            candles = list(raw_candles)
+            try:
+                candles = list(raw_candles)
+            except Exception as e:
+                exc_name = type(e).__name__
+                tf_exc_key = f"tf_scoring_exception_{itv}_{exc_name}"
+                reason_counts[tf_exc_key] = reason_counts.get(tf_exc_key, 0) + 1
+                if exc_name == "TypeError":
+                    reason_counts["scoring_exception_TypeError"] = reason_counts.get("scoring_exception_TypeError", 0) + 1
+                logger.warning(
+                    "scoring_timeframe_error",
+                    extra={
+                        "symbol": sym,
+                        "timeframe": itv,
+                        "error": str(e),
+                        "error_type": exc_name,
+                        "raw_payload_type": type(raw_candles).__name__,
+                    },
+                    exc_info=True,
+                )
+                continue
             if not candles:
                 reason_counts[f"tf_no_candles_{itv}"] = reason_counts.get(f"tf_no_candles_{itv}", 0) + 1
                 continue
