@@ -258,16 +258,40 @@ class TraderScheduler:
             await self._sleep_until_next()
 
     @staticmethod
+    def _safe_float(v: Any, *, default: float = 0.0) -> float:
+        try:
+            fv = float(v)
+        except Exception:
+            return default
+        if fv != fv or fv == float("inf") or fv == float("-inf"):
+            return default
+        return fv
+
+    @staticmethod
+    def _safe_bool(v: Any, *, default: bool = False) -> bool:
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return default
+        text = str(v).strip().lower()
+        if text in {"1", "true", "on", "yes", "y"}:
+            return True
+        if text in {"0", "false", "off", "no", "n", ""}:
+            return False
+        return default
+
+    @staticmethod
     def _resolve_scoring_setup(cfg) -> tuple[list[str], Dict[str, float]]:
+        tf_15_enabled = Scheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False)
         weights: Dict[str, float] = {
-            "10m": float(getattr(cfg, "tf_weight_10m", 0.25)),
-            "15m": float(getattr(cfg, "tf_weight_15m", 0.0)),
-            "30m": float(getattr(cfg, "tf_weight_30m", 0.25)),
-            "1h": float(getattr(cfg, "tf_weight_1h", 0.25)),
-            "4h": float(getattr(cfg, "tf_weight_4h", 0.25)),
+            "10m": Scheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
+            "15m": Scheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
+            "30m": Scheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
+            "1h": Scheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
+            "4h": Scheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
         }
 
-        if not bool(getattr(cfg, "score_tf_15m_enabled", False)):
+        if not tf_15_enabled:
             weights.pop("15m", None)
 
         cleaned: Dict[str, float] = {}
@@ -284,12 +308,28 @@ class TraderScheduler:
         return [itv for itv in order if itv in normalized], normalized
 
     @staticmethod
-    def _to_reason_map(raw: Any) -> Dict[str, int]:
+    def _to_reason_map(raw: Any) -> Dict[str, Any]:
         if not isinstance(raw, dict):
             return {}
-        out: Dict[str, int] = {}
+        out: Dict[str, Any] = {}
         for k, v in raw.items():
             try:
+                if isinstance(v, Mapping):
+                    out[str(k)] = v
+                    continue
+                if isinstance(v, (list, tuple)):
+                    out[str(k)] = v
+                    continue
+                if isinstance(v, bool):
+                    out[str(k)] = int(v)
+                    continue
+                if isinstance(v, int):
+                    out[str(k)] = v
+                    continue
+                if isinstance(v, float):
+                    # For scan stats like factors/weights, keep fractional precision.
+                    out[str(k)] = v
+                    continue
                 out[str(k)] = int(v)
             except Exception:
                 out[str(k)] = 0
@@ -633,11 +673,11 @@ class TraderScheduler:
         # Collect market data (multi TF) for universe.
         scoring_tfs, scoring_weights = self._resolve_scoring_setup(cfg=cfg)
         raw_scoring_weights = {
-            "10m": float(getattr(cfg, "tf_weight_10m", 0.25)),
-            "15m": float(getattr(cfg, "tf_weight_15m", 0.0)),
-            "30m": float(getattr(cfg, "tf_weight_30m", 0.25)),
-            "1h": float(getattr(cfg, "tf_weight_1h", 0.25)),
-            "4h": float(getattr(cfg, "tf_weight_4h", 0.25)),
+            "10m": Scheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
+            "15m": Scheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
+            "30m": Scheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
+            "1h": Scheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
+            "4h": Scheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
         }
         snap.active_scoring_timeframes = list(scoring_tfs)
         snap.scoring_weights = dict(scoring_weights)
@@ -656,9 +696,9 @@ class TraderScheduler:
             "min_bars_factor": float(snap.min_bars_factor),
             "tick_sec": float(self._tick_sec),
             "raw_weights": raw_scoring_weights,
-            "score_tf_15m_enabled": bool(getattr(cfg, "score_tf_15m_enabled", False)),
-            "score_conf_threshold": float(cfg.score_conf_threshold),
-            "score_gap_threshold": float(cfg.score_gap_threshold),
+            "score_tf_15m_enabled": Scheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False),
+            "score_conf_threshold": Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+            "score_gap_threshold": Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
         }
         snap.last_scoring_validation_ts = _utcnow().isoformat()
         self._scoring_validation_tick += 1
@@ -707,8 +747,8 @@ class TraderScheduler:
             )
             candidate, pick_reasons = self._scoring.pick_candidate(
                 scores=scores,
-                score_conf_threshold=float(cfg.score_conf_threshold),
-                score_gap_threshold=float(cfg.score_gap_threshold),
+                score_conf_threshold=Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+                score_gap_threshold=Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
             )
             snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
         else:
@@ -720,8 +760,8 @@ class TraderScheduler:
             snap.scoring_scan_stats = self._normalize_scan_stats(self._to_reason_map(score_result.scan_stats))
             candidate, pick_reasons = self._scoring.pick_candidate(
                 scores=scores,
-                score_conf_threshold=float(cfg.score_conf_threshold),
-                score_gap_threshold=float(cfg.score_gap_threshold),
+                score_conf_threshold=Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+                score_gap_threshold=Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
             )
             snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
 

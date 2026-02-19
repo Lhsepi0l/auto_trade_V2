@@ -27,6 +27,39 @@ def _regime_4h(*, ema_fast: Optional[float], ema_slow: Optional[float], rsi_v: O
     return "CHOPPY"
 
 
+def _safe_int(v: Any, default: int = 0) -> int:
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return 1 if v else 0
+    try:
+        return int(v)
+    except Exception:
+        try:
+            return int(float(v))
+        except Exception:
+            return default
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _safe_nonneg_float(v: Any, *, default: float = 0.0) -> float:
+    try:
+        fv = float(v)
+    except Exception:
+        return default
+    if fv != fv or fv == float("inf") or fv == float("-inf"):
+        return default
+    if fv < 0:
+        return default
+    return fv
+
+
 @dataclass(frozen=True)
 class TimeframeIndicators:
     interval: str
@@ -141,40 +174,82 @@ class ScoringService:
         }
         interval_weights = self.get_timeframe_weights(cfg=cfg)
         for sym, by_itv in candles_by_symbol_interval.items():
-            reasons["symbols_seen"] += 1
+            reasons["symbols_seen"] = _safe_int(reasons.get("symbols_seen", 0)) + 1
+            if not isinstance(by_itv, Mapping):
+                reasons["skipped_scoring_exception"] = _safe_int(reasons.get("skipped_scoring_exception", 0)) + 1
+                reasons["scoring_exception_TypeError"] = _safe_int(reasons.get("scoring_exception_TypeError", 0)) + 1
+                reasons["invalid_symbol_payload"] = _safe_int(reasons.get("invalid_symbol_payload", 0)) + 1
+                logger.warning(
+                    "scoring_symbol_payload_invalid",
+                    extra={
+                        "symbol": str(sym).upper(),
+                        "timeframes": list(getattr(by_itv, "keys", lambda: [])()),
+                    },
+                )
+                continue
             try:
                 scored, per_symbol_reasons = self.score_symbol(
                     cfg=cfg,
                     symbol=str(sym).upper(),
                     candles_by_interval=by_itv,
                     interval_weights=interval_weights,
-                    min_bars_factor=min_bars_factor,
+                    min_bars_factor=_safe_float(min_bars_factor, default=0.42),
                 )
                 for k, v in per_symbol_reasons.items():
-                    reasons[k] = int(reasons.get(k, 0)) + int(v)
+                    key = str(k)
+                    reasons[key] = _safe_int(reasons.get(key, 0)) + _safe_int(v)
                 if scored is None:
-                    reasons["skipped_no_usable_timeframes"] += 1
+                    reasons["skipped_no_usable_timeframes"] = _safe_int(
+                        reasons.get("skipped_no_usable_timeframes", 0)
+                    ) + 1
                     continue
                 out[str(sym).upper()] = scored
-                reasons["scored"] += 1
+                reasons["scored"] = _safe_int(reasons.get("scored", 0)) + 1
             except Exception as e:
                 # Fail closed: skip on parse issues.
-                reasons["skipped_scoring_exception"] += 1
+                reasons["skipped_scoring_exception"] = _safe_int(reasons.get("skipped_scoring_exception", 0)) + 1
                 exc_name = type(e).__name__
                 exc_key = f"scoring_exception_{exc_name}"
-                reasons[exc_key] = int(reasons.get(exc_key, 0)) + 1
-                logger.warning(
-                    "scoring_error",
-                    extra={
-                        "symbol": str(sym).upper(),
-                        "error": str(e),
-                        "error_type": exc_name,
-                        "timeframes": sorted(list(by_itv.keys())),
-                        "min_bars_factor": float(min_bars_factor),
-                    },
-                    exc_info=True,
+                reasons[exc_key] = _safe_int(reasons.get(exc_key, 0)) + 1
+                if exc_name == "TypeError":
+                    reasons["scoring_exception_TypeError"] = _safe_int(
+                        reasons.get("scoring_exception_TypeError", 0)
+                    ) + 1
+                payload_meta = {
+                    "symbol": str(sym).upper(),
+                    "symbol_payload_type": type(by_itv).__name__,
+                    "error": str(e),
+                    "error_type": exc_name,
+                    "timeframes": sorted(list(by_itv.keys())),
+                }
+                payload_meta["weight_keys"] = (
+                    sorted(list(interval_weights.keys()))
+                    if isinstance(interval_weights, Mapping)
+                    else []
                 )
-                continue
+                payload_meta["weight_values"] = {
+                    str(k): _safe_float(v, default=0.0)
+                    for k, v in (interval_weights.items() if isinstance(interval_weights, Mapping) else [])
+                }
+                payload_meta.update(
+                    {
+                        "cfg_atr_mult_mean_window": type(
+                            getattr(cfg, "atr_mult_mean_window", None)
+                        ).__name__,
+                        "cfg_vol_shock_atr_mult_threshold": type(
+                            getattr(cfg, "vol_shock_atr_mult_threshold", None)
+                        ).__name__,
+                        "score_symbol_kwargs": {
+                            "symbol": str(sym).upper(),
+                            "interval_count": _safe_int(len(by_itv)),
+                            "min_bars_factor": _safe_float(min_bars_factor, default=0.42),
+                            "interval_weights": interval_weights,
+                        },
+                        "min_bars_factor": _safe_float(min_bars_factor, default=0.42),
+                    }
+                )
+                logger.warning("scoring_error", extra=payload_meta, exc_info=True)
+            continue
         return ScoringResult(
             scores=out,
             rejection_reasons=reasons,
@@ -197,7 +272,12 @@ class ScoringService:
         min_bars_factor: float = 1.0,
     ) -> tuple[Optional[SymbolScore], Dict[str, int]]:
         sym = symbol.strip().upper()
-        weights = dict(interval_weights or self.get_timeframe_weights(cfg=cfg))
+        raw_weights = dict(interval_weights or self.get_timeframe_weights(cfg=cfg))
+        weights: Dict[str, float] = {}
+        for tf_name, raw_wt in raw_weights.items():
+            wt = _safe_nonneg_float(raw_wt, default=0.0)
+            if wt > 0:
+                weights[str(tf_name)] = wt
         if not weights:
             weights = self.get_timeframe_weights(cfg=cfg)
 
@@ -211,6 +291,13 @@ class ScoringService:
         score_by_timeframe: Dict[str, float] = {}
         vol_shock = False
         regime_4h: Regime = "CHOPPY"
+        atr_mult_mean_window = max(1, _safe_int(getattr(cfg, "atr_mult_mean_window", 50), default=50))
+        vol_shock_threshold = _safe_float(
+            getattr(cfg, "vol_shock_atr_mult_threshold", 2.5),
+            default=2.5,
+        )
+        if vol_shock_threshold <= 0:
+            vol_shock_threshold = 2.5
 
         def _extract_float(v: Any) -> Optional[float]:
             try:
@@ -222,6 +309,14 @@ class ScoringService:
             if fv <= 0:
                 return None
             return fv
+
+        def _safe_row_float(v: Any, *, field: str) -> Optional[float]:
+            val = _extract_float(v)
+            if val is None or val < 0:
+                return None
+            if not (val == val):
+                return None
+            return val
 
         def _to_candle(v: Any) -> Optional[Candle]:
             if isinstance(v, Candle):
@@ -264,32 +359,80 @@ class ScoringService:
             self._roc_period + 1,
             self._atr_period + 1,
         )
-        required_len = max(10, int(base_len * float(min_bars_factor)))
+        try:
+            mbf = float(min_bars_factor)
+        except Exception:
+            mbf = 0.42
+        required_len = max(10, int(base_len * mbf))
 
         for itv in ("10m", "15m", "30m", "1h", "4h"):
             if itv not in weights:
                 reason_counts[f"tf_not_configured_{itv}"] = reason_counts.get(f"tf_not_configured_{itv}", 0) + 1
                 continue
 
-            candles = list(candles_by_interval.get(itv) or [])
+            raw_candles = candles_by_interval.get(itv) if isinstance(candles_by_interval, Mapping) else None
+            if raw_candles is None:
+                reason_counts[f"tf_no_candles_{itv}"] = reason_counts.get(f"tf_no_candles_{itv}", 0) + 1
+                continue
+            if isinstance(raw_candles, Mapping):
+                reason_counts[f"tf_scoring_exception_{itv}_TypeError"] = reason_counts.get(
+                    f"tf_scoring_exception_{itv}_TypeError", 0
+                ) + 1
+                reason_counts["scoring_exception_TypeError"] = reason_counts.get(
+                    "scoring_exception_TypeError", 0
+                ) + 1
+                logger.warning(
+                    "scoring_timeframe_payload_invalid",
+                    extra={
+                        "symbol": sym,
+                        "timeframe": itv,
+                        "payload_type": type(raw_candles).__name__,
+                    },
+                )
+                continue
+            candles = list(raw_candles)
             if not candles:
                 reason_counts[f"tf_no_candles_{itv}"] = reason_counts.get(f"tf_no_candles_{itv}", 0) + 1
                 continue
             normalized: List[Candle] = []
             bad_rows = 0
-            for row in candles:
-                parsed = _to_candle(row)
-                if parsed is None:
-                    bad_rows += 1
-                    continue
-                close = _extract_float(parsed.close)
-                if close is None:
-                    bad_rows += 1
-                    continue
-                if parsed.volume < 0:
-                    bad_rows += 1
-                    continue
-                normalized.append(parsed)
+            try:
+                for row in candles:
+                    parsed = _to_candle(row)
+                    if parsed is None:
+                        bad_rows += 1
+                        continue
+                    close = _safe_row_float(parsed.close, field="close")
+                    if close is None:
+                        bad_rows += 1
+                        continue
+                    if (
+                        _safe_row_float(parsed.open, field="open") is None
+                        or _safe_row_float(parsed.high, field="high") is None
+                        or _safe_row_float(parsed.low, field="low") is None
+                        or _safe_row_float(parsed.volume, field="volume") is None
+                    ):
+                        bad_rows += 1
+                        continue
+                    normalized.append(parsed)
+            except Exception as e:
+                exc_name = type(e).__name__
+                tf_exc_key = f"tf_scoring_exception_{itv}_{exc_name}"
+                reason_counts[tf_exc_key] = reason_counts.get(tf_exc_key, 0) + 1
+                if exc_name == "TypeError":
+                    reason_counts["scoring_exception_TypeError"] = reason_counts.get("scoring_exception_TypeError", 0) + 1
+                logger.warning(
+                    "scoring_timeframe_error",
+                    extra={
+                        "symbol": sym,
+                        "timeframe": itv,
+                        "error": str(e),
+                        "error_type": exc_name,
+                        "raw_payload_type": type(candles).__name__,
+                    },
+                    exc_info=True,
+                )
+                continue
 
             if bad_rows > 0:
                 reason_counts[f"tf_bad_rows_{itv}"] = reason_counts.get(f"tf_bad_rows_{itv}", 0) + bad_rows
@@ -301,59 +444,84 @@ class ScoringService:
             # Keep indicator calculations stable with valid history only.
             candles = normalized
 
-            # Use extra history for EMA stability.
-            hist = closes[-(self._ema_slow * 3) :]
-            e_fast = ema(hist, self._ema_fast)
-            e_slow = ema(hist, self._ema_slow)
-            rsi_v = rsi(closes[-(self._rsi_period + 1) :], self._rsi_period)
-            roc_v = roc(closes, self._roc_period)
-            am: Optional[AtrMult] = atr_mult(candles, period=self._atr_period, mean_window=int(cfg.atr_mult_mean_window))
+            try:
+                # Use extra history for EMA stability.
+                hist_len = max(1, int(self._ema_slow) * 3)
+                hist = closes[-hist_len:]
+                e_fast = ema(hist, int(self._ema_fast))
+                e_slow = ema(hist, int(self._ema_slow))
+                rsi_v = rsi(closes[-(self._rsi_period + 1):], self._rsi_period)
+                roc_v = roc(closes, self._roc_period)
+                am: Optional[AtrMult] = atr_mult(
+                    candles,
+                    period=self._atr_period,
+                    mean_window=int(atr_mult_mean_window),
+                )
 
-            e_fast_f = float(e_fast) if e_fast is not None else 0.0
-            e_slow_f = float(e_slow) if e_slow is not None else 0.0
-            rsi_f = float(rsi_v) if rsi_v is not None else 50.0
-            roc_f = float(roc_v) if roc_v is not None else 0.0
-            atr_pct_f = float(am.atr_pct) if am is not None else 0.0
-            atr_mean_f = float(am.atr_pct_mean) if am is not None else 0.0
-            atr_mult_f = float(am.mult) if am is not None else 0.0
+                e_fast_f = float(e_fast) if e_fast is not None else 0.0
+                e_slow_f = float(e_slow) if e_slow is not None else 0.0
+                rsi_f = float(rsi_v) if rsi_v is not None else 50.0
+                roc_f = float(roc_v) if roc_v is not None else 0.0
+                atr_pct_f = float(am.atr_pct) if am is not None else 0.0
+                atr_mean_f = float(am.atr_pct_mean) if am is not None else 0.0
+                atr_mult_f = float(am.mult) if am is not None else 0.0
 
-            if itv in {"4h", "1h"}:
-                regime_4h = _regime_4h(ema_fast=e_fast, ema_slow=e_slow, rsi_v=rsi_v)
+                if itv in {"4h", "1h"}:
+                    regime_4h = _regime_4h(ema_fast=e_fast_f, ema_slow=e_slow_f, rsi_v=rsi_f)
 
-            # Trend score: EMA spread normalized to [-1, 1].
-            if e_slow is None or e_slow <= 0 or e_fast is None:
-                trend_score = 0.0
-            else:
-                rel = (float(e_fast) - float(e_slow)) / float(e_slow)
-                trend_score = clamp(rel * 50.0, -1.0, 1.0)
+                # Trend score: EMA spread normalized to [-1, 1].
+                if e_slow is None or e_slow <= 0 or e_fast is None:
+                    trend_score = 0.0
+                else:
+                    rel = (float(e_fast) - float(e_slow)) / float(e_slow)
+                    trend_score = clamp(rel * 50.0, -1.0, 1.0)
 
-            # Momentum score: RSI + ROC.
-            rsi_norm = clamp((rsi_f - 50.0) / 50.0, -1.0, 1.0)
-            # ROC ~ few % per window; scale into [-1, 1].
-            roc_norm = clamp(roc_f * 10.0, -1.0, 1.0)
-            momentum_score = clamp(0.65 * rsi_norm + 0.35 * roc_norm, -1.0, 1.0)
+                # Momentum score: RSI + ROC.
+                rsi_norm = clamp((rsi_f - 50.0) / 50.0, -1.0, 1.0)
+                # ROC ~ few % per window; scale into [-1, 1].
+                roc_norm = clamp(roc_f * 10.0, -1.0, 1.0)
+                momentum_score = clamp(0.65 * rsi_norm + 0.35 * roc_norm, -1.0, 1.0)
 
-            # Vol shock: ATR% / mean(ATR%) >= threshold => shock.
-            if atr_mult_f >= float(cfg.vol_shock_atr_mult_threshold):
-                vol_shock = True
+                # Vol shock: ATR% / mean(ATR%) >= threshold => shock.
+                if atr_mult_f >= vol_shock_threshold:
+                    vol_shock = True
 
-            comp = clamp(0.6 * trend_score + 0.4 * momentum_score, -1.0, 1.0)
-            combined += float(weights[itv]) * float(comp)
+                comp = clamp(0.6 * trend_score + 0.4 * momentum_score, -1.0, 1.0)
+                combined += float(weights[itv]) * float(comp)
 
-            tf_ind[itv] = TimeframeIndicators(
-                interval=itv,
-                ema_fast=e_fast_f,
-                ema_slow=e_slow_f,
-                rsi=rsi_f,
-                roc=roc_f,
-                atr_pct=atr_pct_f,
-                atr_pct_mean=atr_mean_f,
-                atr_mult=atr_mult_f,
-                regime_4h=regime_4h if itv in {"4h", "1h"} else None,
-            )
+                tf_ind[itv] = TimeframeIndicators(
+                    interval=itv,
+                    ema_fast=e_fast_f,
+                    ema_slow=e_slow_f,
+                    rsi=rsi_f,
+                    roc=roc_f,
+                    atr_pct=atr_pct_f,
+                    atr_pct_mean=atr_mean_f,
+                    atr_mult=atr_mult_f,
+                    regime_4h=regime_4h if itv in {"4h", "1h"} else None,
+                )
 
-            # Track actual weighted components for downstream transparency.
-            score_by_timeframe[itv] = float(comp)
+                # Track actual weighted components for downstream transparency.
+                score_by_timeframe[itv] = float(comp)
+            except Exception as e:
+                exc_name = type(e).__name__
+                tf_exc_key = f"tf_scoring_exception_{itv}_{exc_name}"
+                reason_counts[tf_exc_key] = int(reason_counts.get(tf_exc_key, 0)) + 1
+                reason_counts["scoring_exception_TypeError"] = int(
+                    reason_counts.get("scoring_exception_TypeError", 0)
+                ) + (1 if exc_name == "TypeError" else 0)
+                logger.warning(
+                    "scoring_timeframe_error",
+                    extra={
+                        "symbol": sym,
+                        "timeframe": itv,
+                        "error": str(e),
+                        "error_type": exc_name,
+                        "bar_count": len(normalized),
+                    },
+                    exc_info=True,
+                )
+                continue
 
         if not tf_ind:
             reason_counts["no_usable_timeframes"] = reason_counts.get("no_usable_timeframes", 0) + 1
@@ -449,19 +617,30 @@ class ScoringService:
     def get_timeframe_weights(cfg: RiskConfig) -> Dict[str, float]:
         # Default composition is stable and explicit:
         # 10m + 30m + 1h + 4h. 15m can be enabled via flag.
-        weights: Dict[str, float] = {
-            "10m": float(cfg.tf_weight_10m),
-            "15m": float(cfg.tf_weight_15m),
-            "30m": float(cfg.tf_weight_30m),
-            "1h": float(cfg.tf_weight_1h),
-            "4h": float(cfg.tf_weight_4h),
-        }
-        if not bool(getattr(cfg, "score_tf_15m_enabled", False)):
-            weights.pop("15m", None)
+        def _parse_bool(v: Any, default: bool = False) -> bool:
+            if isinstance(v, bool):
+                return v
+            if v is None:
+                return default
+            text = str(v).strip().lower()
+            if text in {"1", "true", "on", "yes", "y"}:
+                return True
+            if text in {"0", "false", "off", "no", "n", ""}:
+                return False
+            return default
 
+        raw_weights = {
+            "10m": _safe_nonneg_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
+            "15m": _safe_nonneg_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
+            "30m": _safe_nonneg_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
+            "1h": _safe_nonneg_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
+            "4h": _safe_nonneg_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
+        }
+        if not _parse_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False):
+            raw_weights.pop("15m", None)
         cleaned: Dict[str, float] = {}
-        for itv, wt in list(weights.items()):
-            if float(wt) > 0:
+        for itv, wt in list(raw_weights.items()):
+            if wt > 0:
                 cleaned[itv] = float(wt)
 
         if not cleaned:
