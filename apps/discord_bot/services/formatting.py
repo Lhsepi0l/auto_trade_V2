@@ -40,6 +40,13 @@ def _fmt_time(ts: Any) -> str:
     return str(ts)
 
 
+def _safe_float(v: Any) -> float | None:
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
 def _truncate(s: str, *, limit: int = 1900) -> str:
     if len(s) <= limit:
         return s
@@ -89,15 +96,31 @@ def _next_tick_eta(payload: Dict[str, Any]) -> str:
 
 def _regime_to_kor(raw_regime: Any) -> tuple[str, str]:
     code = str(raw_regime or "").strip().upper()
-    if not code or code in {"NONE", "UNKNOWN"}:
+    if not code or code in {"NONE", "UNKNOWN", "-"}:
         return "미판단", "-"
-    if code in {"BEAR", "DOWN"}:
+    if code in {"BEAR", "DOWN", "D"}:
         return "하락", "BEAR"
-    if code in {"BULL", "UP"}:
+    if code in {"BULL", "UP", "U"}:
         return "상승", "BULL"
-    if code in {"NEUTRAL", "FLAT", "SIDEWAYS"}:
+    if code in {"NEUTRAL", "FLAT", "SIDEWAYS", "N"}:
         return "횡보", code
     return "기타", code
+
+
+def _candidate_reject_stage_to_kor(raw_stage: Any) -> str:
+    stage = str(raw_stage or "").strip()
+    stage_map = {
+        "universe_empty": "심볼 후보군 비어 있음",
+        "scoring_error": "심볼 스코어 계산 오류",
+        "timeframe_coverage": "심볼 유효 시간봉 부족",
+        "universe_filtered": "유니버스 필터에서 탈락",
+        "selection_empty": "선택 후보 없음",
+        "short_filtered": "숏 진입 제한 필터 탈락",
+        "confidence_filter": "신뢰도 임계치 미달",
+        "gap_filter": "스코어 갭 임계치 미달",
+        "selection_filtered": "최종 선택 필터 탈락",
+    }
+    return stage_map.get(stage, "탈락 단계 미확인")
 
 
 def _reason_to_kor(raw_reason: Any) -> str:
@@ -151,6 +174,68 @@ def _format_scoring_weights(weights: Dict[str, float]) -> str:
     if items:
         return ", ".join(items)
     return "-"
+
+
+def _format_top_counts(counts: Dict[str, Any], *, limit: int = 6) -> str:
+    if not counts:
+        return "-"
+    try:
+        items = list(counts.items())
+        sorted_items = sorted(
+            [(k, int(v)) for k, v in items if int(v) > 0],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        return ", ".join(f"{k}:{v}" for k, v in sorted_items[:limit])
+    except Exception:
+        return str(counts)
+
+
+def _translate_rejection_map(reasons: Dict[str, Any]) -> Dict[str, str]:
+    translated: Dict[str, str] = {}
+    for k, v in reasons.items():
+        key = str(k)
+        if key == "symbols_seen":
+            translated["symbol_candidates"] = f"{_fmt_int(v)}"
+        elif key == "scored":
+            translated["scored_symbols"] = f"{_fmt_int(v)}"
+        elif key == "skipped_no_usable_timeframes":
+            translated["유효TF_부족"] = f"{_fmt_int(v)}"
+        elif key == "skipped_scoring_exception":
+            translated["점수계산_예외"] = f"{_fmt_int(v)}"
+        elif key.startswith("tf_no_candles_"):
+            translated[f"{key.replace('tf_no_candles_', '').upper()}_봉부족"] = f"{_fmt_int(v)}"
+        elif key.startswith("tf_insufficient_bars_"):
+            translated[f"{key.replace('tf_insufficient_bars_', '').upper()}_바수부족"] = f"{_fmt_int(v)}"
+        elif key.startswith("tf_not_configured_"):
+            translated[f"{key.replace('tf_not_configured_', '').upper()}_미사용"] = f"{_fmt_int(v)}"
+        else:
+            translated[key] = f"{_fmt_int(v)}"
+    return translated
+
+
+def _format_scan_stats(stats: Dict[str, Any]) -> str:
+    if not stats:
+        return "-"
+    requested = stats.get("requested_symbols")
+    scored = stats.get("scored_symbols")
+    usable_tfs = stats.get("scoring_timeframes")
+    min_bars = stats.get("min_bars_factor")
+    parts: List[str] = []
+    if requested is not None:
+        parts.append(f"요청 {requested}")
+    if scored is not None:
+        parts.append(f"채점 {scored}")
+    if usable_tfs is not None:
+        if isinstance(usable_tfs, (list, tuple)):
+            parts.append(f"TF {len(usable_tfs)}개({', '.join(usable_tfs)})")
+        else:
+            parts.append(f"TF {usable_tfs}")
+    if min_bars is not None:
+        parts.append(f"min_bars_factor {_fmt_money(min_bars, digits=3)}")
+    if stats.get("score_scan_weights"):
+        parts.append(f"가중치{_format_scoring_weights(_as_dict(stats.get('score_scan_weights')))}")
+    return ", ".join(parts) if parts else str(stats)
 
 
 def _format_candidate_scores(scores: Dict[str, float]) -> str:
@@ -277,6 +362,30 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     scoring_weights = _as_dict(sched.get("scoring_weights") or summary.get("scoring_weights") or {})
     candidate_score_by_timeframe = dict(sched.get("candidate_score_by_timeframe") or summary.get("candidate_score_by_timeframe") or {})
     active_scoring_tfs = [str(tf) for tf in (sched.get("active_scoring_timeframes") or summary.get("active_scoring_timeframes") or [])]
+    scoring_scan_stats = _as_dict(sched.get("scoring_scan_stats") or summary.get("scoring_scan_stats") or {})
+    scoring_rejection_reasons = _as_dict(
+        sched.get("scoring_rejection_reasons") or summary.get("scoring_rejection_reasons") or {}
+    )
+    candidate_selection_reasons = _as_dict(
+        sched.get("candidate_selection_reasons") or summary.get("candidate_selection_reasons") or {}
+    )
+    scoring_drift_detected = bool(sched.get("scoring_drift_detected") or summary.get("scoring_drift_detected"))
+    scoring_drift_details = (
+        sched.get("scoring_drift_details")
+        or summary.get("scoring_drift_details")
+        or []
+    )
+    scoring_rejection_hotspot = str(
+        sched.get("scoring_rejection_hotspot") or summary.get("scoring_rejection_hotspot") or "-"
+    )
+    candidate_reject_stage = str(
+        sched.get("candidate_reject_stage") or summary.get("candidate_reject_stage") or ""
+    )
+    candidate_rejection_hotspot = str(
+        sched.get("candidate_rejection_hotspot") or summary.get("candidate_rejection_hotspot") or "-"
+    )
+    scoring_setup_signature = _as_dict(sched.get("scoring_setup_signature") or summary.get("scoring_setup_signature") or {})
+    last_scoring_validation_ts = sched.get("last_scoring_validation_ts") or summary.get("last_scoring_validation_ts")
 
     if not active_scoring_tfs and scoring_weights:
         active_scoring_tfs = [tf for tf in _SCORING_TIMEFRAME_ORDER if tf in scoring_weights]
@@ -327,6 +436,63 @@ def format_status_payload(payload: Dict[str, Any]) -> str:
     weight_line = _format_scoring_weights(scoring_weights)
     if weight_line != "-":
         lines.append(f"기준봉 가중치: {weight_line}")
+
+    if scoring_drift_detected:
+        drift_list = [
+            str(x)
+            for x in scoring_drift_details
+            if x is not None and str(x).strip()
+        ]
+        if drift_list:
+            lines.append(f"스코어링 설정 검증: ⚠ {', '.join(drift_list)}")
+        else:
+            lines.append("스코어링 설정 검증: ⚠ 최근 설정 반영 점검 필요")
+
+    if scoring_setup_signature:
+        setup_tfs = scoring_setup_signature.get("timeframes")
+        setup_weights = scoring_setup_signature.get("weights")
+        setup_min_bars = scoring_setup_signature.get("min_bars_factor")
+        setup_conf = scoring_setup_signature.get("score_conf_threshold")
+        setup_gap = scoring_setup_signature.get("score_gap_threshold")
+        setup_parts = []
+        if setup_tfs:
+            setup_parts.append(f"TF={','.join([str(x) for x in setup_tfs])}")
+        if isinstance(setup_weights, dict) and setup_weights:
+            setup_weights_norm = {
+                str(k): v for k, v in setup_weights.items() if _safe_float(v) is not None
+            }
+            setup_parts.append(f"가중치={_format_scoring_weights(setup_weights_norm)}")
+        if setup_min_bars is not None:
+            setup_parts.append(f"min_bars={_fmt_money(setup_min_bars, digits=3)}")
+        if setup_conf is not None and setup_gap is not None:
+            setup_parts.append(f"임계치=conf({_fmt_pct(setup_conf)}, gap({_fmt_pct(setup_gap)})")
+        if setup_parts:
+            lines.append(f"스코어링 검증: {', '.join(setup_parts)}")
+        if last_scoring_validation_ts:
+            lines.append(f"마지막 검증: {_fmt_time(last_scoring_validation_ts)}")
+
+    scan_text = _format_scan_stats(scoring_scan_stats)
+    if scan_text != "-":
+        lines.append(f"스코어 스캔: {scan_text}")
+
+    rejected = _translate_rejection_map(scoring_rejection_reasons)
+    rejected_text = _format_top_counts({k: int(v) for k, v in (rejected or {}).items()})
+    if rejected_text != "-":
+        lines.append(f"심볼 탈락 히트맵: {rejected_text}")
+
+    selection_text = _format_top_counts(candidate_selection_reasons)
+    if selection_text != "-":
+        lines.append(f"선택 탈락 히트맵: {selection_text}")
+
+    if candidate_reject_stage:
+        lines.append(f"탈락 단계: {_candidate_reject_stage_to_kor(candidate_reject_stage)} ({candidate_reject_stage})")
+    if scoring_rejection_hotspot != "-":
+        lines.append(f"심볼 탈락 상위 원인: {scoring_rejection_hotspot}")
+    if candidate_rejection_hotspot != "-":
+        lines.append(f"선택 탈락 상위 원인: {candidate_rejection_hotspot}")
+
+    if decision_code == "no_candidate" and candidate_reject_stage:
+        lines.append(f"no_candidate 사유: {_candidate_reject_stage_to_kor(candidate_reject_stage)}")
 
     candidate_scores = _format_candidate_scores(candidate_score_by_timeframe)
     if candidate_symbol != "-" and candidate_scores != "-":

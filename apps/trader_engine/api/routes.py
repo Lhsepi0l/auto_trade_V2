@@ -279,6 +279,16 @@ def get_status(
     active_scoring_tfs = []
     candidate_score_by_timeframe = {}
     scoring_weights = {}
+    scoring_rejection_reasons: Dict[str, int] = {}
+    scoring_scan_stats: Dict[str, Any] = {}
+    candidate_selection_reasons: Dict[str, int] = {}
+    scoring_drift_detected = False
+    scoring_drift_details: list[str] = []
+    scoring_rejection_hotspot: str = ""
+    candidate_reject_stage: str = ""
+    candidate_rejection_hotspot: str = ""
+    scoring_setup_signature: Dict[str, Any] = {}
+    last_scoring_validation_ts = None
     scheduler_min_bars_factor = None
     scheduler_tick_sec = None
     if isinstance(sched_meta, dict):
@@ -294,6 +304,49 @@ def get_status(
             scoring_weights = dict(sched_meta.get("scoring_weights") or {})
         except Exception:
             scoring_weights = {}
+        try:
+            scoring_rejection_reasons = {
+                str(k): int(v)
+                for k, v in (sched_meta.get("scoring_rejection_reasons") or {}).items()
+            }
+        except Exception:
+            scoring_rejection_reasons = {}
+        try:
+            scoring_scan_stats = dict(sched_meta.get("scoring_scan_stats") or {})
+        except Exception:
+            scoring_scan_stats = {}
+        try:
+            candidate_selection_reasons = {
+                str(k): int(v)
+                for k, v in (sched_meta.get("candidate_selection_reasons") or {}).items()
+            }
+        except Exception:
+            candidate_selection_reasons = {}
+        try:
+            scoring_setup_signature = dict(sched_meta.get("scoring_setup_signature") or {})
+        except Exception:
+            scoring_setup_signature = {}
+        try:
+            scoring_drift_detected = bool(sched_meta.get("scoring_drift_detected"))
+        except Exception:
+            scoring_drift_detected = False
+        try:
+            scoring_drift_details = [str(x) for x in (sched_meta.get("scoring_drift_details") or [])]
+        except Exception:
+            scoring_drift_details = []
+        try:
+            scoring_rejection_hotspot = str(sched_meta.get("scoring_rejection_hotspot") or "")
+        except Exception:
+            scoring_rejection_hotspot = ""
+        try:
+            candidate_reject_stage = str(sched_meta.get("candidate_reject_stage") or "")
+        except Exception:
+            candidate_reject_stage = ""
+        try:
+            candidate_rejection_hotspot = str(sched_meta.get("candidate_rejection_hotspot") or "")
+        except Exception:
+            candidate_rejection_hotspot = ""
+        last_scoring_validation_ts = sched_meta.get("last_scoring_validation_ts")
         try:
             scheduler_min_bars_factor = float(sched_meta.get("min_bars_factor") or 0.6)
         except Exception:
@@ -356,6 +409,16 @@ def get_status(
         "candidate_score_by_timeframe": candidate_score_by_timeframe,
         "scoring_weights": scoring_weights,
         "min_bars_factor": scheduler_min_bars_factor,
+        "scoring_rejection_reasons": scoring_rejection_reasons,
+        "scoring_scan_stats": scoring_scan_stats,
+        "candidate_selection_reasons": candidate_selection_reasons,
+        "scoring_drift_detected": scoring_drift_detected,
+        "scoring_drift_details": scoring_drift_details,
+        "scoring_rejection_hotspot": scoring_rejection_hotspot,
+        "candidate_reject_stage": candidate_reject_stage,
+        "candidate_rejection_hotspot": candidate_rejection_hotspot,
+        "scoring_setup_signature": scoring_setup_signature,
+        "last_scoring_validation_ts": last_scoring_validation_ts,
         "tf_weight_4h": cfg.tf_weight_4h,
         "tf_weight_1h": cfg.tf_weight_1h,
         "tf_weight_30m": cfg.tf_weight_30m,

@@ -156,7 +156,17 @@ class SchedulerSnapshotSchema(BaseModel):
     active_scoring_timeframes: List[str] = Field(default_factory=list)
     candidate_score_by_timeframe: Dict[str, float] = Field(default_factory=dict)
     scoring_weights: Dict[str, float] = Field(default_factory=dict)
+    scoring_rejection_reasons: Dict[str, int] = Field(default_factory=dict)
+    scoring_scan_stats: Dict[str, Any] = Field(default_factory=dict)
+    candidate_selection_reasons: Dict[str, int] = Field(default_factory=dict)
+    scoring_setup_signature: Dict[str, Any] = Field(default_factory=dict)
+    last_scoring_validation_ts: Optional[str] = None
     min_bars_factor: float = 0.6
+    scoring_drift_detected: bool = False
+    scoring_drift_details: List[str] = Field(default_factory=list)
+    scoring_rejection_hotspot: str = ""
+    candidate_reject_stage: str = ""
+    candidate_rejection_hotspot: str = ""
     symbol_leverage: Dict[str, float] = Field(default_factory=dict)
     leverage_sync_target: Optional[float] = None
     leverage_sync_updated_at: Optional[str] = None

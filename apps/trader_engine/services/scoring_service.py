@@ -94,6 +94,13 @@ class Candidate:
         }
 
 
+@dataclass(frozen=True)
+class ScoringResult:
+    scores: Dict[str, SymbolScore]
+    rejection_reasons: Dict[str, int]
+    scan_stats: Dict[str, Any]
+
+
 class ScoringService:
     """Rotation quant scoring (multi-timeframe).
 
@@ -121,22 +128,47 @@ class ScoringService:
         cfg: RiskConfig,
         candles_by_symbol_interval: Mapping[str, Mapping[str, Sequence[Candle]]],
         min_bars_factor: float = 1.0,
-    ) -> Dict[str, SymbolScore]:
+    ) -> ScoringResult:
         out: Dict[str, SymbolScore] = {}
+        reasons: Dict[str, int] = {
+            "symbols_seen": 0,
+            "scored": 0,
+            "skipped_no_usable_timeframes": 0,
+            "skipped_scoring_exception": 0,
+        }
         interval_weights = self.get_timeframe_weights(cfg=cfg)
         for sym, by_itv in candles_by_symbol_interval.items():
+            reasons["symbols_seen"] += 1
             try:
-                out[str(sym).upper()] = self.score_symbol(
+                scored, per_symbol_reasons = self.score_symbol(
                     cfg=cfg,
                     symbol=str(sym).upper(),
                     candles_by_interval=by_itv,
                     interval_weights=interval_weights,
                     min_bars_factor=min_bars_factor,
                 )
+                for k, v in per_symbol_reasons.items():
+                    reasons[k] = int(reasons.get(k, 0)) + int(v)
+                if scored is None:
+                    reasons["skipped_no_usable_timeframes"] += 1
+                    continue
+                out[str(sym).upper()] = scored
+                reasons["scored"] += 1
             except Exception:
-                # Fail closed: skip on parse issues
+                # Fail closed: skip on parse issues.
+                reasons["skipped_scoring_exception"] += 1
                 continue
-        return out
+        return ScoringResult(
+            scores=out,
+            rejection_reasons=reasons,
+            scan_stats={
+                "requested_symbols": reasons["symbols_seen"],
+                "scored_symbols": reasons["scored"],
+                "scoring_timeframes": sorted(interval_weights.keys()),
+                "min_bars_factor": float(min_bars_factor),
+                "score_scan_weights": dict(interval_weights),
+            },
+        )
 
     def score_symbol(
         self,
@@ -146,18 +178,20 @@ class ScoringService:
         candles_by_interval: Mapping[str, Sequence[Candle]],
         interval_weights: Optional[Mapping[str, float]] = None,
         min_bars_factor: float = 1.0,
-    ) -> SymbolScore:
+    ) -> tuple[Optional[SymbolScore], Dict[str, int]]:
         sym = symbol.strip().upper()
         weights = dict(interval_weights or self.get_timeframe_weights(cfg=cfg))
         if not weights:
             weights = self.get_timeframe_weights(cfg=cfg)
 
+        reason_counts: Dict[str, int] = {}
         wsum = sum(max(w, 0.0) for w in weights.values()) or 1.0
         for k in list(weights.keys()):
             weights[k] = max(weights[k], 0.0) / wsum
 
         tf_ind: Dict[str, TimeframeIndicators] = {}
         combined = 0.0
+        score_by_timeframe: Dict[str, float] = {}
         vol_shock = False
         regime_4h: Regime = "CHOPPY"
 
@@ -171,11 +205,16 @@ class ScoringService:
 
         for itv in ("10m", "15m", "30m", "1h", "4h"):
             if itv not in weights:
+                reason_counts[f"tf_not_configured_{itv}"] = reason_counts.get(f"tf_not_configured_{itv}", 0) + 1
                 continue
 
             candles = list(candles_by_interval.get(itv) or [])
+            if not candles:
+                reason_counts[f"tf_no_candles_{itv}"] = reason_counts.get(f"tf_no_candles_{itv}", 0) + 1
+                continue
             closes = [float(c.close) for c in candles if float(c.close) > 0]
             if len(closes) < required_len:
+                reason_counts[f"tf_insufficient_bars_{itv}"] = reason_counts.get(f"tf_insufficient_bars_{itv}", 0) + 1
                 continue
 
             # Use extra history for EMA stability.
@@ -232,6 +271,10 @@ class ScoringService:
             # Track actual weighted components for downstream transparency.
             score_by_timeframe[itv] = float(comp)
 
+        if not tf_ind:
+            reason_counts["no_usable_timeframes"] = reason_counts.get("no_usable_timeframes", 0) + 1
+            return None, reason_counts
+
         combined = clamp(float(combined), -1.0, 1.0)
         long_score = max(combined, 0.0)
         short_score = max(-combined, 0.0)
@@ -259,26 +302,52 @@ class ScoringService:
         self,
         *,
         scores: Mapping[str, SymbolScore],
-    ) -> Optional[Candidate]:
+        score_conf_threshold: float = 0.0,
+        score_gap_threshold: float = 0.0,
+    ) -> tuple[Optional[Candidate], Dict[str, int]]:
+        reasons: Dict[str, int] = {
+            "scored_symbols": 0,
+            "short_filtered": 0,
+            "selected": 0,
+            "all_short_filtered": 0,
+            "empty": 0,
+            "confidence_below_threshold": 0,
+            "gap_below_threshold": 0,
+        }
+        if not scores:
+            reasons["empty"] = 1
+            reasons["scored_symbols"] = 0
+            return None, reasons
+
         ranked = sorted(scores.values(), key=lambda s: float(s.strength), reverse=True)
-        if not ranked:
-            return None
+        reasons["scored_symbols"] = len(ranked)
 
         # Apply short restriction at candidate time: only allow SHORT if 4h BEAR.
         filtered: List[SymbolScore] = []
         for s in ranked:
             if s.direction == "SHORT" and s.regime_4h != "BEAR":
+                reasons["short_filtered"] += 1
                 continue
             filtered.append(s)
 
         if not filtered:
-            return None
+            reasons["all_short_filtered"] = 1
+            return None, reasons
 
         best = filtered[0]
         second_strength = float(filtered[1].strength) if len(filtered) > 1 else 0.0
         gap = float(best.strength) - float(second_strength)
         denom = float(best.strength) if float(best.strength) > 1e-9 else 1.0
         confidence = clamp(gap / denom, 0.0, 1.0)
+
+        if float(confidence) < float(score_conf_threshold):
+            reasons["confidence_below_threshold"] = reasons.get("confidence_below_threshold", 0) + 1
+            return None, reasons
+        if float(gap) < float(score_gap_threshold):
+            reasons["gap_below_threshold"] = reasons.get("gap_below_threshold", 0) + 1
+            return None, reasons
+
+        reasons["selected"] = 1
 
         return Candidate(
             symbol=best.symbol,
@@ -290,7 +359,7 @@ class ScoringService:
             vol_shock=bool(best.vol_shock),
             score_by_timeframe=dict(best.score_by_timeframe),
             active_timeframes=list(best.active_timeframes),
-        )
+        ), reasons
 
     @staticmethod
     def get_timeframe_weights(cfg: RiskConfig) -> Dict[str, float]:

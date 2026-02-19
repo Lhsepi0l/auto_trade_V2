@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from apps.trader_engine.domain.enums import CapitalMode, Direction, EngineState, ExecHint
 from apps.trader_engine.services.ai_service import AiService, AiSignal
@@ -60,7 +60,17 @@ class SchedulerSnapshot:
     active_scoring_timeframes: List[str] = field(default_factory=list)
     candidate_score_by_timeframe: Dict[str, float] = field(default_factory=dict)
     scoring_weights: Dict[str, float] = field(default_factory=dict)
+    scoring_rejection_reasons: Dict[str, int] = field(default_factory=dict)
+    scoring_scan_stats: Dict[str, Any] = field(default_factory=dict)
+    candidate_selection_reasons: Dict[str, int] = field(default_factory=dict)
+    scoring_setup_signature: Dict[str, Any] = field(default_factory=dict)
     min_bars_factor: float = 0.6
+    last_scoring_validation_ts: Optional[str] = None
+    scoring_drift_detected: bool = False
+    scoring_drift_details: List[str] = field(default_factory=list)
+    scoring_rejection_hotspot: str = ""
+    candidate_reject_stage: str = ""
+    candidate_rejection_hotspot: str = ""
     symbol_leverage: Dict[str, float] = field(default_factory=dict)
     leverage_sync_target: Optional[float] = None
     leverage_sync_updated_at: Optional[str] = None
@@ -119,6 +129,7 @@ class TraderScheduler:
         self._tick_change_event = asyncio.Event()
         self._tick_min_sec = 30.0
         self._tick_sec = max(float(tick_sec), self._tick_min_sec)
+        self._scoring_validation_tick = 0
 
         self._task: Optional[asyncio.Task[None]] = None
         self._stop = asyncio.Event()
@@ -271,6 +282,157 @@ class TraderScheduler:
         normalized = {itv: float(wt) / float(total) for itv, wt in cleaned.items() if float(wt) > 0}
         order = ["10m", "15m", "30m", "1h", "4h"]
         return [itv for itv in order if itv in normalized], normalized
+
+    @staticmethod
+    def _to_reason_map(raw: Any) -> Dict[str, int]:
+        if not isinstance(raw, dict):
+            return {}
+        out: Dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[str(k)] = int(v)
+            except Exception:
+                out[str(k)] = 0
+        return out
+
+    @staticmethod
+    def _normalize_scoring_reasons(
+        reasons: Dict[str, int], *, include_score_tfs: Sequence[str] | None = None
+    ) -> Dict[str, int]:
+        normalized = {
+            "symbols_seen": 0,
+            "scored": 0,
+            "skipped_no_usable_timeframes": 0,
+            "skipped_scoring_exception": 0,
+        }
+        for k, v in reasons.items():
+            normalized[str(k)] = int(v)
+        if include_score_tfs is not None:
+            for itv in include_score_tfs:
+                normalized[f"tf_no_candles_{itv}"] = int(normalized.get(f"tf_no_candles_{itv}", 0))
+                normalized[f"tf_insufficient_bars_{itv}"] = int(normalized.get(f"tf_insufficient_bars_{itv}", 0))
+                normalized[f"tf_not_configured_{itv}"] = int(normalized.get(f"tf_not_configured_{itv}", 0))
+            normalized["no_usable_timeframes"] = int(normalized.get("no_usable_timeframes", 0))
+        return normalized
+
+    @staticmethod
+    def _normalize_selection_reasons(reasons: Dict[str, int]) -> Dict[str, int]:
+        normalized = {
+            "scored_symbols": 0,
+            "short_filtered": 0,
+            "selected": 0,
+            "all_short_filtered": 0,
+            "empty": 0,
+            "confidence_below_threshold": 0,
+            "gap_below_threshold": 0,
+        }
+        for k, v in reasons.items():
+            normalized[str(k)] = int(v)
+        return normalized
+
+    @staticmethod
+    def _normalize_scan_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for k, v in stats.items():
+            try:
+                key = str(k)
+                if isinstance(v, (int, float)):
+                    out[key] = float(v) if isinstance(v, float) else int(v)
+                else:
+                    out[key] = v
+            except Exception:
+                out[str(k)] = v
+        if "score_scan_weights" in out and isinstance(out["score_scan_weights"], Mapping):
+            out["score_scan_weights"] = {str(tf): float(w) for tf, w in out["score_scan_weights"].items()}
+        return out
+
+    @staticmethod
+    def _dict_float_equal(
+        a: Mapping[str, Any],
+        b: Mapping[str, Any],
+        *,
+        tol: float = 1e-9,
+    ) -> bool:
+        if not isinstance(a, Mapping) or not isinstance(b, Mapping):
+            return False
+        keys = set(a.keys()) | set(b.keys())
+        for k in keys:
+            av = a.get(k)
+            bv = b.get(k)
+            if av is None and bv is None:
+                continue
+            try:
+                if abs(float(av) - float(bv)) > tol:
+                    return False
+            except Exception:
+                if str(av) != str(bv):
+                    return False
+        return True
+
+    @staticmethod
+    def _top_reason(reasons: Mapping[str, int], *, candidates: Sequence[str] | None = None) -> str:
+        if not reasons:
+            return ""
+        work: Dict[str, int] = {}
+        for k, v in reasons.items():
+            key = str(k)
+            if key in {"symbols_seen", "scored"}:
+                continue
+            try:
+                iv = int(v)
+            except Exception:
+                iv = 0
+            if iv > 0:
+                work[key] = iv
+        if candidates:
+            filtered = {k: work[k] for k in candidates if k in work}
+            if filtered:
+                work = filtered
+        if not work:
+            return ""
+        top = sorted(work.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        return f"{top[0]}={top[1]}"
+
+    @staticmethod
+    def _infer_candidate_reject_stage(
+        *,
+        scoring_reasons: Mapping[str, int],
+        selection_reasons: Mapping[str, int],
+        scored_symbols: int,
+    ) -> str:
+        if scored_symbols <= 0:
+            if int(scoring_reasons.get("symbols_seen", 0)) <= 0:
+                return "universe_empty"
+            if int(scoring_reasons.get("skipped_scoring_exception", 0)) > 0:
+                return "scoring_error"
+            if int(scoring_reasons.get("no_usable_timeframes", 0)) > 0 or int(
+                scoring_reasons.get("skipped_no_usable_timeframes", 0)
+            ) > 0:
+                return "timeframe_coverage"
+            return "universe_filtered"
+        if int(selection_reasons.get("empty", 0)) > 0:
+            return "selection_empty"
+        if int(selection_reasons.get("all_short_filtered", 0)) > 0:
+            return "short_filtered"
+        if int(selection_reasons.get("confidence_below_threshold", 0)) > 0:
+            return "confidence_filter"
+        if int(selection_reasons.get("gap_below_threshold", 0)) > 0:
+            return "gap_filter"
+        return "selection_filtered"
+
+    @staticmethod
+    def _format_reject_stage(stage: str) -> str:
+        return {
+            "universe_empty": "심볼 후보군이 없어 후보를 뽑지 못했습니다.",
+            "scoring_error": "스코어 계산 중 예외가 발생했습니다.",
+            "timeframe_coverage": "유효 타임프레임 커버리지가 부족합니다.",
+            "universe_filtered": "모든 후보가 선별 단계에서 탈락했습니다.",
+            "selection_empty": "선택 가능한 후보가 비어 있습니다.",
+            "short_filtered": "숏 필터로 인해 제외되었습니다.",
+            "confidence_filter": "신뢰도 필터에서 탈락했습니다.",
+            "gap_filter": "점수 간격(gap) 필터에서 탈락했습니다.",
+            "selection_filtered": "기타 선택 조건에서 탈락했습니다.",
+        }.get(stage, "원인 미확인")
 
     @staticmethod
     def _resolve_min_bars_factor(*, tick_sec: float, scoring_timeframes: List[str]) -> float:
@@ -470,11 +632,52 @@ class TraderScheduler:
 
         # Collect market data (multi TF) for universe.
         scoring_tfs, scoring_weights = self._resolve_scoring_setup(cfg=cfg)
+        raw_scoring_weights = {
+            "10m": float(getattr(cfg, "tf_weight_10m", 0.25)),
+            "15m": float(getattr(cfg, "tf_weight_15m", 0.0)),
+            "30m": float(getattr(cfg, "tf_weight_30m", 0.25)),
+            "1h": float(getattr(cfg, "tf_weight_1h", 0.25)),
+            "4h": float(getattr(cfg, "tf_weight_4h", 0.25)),
+        }
         snap.active_scoring_timeframes = list(scoring_tfs)
         snap.scoring_weights = dict(scoring_weights)
+        snap.scoring_rejection_hotspot = ""
+        snap.candidate_reject_stage = ""
+        snap.candidate_rejection_hotspot = ""
+        snap.scoring_drift_detected = False
+        snap.scoring_drift_details = []
         snap.min_bars_factor = self._resolve_min_bars_factor(
             tick_sec=self._tick_sec,
             scoring_timeframes=scoring_tfs,
+        )
+        snap.scoring_setup_signature = {
+            "timeframes": list(scoring_tfs),
+            "weights": dict(scoring_weights),
+            "min_bars_factor": float(snap.min_bars_factor),
+            "tick_sec": float(self._tick_sec),
+            "raw_weights": raw_scoring_weights,
+            "score_tf_15m_enabled": bool(getattr(cfg, "score_tf_15m_enabled", False)),
+            "score_conf_threshold": float(cfg.score_conf_threshold),
+            "score_gap_threshold": float(cfg.score_gap_threshold),
+        }
+        snap.last_scoring_validation_ts = _utcnow().isoformat()
+        self._scoring_validation_tick += 1
+        if self._scoring_validation_tick % 10 == 1:
+            logger.info(
+                "scoring_setup_validation",
+                extra={
+                    "tick": snap.tick_started_at,
+                    "signature": snap.scoring_setup_signature,
+                },
+            )
+        logger.info(
+            "scoring_setup_verified",
+            extra={
+                "tick": snap.tick_started_at,
+                "timeframes": snap.active_scoring_timeframes,
+                "weights": snap.scoring_weights,
+                "min_bars_factor": snap.min_bars_factor,
+            },
         )
 
         candles_by_symbol_interval: Dict[str, Dict[str, Any]] = {}
@@ -485,18 +688,146 @@ class TraderScheduler:
                 by_itv[itv] = cs
             candles_by_symbol_interval[sym] = by_itv
 
-        scores: Dict[str, SymbolScore] = await asyncio.to_thread(
+        score_result = await asyncio.to_thread(
             self._scoring.score_universe,
             cfg=cfg,
             candles_by_symbol_interval=candles_by_symbol_interval,
             min_bars_factor=snap.min_bars_factor,
         )
-        candidate: Optional[Candidate] = self._scoring.pick_candidate(scores=scores)
+        scores: Dict[str, SymbolScore]
+        if isinstance(score_result, dict):
+            # Backward compatibility for environments still running an older tuple shape.
+            scores = {str(k): v for k, v in score_result.get("scores", {}).items() if v is not None}
+            snap.scoring_rejection_reasons = self._normalize_scoring_reasons(
+                self._to_reason_map(score_result.get("rejection_reasons") or {}),
+                include_score_tfs=scoring_tfs,
+            )
+            snap.scoring_scan_stats = self._normalize_scan_stats(
+                self._to_reason_map(score_result.get("scan_stats") or {})
+            )
+            candidate, pick_reasons = self._scoring.pick_candidate(
+                scores=scores,
+                score_conf_threshold=float(cfg.score_conf_threshold),
+                score_gap_threshold=float(cfg.score_gap_threshold),
+            )
+            snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
+        else:
+            scores = dict(score_result.scores)
+            snap.scoring_rejection_reasons = self._normalize_scoring_reasons(
+                self._to_reason_map(score_result.rejection_reasons),
+                include_score_tfs=scoring_tfs,
+            )
+            snap.scoring_scan_stats = self._normalize_scan_stats(self._to_reason_map(score_result.scan_stats))
+            candidate, pick_reasons = self._scoring.pick_candidate(
+                scores=scores,
+                score_conf_threshold=float(cfg.score_conf_threshold),
+                score_gap_threshold=float(cfg.score_gap_threshold),
+            )
+            snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
 
         # Snapshot: expose "last_scores / last_candidate" and keep older fields populated.
         snap.last_scores = {k: v.as_dict() for k, v in scores.items()}
         snap.last_candidate = candidate.as_dict() if candidate else None
         snap.scores = dict(snap.last_scores)
+
+        # Strategy confidence audit (debug only; helps diagnose repeated no_candidate cases)
+        # Cross-check that scoring configuration used by Scheduler and ScoringService are aligned.
+        score_scan_tfs = snap.scoring_scan_stats.get("scoring_timeframes")
+        score_scan_weights = snap.scoring_scan_stats.get("score_scan_weights")
+        drift_reports: List[str] = []
+        if isinstance(score_scan_tfs, Sequence):
+            expected_tfs = sorted([str(x) for x in scoring_tfs])
+            actual_tfs = sorted([str(x) for x in score_scan_tfs])
+            if expected_tfs != actual_tfs:
+                drift_reports.append(
+                    f"scoring_timeframes_mismatch expected={expected_tfs} actual={actual_tfs}"
+                )
+        if isinstance(score_scan_weights, Mapping) and not self._dict_float_equal(
+            scoring_weights, {str(k): float(v) for k, v in score_scan_weights.items()}, tol=1e-7
+        ):
+            drift_reports.append("scoring_weights_mismatch")
+        if float(snap.scoring_setup_signature.get("min_bars_factor") or 0.0) != float(
+            snap.scoring_scan_stats.get("min_bars_factor") or 0.0
+        ):
+            drift_reports.append("min_bars_factor_mismatch")
+        requested_symbols = snap.scoring_scan_stats.get("requested_symbols")
+        if requested_symbols is not None:
+            try:
+                requested_symbols = int(requested_symbols)
+            except Exception:
+                requested_symbols = None
+            if requested_symbols is not None and requested_symbols != len(enabled):
+                drift_reports.append("requested_symbols_mismatch")
+        snap.scoring_drift_detected = bool(drift_reports)
+        snap.scoring_drift_details = drift_reports
+
+        snap.scoring_rejection_hotspot = self._top_reason(
+            snap.scoring_rejection_reasons,
+            candidates=(
+                "skipped_no_usable_timeframes",
+                "skipped_scoring_exception",
+                "tf_no_candles_10m",
+                "tf_no_candles_15m",
+                "tf_no_candles_30m",
+                "tf_no_candles_1h",
+                "tf_no_candles_4h",
+                "tf_insufficient_bars_10m",
+                "tf_insufficient_bars_15m",
+                "tf_insufficient_bars_30m",
+                "tf_insufficient_bars_1h",
+                "tf_insufficient_bars_4h",
+                "tf_not_configured_10m",
+                "tf_not_configured_15m",
+                "tf_not_configured_30m",
+                "tf_not_configured_1h",
+                "tf_not_configured_4h",
+                "no_usable_timeframes",
+            ),
+        )
+        snap.candidate_reject_stage = self._infer_candidate_reject_stage(
+            scoring_reasons=snap.scoring_rejection_reasons,
+            selection_reasons=snap.candidate_selection_reasons,
+            scored_symbols=int(snap.scoring_rejection_reasons.get("scored", 0)),
+        )
+        snap.candidate_rejection_hotspot = self._top_reason(
+            snap.candidate_selection_reasons,
+            candidates=(
+                "short_filtered",
+                "all_short_filtered",
+                "confidence_below_threshold",
+                "gap_below_threshold",
+                "empty",
+            ),
+        )
+        if snap.scoring_drift_detected:
+            logger.warning(
+                "scoring_setup_drift_detected",
+                extra={
+                    "tick": snap.tick_started_at,
+                    "drift_details": snap.scoring_drift_details,
+                    "signature": snap.scoring_setup_signature,
+                    "scan_stats": snap.scoring_scan_stats,
+                },
+            )
+
+        if self._scoring_validation_tick % 10 == 0:
+            logger.info(
+                "scoring_candidate_audit_tick",
+                extra={
+                    "tick": snap.tick_started_at,
+                    "scoring_signature": snap.scoring_setup_signature,
+                    "scan_stats": snap.scoring_scan_stats,
+                    "rejection_reasons": snap.scoring_rejection_reasons,
+                    "selection_reasons": snap.candidate_selection_reasons,
+                    "candidate_symbol": (candidate.symbol if candidate else None),
+                    "candidate_decision": snap.last_decision_reason,
+                    "candidate_reject_stage": snap.candidate_reject_stage,
+                    "scoring_reject_hotspot": snap.scoring_rejection_hotspot,
+                    "candidate_reject_hotspot": snap.candidate_rejection_hotspot,
+                    "scoring_drift_detected": snap.scoring_drift_detected,
+                },
+            )
+
         if candidate:
             ss = scores.get(candidate.symbol)
             vol_tag = "VOL_SHOCK" if (ss and ss.vol_shock) else "NORMAL"
@@ -511,7 +842,39 @@ class TraderScheduler:
                 "confidence": float(candidate.confidence),
                 "regime_4h": candidate.regime_4h,
             }
+
+            logger.info(
+                "candidate_scored",
+                extra={
+                    "tick": snap.tick_started_at,
+                    "symbol": candidate.symbol,
+                    "direction": candidate.direction,
+                    "strength": snap.candidate.get("strength"),
+                    "confidence": snap.candidate.get("confidence"),
+                    "composite": snap.candidate.get("composite"),
+                    "score_by_timeframe": snap.candidate_score_by_timeframe,
+                    "score_scan_stats": snap.scoring_scan_stats,
+                    "score_setup": snap.scoring_setup_signature,
+                },
+            )
         else:
+            logger.warning(
+                "candidate_none",
+                extra={
+                    "tick": snap.tick_started_at,
+                    "engine_state": st.value,
+                    "enabled_symbol_count": len(enabled),
+                    "scoring_timeframes": snap.active_scoring_timeframes,
+                    "scoring_weights": snap.scoring_weights,
+                    "min_bars_factor": snap.min_bars_factor,
+                    "scoring_rejection_reasons": snap.scoring_rejection_reasons,
+                    "candidate_selection_reasons": snap.candidate_selection_reasons,
+                    "scoring_scan_stats": snap.scoring_scan_stats,
+                    "candidate_reject_stage": snap.candidate_reject_stage,
+                    "scoring_reject_hotspot": snap.scoring_rejection_hotspot,
+                    "candidate_reject_hotspot": snap.candidate_rejection_hotspot,
+                },
+            )
             snap.candidate = None
 
         # AI signal is advisory only; keep it for status/exec_hint default.
@@ -939,4 +1302,5 @@ class TraderScheduler:
             await self._send_daily_report_payload(payload=payload, require_discord_webhook=False)
         except Exception:
             logger.exception("daily_report_send_failed", extra={"day": report_day})
+
 
