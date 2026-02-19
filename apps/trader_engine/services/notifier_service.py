@@ -390,6 +390,7 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
     kind = str(event.get("kind") or "EVENT").upper()
     symbol = str(event.get("symbol") or "")
     detail = event.get("detail") if isinstance(event.get("detail"), Mapping) else {}
+    event_payload = detail if isinstance(detail, Mapping) and detail else event
 
     if kind in {"ENTER", "REBALANCE"}:
         d = detail or {}
@@ -414,6 +415,33 @@ def _format_event_line(event: Mapping[str, Any]) -> str:
             f"[이벤트] {action}: {symbol} {label} | "
             f"수량={_fmt_float(qty_f, 4)} | "
             f"진입가={_fmt_float(price, 4)} USDT"
+        )
+
+    if kind == "STRATEGY_DECISION_JUDGMENT":
+        regime_raw = str(event_payload.get("regime_4h") or event_payload.get("candidate_regime_4h") or event_payload.get("regime") or "-")
+        regime = _regime_ko(regime_raw)
+        regime_code = regime_raw.strip().upper() if regime_raw and regime_raw != "-" else "N/A"
+        score = _fmt_float(
+            event_payload.get("score")
+            if "score" in event_payload
+            else event_payload.get("candidate_score"),
+            3,
+        )
+        confidence = _fmt_float(
+            event_payload.get("confidence")
+            if "confidence" in event_payload
+            else event_payload.get("candidate_confidence"),
+            3,
+        )
+        candidate_direction = _position_to_ko(event_payload.get("candidate_direction"))
+        final_direction = _position_to_ko(
+            event_payload.get("final_direction") or event_payload.get("direction")
+        )
+        reason = str(event_payload.get("reason") or "-")
+        return (
+            f"[판단] {symbol} | {regime}({regime_code}) | "
+            f"점수={score} 후보={candidate_direction} 최종={final_direction} "
+            f"신뢰={confidence} | 사유={reason}"
         )
 
     if kind == "FILL":
@@ -589,6 +617,13 @@ def _format_status_line(snapshot: Mapping[str, Any]) -> str:
     regime = _regime_ko(regime_raw)
     regime_code = regime_raw.strip().upper() if regime_raw and regime_raw != "-" else "N/A"
     candidate = snapshot.get("candidate_symbol") or "-"
+    decision_regime_raw = str(snapshot.get("last_decision_candidate_regime_4h") or regime_raw)
+    decision_regime = _regime_ko(decision_regime_raw)
+    decision_regime_code = decision_regime_raw.strip().upper() if decision_regime_raw and decision_regime_raw != "-" else "N/A"
+    decision_score = _fmt_float(snapshot.get("last_decision_candidate_score"), 3)
+    decision_confidence = _fmt_float(snapshot.get("last_decision_candidate_confidence"), 3)
+    decision_candidate_direction = _position_to_ko(snapshot.get("last_decision_candidate_direction"))
+    decision_final_direction = _position_to_ko(snapshot.get("last_decision_final_direction"))
     dec = str(snapshot.get("last_decision_reason") or "-")
     dec_ko = _decision_reason_ko(dec)
     if dec == "profit_hold":
@@ -612,6 +647,9 @@ def _format_status_line(snapshot: Mapping[str, Any]) -> str:
             f"DD {dd}%"
         ),
         f"시장 판단: 레짐 {regime}({regime_code}), 후보 심볼 {candidate}",
+        f"판단: {decision_regime}({decision_regime_code}) / "
+        f"점수={decision_score} / 후보={decision_candidate_direction} / "
+        f"최종={decision_final_direction} / 신뢰={decision_confidence}",
         f"이번 결정: {dec} -> {dec_ko}",
         f"최근 액션: {last_action}",
     ]

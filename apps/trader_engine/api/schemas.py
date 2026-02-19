@@ -151,6 +151,11 @@ class SchedulerSnapshotSchema(BaseModel):
     last_scores: Dict[str, Any] = Field(default_factory=dict)
     last_candidate: Optional[Dict[str, Any]] = None
     last_decision_reason: Optional[str] = None
+    last_decision_candidate_direction: Optional[str] = None
+    last_decision_candidate_regime_4h: Optional[str] = None
+    last_decision_candidate_score: Optional[float] = None
+    last_decision_candidate_confidence: Optional[float] = None
+    last_decision_final_direction: Optional[str] = None
     last_action: Optional[str] = None
     last_error: Optional[str] = None
     active_scoring_timeframes: List[str] = Field(default_factory=list)

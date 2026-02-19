@@ -150,3 +150,35 @@ def test_profit_defaults_to_hold() -> None:
     )
     assert dec.kind == "HOLD"
     assert dec.reason == "profit_hold"
+
+
+def test_decision_attaches_candidate_judgment_context() -> None:
+    svc = StrategyService()
+    dec = svc.decide_next_action(
+        cfg=_cfg(min_hold_minutes=0, score_gap_threshold=0.1),
+        now=datetime.now(tz=timezone.utc),
+        candidate=Candidate(
+            symbol="BTCUSDT",
+            direction="SHORT",
+            confidence=0.91,
+            strength=0.71,
+            second_strength=0.41,
+            regime_4h="BEAR",
+            vol_shock=False,
+        ),
+        scores={"BTCUSDT": _score("BTCUSDT", long_score=0.2, short_score=0.7)},
+        position=PositionState(
+            symbol=None,
+            position_amt=0.0,
+            unrealized_pnl=0.0,
+            last_entry_symbol=None,
+            last_entry_at=None,
+        ),
+    )
+    assert dec.kind == "ENTER"
+    assert dec.candidate_symbol == "BTCUSDT"
+    assert dec.candidate_direction == "SHORT"
+    assert dec.candidate_regime_4h == "BEAR"
+    assert dec.candidate_strength == 0.71
+    assert dec.candidate_confidence == 0.91
+    assert dec.final_direction == "SHORT"

@@ -54,6 +54,11 @@ class SchedulerSnapshot:
     last_scores: Dict[str, Any]
     last_candidate: Optional[Dict[str, Any]]
     last_decision_reason: Optional[str]
+    last_decision_candidate_direction: Optional[str] = None
+    last_decision_candidate_regime_4h: Optional[str] = None
+    last_decision_candidate_score: Optional[float] = None
+    last_decision_candidate_confidence: Optional[float] = None
+    last_decision_final_direction: Optional[str] = None
 
     last_action: Optional[str] = None
     last_error: Optional[str] = None
@@ -953,6 +958,26 @@ class TraderScheduler:
             position=pos_state,
         )
         snap.last_decision_reason = dec.reason
+        snap.last_decision_candidate_direction = dec.candidate_direction
+        snap.last_decision_candidate_regime_4h = dec.candidate_regime_4h
+        snap.last_decision_candidate_score = dec.candidate_strength
+        snap.last_decision_candidate_confidence = dec.candidate_confidence
+        snap.last_decision_final_direction = dec.final_direction
+        logger.info(
+            "strategy_decision_judgment",
+            extra={
+                "tick": snap.tick_started_at,
+                "decision": dec.kind,
+                "reason": dec.reason,
+                "regime_4h": dec.candidate_regime_4h,
+                "score": dec.candidate_strength,
+                "candidate_direction": dec.candidate_direction,
+                "final_direction": dec.final_direction,
+                "confidence": dec.candidate_confidence,
+                "symbol": dec.enter_symbol or dec.close_symbol or (candidate.symbol if candidate else "-"),
+                "position_symbol": open_pos_symbol,
+            },
+        )
         if self._oplog:
             try:
                 sym = candidate.symbol if candidate else "-"
@@ -1211,6 +1236,11 @@ class TraderScheduler:
             "daily_pnl_pct": float(m.daily_pnl_pct),
             "drawdown_pct": float(m.drawdown_pct),
             "candidate_symbol": candidate.symbol if candidate else None,
+            "last_decision_candidate_direction": snap.last_decision_candidate_direction,
+            "last_decision_candidate_regime_4h": snap.last_decision_candidate_regime_4h,
+            "last_decision_candidate_score": snap.last_decision_candidate_score,
+            "last_decision_candidate_confidence": snap.last_decision_candidate_confidence,
+            "last_decision_final_direction": snap.last_decision_final_direction,
             "candidate_active_timeframes": candidate_active_tfs,
             "candidate_score_by_timeframe": candidate_score_by_tf,
             "regime": candidate.regime_4h if candidate else None,
