@@ -282,13 +282,13 @@ class TraderScheduler:
 
     @staticmethod
     def _resolve_scoring_setup(cfg) -> tuple[list[str], Dict[str, float]]:
-        tf_15_enabled = Scheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False)
+        tf_15_enabled = TraderScheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False)
         weights: Dict[str, float] = {
-            "10m": Scheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
-            "15m": Scheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
-            "30m": Scheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
-            "1h": Scheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
-            "4h": Scheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
+            "10m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
+            "15m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
+            "30m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
+            "1h": TraderScheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
+            "4h": TraderScheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
         }
 
         if not tf_15_enabled:
@@ -673,11 +673,11 @@ class TraderScheduler:
         # Collect market data (multi TF) for universe.
         scoring_tfs, scoring_weights = self._resolve_scoring_setup(cfg=cfg)
         raw_scoring_weights = {
-            "10m": Scheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
-            "15m": Scheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
-            "30m": Scheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
-            "1h": Scheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
-            "4h": Scheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
+            "10m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_10m", 0.25), default=0.25),
+            "15m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_15m", 0.0), default=0.0),
+            "30m": TraderScheduler._safe_float(getattr(cfg, "tf_weight_30m", 0.25), default=0.25),
+            "1h": TraderScheduler._safe_float(getattr(cfg, "tf_weight_1h", 0.25), default=0.25),
+            "4h": TraderScheduler._safe_float(getattr(cfg, "tf_weight_4h", 0.25), default=0.25),
         }
         snap.active_scoring_timeframes = list(scoring_tfs)
         snap.scoring_weights = dict(scoring_weights)
@@ -696,9 +696,9 @@ class TraderScheduler:
             "min_bars_factor": float(snap.min_bars_factor),
             "tick_sec": float(self._tick_sec),
             "raw_weights": raw_scoring_weights,
-            "score_tf_15m_enabled": Scheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False),
-            "score_conf_threshold": Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
-            "score_gap_threshold": Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
+            "score_tf_15m_enabled": TraderScheduler._safe_bool(getattr(cfg, "score_tf_15m_enabled", False), default=False),
+            "score_conf_threshold": TraderScheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+            "score_gap_threshold": TraderScheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
         }
         snap.last_scoring_validation_ts = _utcnow().isoformat()
         self._scoring_validation_tick += 1
@@ -747,8 +747,8 @@ class TraderScheduler:
             )
             candidate, pick_reasons = self._scoring.pick_candidate(
                 scores=scores,
-                score_conf_threshold=Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
-                score_gap_threshold=Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
+                score_conf_threshold=TraderScheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+                score_gap_threshold=TraderScheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
             )
             snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
         else:
@@ -760,8 +760,8 @@ class TraderScheduler:
             snap.scoring_scan_stats = self._normalize_scan_stats(self._to_reason_map(score_result.scan_stats))
             candidate, pick_reasons = self._scoring.pick_candidate(
                 scores=scores,
-                score_conf_threshold=Scheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
-                score_gap_threshold=Scheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
+                score_conf_threshold=TraderScheduler._safe_float(getattr(cfg, "score_conf_threshold", 0.25), default=0.25),
+                score_gap_threshold=TraderScheduler._safe_float(getattr(cfg, "score_gap_threshold", 0.15), default=0.15),
             )
             snap.candidate_selection_reasons = self._normalize_selection_reasons(self._to_reason_map(pick_reasons))
 
