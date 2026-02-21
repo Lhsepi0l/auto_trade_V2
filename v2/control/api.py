@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +14,8 @@ from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.notify import Notifier
 from v2.ops import OpsController
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow_iso() -> str:
@@ -214,29 +217,44 @@ class RuntimeController:
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
         self._last_cycle["tick_started_at"] = _utcnow_iso()
-        cycle: KernelCycleResult = self.kernel.run_once()
-        self.scheduler.run_once()
-        if self.ops.can_open_new_entries():
-            self.order_manager.submit({"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode})
+        try:
+            cycle: KernelCycleResult = self.kernel.run_once()
+            self.scheduler.run_once()
+            if self.ops.can_open_new_entries():
+                self.order_manager.submit({"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode})
 
-        self._last_cycle["tick_finished_at"] = _utcnow_iso()
-        self._last_cycle["last_action"] = cycle.state
-        self._last_cycle["last_decision_reason"] = cycle.reason
-        self._last_cycle["candidate"] = {
-            "symbol": cycle.candidate.symbol,
-            "side": cycle.candidate.side,
-            "score": cycle.candidate.score,
-        } if cycle.candidate is not None else None
-        self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
-        self._last_cycle["last_error"] = cycle.reason if cycle.state in {"blocked", "risk_rejected", "execution_failed"} else None
+            self._last_cycle["tick_finished_at"] = _utcnow_iso()
+            self._last_cycle["last_action"] = cycle.state
+            self._last_cycle["last_decision_reason"] = cycle.reason
+            self._last_cycle["candidate"] = {
+                "symbol": cycle.candidate.symbol,
+                "side": cycle.candidate.side,
+                "score": cycle.candidate.score,
+            } if cycle.candidate is not None else None
+            self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
+            self._last_cycle["last_error"] = cycle.reason if cycle.state in {"blocked", "risk_rejected", "execution_failed"} else None
 
-        self._report_stats["total_records"] += 1
-        if cycle.state in {"executed", "dry_run"}:
-            self._report_stats["entries"] += 1
-        if cycle.state == "execution_failed":
+            self._report_stats["total_records"] += 1
+            if cycle.state in {"executed", "dry_run"}:
+                self._report_stats["entries"] += 1
+            if cycle.state == "execution_failed":
+                self._report_stats["errors"] += 1
+            if cycle.state in {"blocked", "risk_rejected"}:
+                self._report_stats["blocks"] += 1
+            ok = True
+            error_message = None
+        except Exception as exc:  # noqa: BLE001
+            error_message = f"cycle_failed:{type(exc).__name__}"
+            logger.exception("runtime_cycle_failed")
+            self._last_cycle["tick_finished_at"] = _utcnow_iso()
+            self._last_cycle["last_action"] = "error"
+            self._last_cycle["last_decision_reason"] = error_message
+            self._last_cycle["candidate"] = None
+            self._last_cycle["last_candidate"] = None
+            self._last_cycle["last_error"] = error_message
+            self._report_stats["total_records"] += 1
             self._report_stats["errors"] += 1
-        if cycle.state in {"blocked", "risk_rejected"}:
-            self._report_stats["blocks"] += 1
+            ok = False
 
         notify_interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
         now = datetime.now(timezone.utc)
@@ -250,14 +268,20 @@ class RuntimeController:
                 f"last_action={self._last_cycle.get('last_action')}, "
                 f"reason={self._last_cycle.get('last_decision_reason')}"
             )
-            self.notifier.send(summary)
-            self._last_status_notify_at = now
+            try:
+                self.notifier.send(summary)
+                self._last_status_notify_at = now
+            except Exception:  # noqa: BLE001
+                logger.exception("status_notify_failed")
 
-        return {
-            "ok": True,
+        out: dict[str, Any] = {
+            "ok": ok,
             "tick_sec": float(self.scheduler.tick_seconds),
             "snapshot": dict(self._last_cycle),
         }
+        if error_message is not None:
+            out["error"] = error_message
+        return out
 
     def _loop_worker(self) -> None:
         while not self._thread_stop.is_set():

@@ -144,3 +144,38 @@ def test_control_api_tick_emits_status_notification(tmp_path) -> None:  # type: 
     assert tick.status_code == 200
     assert tick.json()["ok"] is True
     assert notifier.send.call_count >= 1
+
+
+def test_control_api_tick_handles_kernel_exception(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_error.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _BrokenKernel:
+        def run_once(self):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boom")
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_BrokenKernel(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    payload = tick.json()
+    assert payload["ok"] is False
+    assert str(payload.get("error", "")).startswith("cycle_failed:")
+    assert payload["snapshot"]["last_action"] == "error"
