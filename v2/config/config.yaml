@@ -1,0 +1,98 @@
+version: 2
+base:
+  app_name: auto-trader-v2
+  timezone: UTC
+  scheduler:
+    tick_seconds: 30
+    max_drift_seconds: 5
+  exchange:
+    venue: binance-usdm
+    recv_window_ms: 5000
+    default_symbol: BTCUSDT
+    request_rate_limit_per_sec: 5.0
+    backoff_base_seconds: 0.5
+    backoff_cap_seconds: 10.0
+    user_stream_keepalive_seconds: 1800
+    user_stream_reconnect_min_seconds: 1.0
+    user_stream_reconnect_max_seconds: 30.0
+    user_stream_connection_ttl_seconds: 82800
+    user_stream_reorder_window_ms: 300
+    market_intervals: [15m, 1h, 4h]
+  engine:
+    allow_reentry: false
+    max_open_positions: 1
+  risk:
+    max_leverage: 5.0
+    max_exposure_pct: 0.20
+    daily_loss_limit_pct: -0.02
+    dd_limit_pct: -0.15
+  tpsl:
+    take_profit_pct: 0.02
+    stop_loss_pct: 0.01
+    trailing_enabled: false
+  strategies:
+    - name: strategy_pack_v1
+      enabled: true
+      params:
+        entry_mode: pullback
+        mean_reversion_enabled: false
+        supertrend_atr_period: 10
+        supertrend_multiplier: 3.0
+        adx_period: 14
+        adx_threshold: 18
+        donchian_period: 20
+        donchian_anti_fake: 0.2
+        atr_period: 14
+        bb_period: 20
+        bb_std: 2.0
+        rsi_period: 14
+        ema200_gating: true
+        supertrend_flip_limit: 3
+        overheat_funding_threshold: 0.0006
+        overheat_ratio_long: 1.45
+        overheat_ratio_short: 0.65
+        overheat_cache_ttl: 30
+  storage:
+    sqlite_path: data/v2_runtime.sqlite3
+    journal_table: runtime_journal
+  ops:
+    pause_on_start: false
+    flatten_on_kill: true
+  notify:
+    enabled: false
+    provider: none
+
+profiles:
+  conservative:
+    risk:
+      max_leverage: 2.0
+      max_exposure_pct: 0.10
+      daily_loss_limit_pct: -0.01
+      dd_limit_pct: -0.08
+    tpsl:
+      take_profit_pct: 0.015
+      stop_loss_pct: 0.008
+
+  normal:
+    inherits: conservative
+    risk:
+      max_leverage: 5.0
+      max_exposure_pct: 0.20
+      daily_loss_limit_pct: -0.02
+      dd_limit_pct: -0.15
+    tpsl:
+      take_profit_pct: 0.020
+      stop_loss_pct: 0.010
+
+  aggressive:
+    inherits: normal
+    scheduler:
+      tick_seconds: 15
+    risk:
+      max_leverage: 12.0
+      max_exposure_pct: 0.35
+      daily_loss_limit_pct: -0.05
+      dd_limit_pct: -0.25
+    tpsl:
+      take_profit_pct: 0.030
+      stop_loss_pct: 0.015

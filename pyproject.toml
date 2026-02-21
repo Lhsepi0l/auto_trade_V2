@@ -12,6 +12,7 @@ readme = "README.md"
 dependencies = [
   "pydantic>=2.5",
   "pydantic-settings>=2.2",
+  "PyYAML>=6.0",
   "fastapi>=0.110",
   "uvicorn>=0.27",
   "requests>=2.31",
@@ -24,25 +25,26 @@ dependencies = [
 dev = [
   "pytest>=8.0",
   "ruff>=0.4",
+  "asgi-lifespan>=2.1",
 ]
 
 [tool.pytest.ini_options]
 addopts = "-q"
-testpaths = ["tests"]
+testpaths = ["v2/tests"]
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apps*", "shared*"]
+include = ["v2*"]
 
 [tool.ruff]
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "BLE"]
-ignore = ["E501"]
+ignore = ["E501", "B008", "BLE001"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["apps", "shared"]
+known-first-party = ["v2"]
