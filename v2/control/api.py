@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
+from collections.abc import Callable, Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -47,6 +50,17 @@ def _parse_value(raw: str) -> Any:
         if len(parts) > 0:
             return parts
     return value
+
+
+def _run_async_blocking(thunk: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(thunk())
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, thunk())
+        return future.result()
 
 
 class RuntimeController:
@@ -167,6 +181,9 @@ class RuntimeController:
                 "position_side": "LONG" if row.position_amt > 0 else "SHORT",
             }
         budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
+        live_available_usdt, live_wallet_usdt = self._fetch_live_usdt_balance()
+        available_usdt = live_available_usdt if live_available_usdt is not None else budget
+        wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else budget
         config = dict(self._risk)
         config_summary = dict(self._risk)
         config_summary["scheduler_tick_sec"] = float(self.scheduler.tick_seconds)
@@ -195,7 +212,7 @@ class RuntimeController:
             "watchdog": {},
             "capital_snapshot": {
                 "symbol": self.cfg.behavior.exchange.default_symbol,
-                "available_usdt": budget,
+                "available_usdt": available_usdt,
                 "budget_usdt": budget,
                 "used_margin": 0.0,
                 "leverage": float(self._risk.get("max_leverage", 1.0)),
@@ -208,7 +225,7 @@ class RuntimeController:
             "binance": {
                 "enabled_symbols": list(self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]),
                 "positions": positions_payload,
-                "usdt_balance": {"wallet": budget},
+                "usdt_balance": {"wallet": wallet_usdt, "available": available_usdt},
                 "startup_error": None,
                 "private_error": None,
             },
@@ -221,6 +238,46 @@ class RuntimeController:
             },
             "last_error": self._last_cycle.get("last_error"),
         }
+
+    def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None]:
+        if self.rest_client is None:
+            return None, None
+        rest_client: Any = self.rest_client
+        assert rest_client is not None
+        try:
+            payload = _run_async_blocking(lambda: rest_client.get_balances())
+        except Exception:  # noqa: BLE001
+            logger.exception("live_balance_fetch_failed")
+            return None, None
+
+        if not isinstance(payload, list):
+            return None, None
+
+        target: dict[str, Any] | None = None
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            asset = str(item.get("asset") or item.get("coin") or "").upper()
+            if asset == "USDT":
+                target = item
+                break
+
+        if target is None:
+            return None, None
+
+        available = _to_float(
+            target.get("availableBalance")
+            or target.get("withdrawAvailable")
+            or target.get("balance"),
+            default=0.0,
+        )
+        wallet = _to_float(
+            target.get("walletBalance")
+            or target.get("crossWalletBalance")
+            or target.get("balance"),
+            default=0.0,
+        )
+        return available, wallet
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
         self._last_cycle["tick_started_at"] = _utcnow_iso()

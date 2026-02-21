@@ -277,3 +277,45 @@ def test_control_api_tick_from_async_endpoint_with_rest_snapshot(tmp_path) -> No
     payload = tick.json()
     assert payload["ok"] is True
     assert payload["snapshot"]["last_action"] != "error"
+
+
+def test_control_api_status_uses_live_usdt_balance(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_balance.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    class _BalanceREST:
+        async def get_balances(self):  # type: ignore[no-untyped-def]
+            return [{"asset": "USDT", "availableBalance": "321.45", "walletBalance": "345.67"}]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_BalanceREST(),
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["capital_snapshot"]["available_usdt"] == 321.45
+    assert payload["binance"]["usdt_balance"]["wallet"] == 345.67
