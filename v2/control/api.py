@@ -88,6 +88,7 @@ class RuntimeController:
             "blocks": 0,
             "total_records": 0,
         }
+        self._last_status_notify_at: datetime | None = None
         self._risk = self._initial_risk_config()
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
 
@@ -236,6 +237,22 @@ class RuntimeController:
             self._report_stats["errors"] += 1
         if cycle.state in {"blocked", "risk_rejected"}:
             self._report_stats["blocks"] += 1
+
+        notify_interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
+        now = datetime.now(timezone.utc)
+        should_notify = (
+            self._last_status_notify_at is None
+            or (now - self._last_status_notify_at).total_seconds() >= float(notify_interval)
+        )
+        if should_notify:
+            summary = (
+                f"status update: state={self.state_store.get().status}, "
+                f"last_action={self._last_cycle.get('last_action')}, "
+                f"reason={self._last_cycle.get('last_decision_reason')}"
+            )
+            self.notifier.send(summary)
+            self._last_status_notify_at = now
+
         return {
             "ok": True,
             "tick_sec": float(self.scheduler.tick_seconds),

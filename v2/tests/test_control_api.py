@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from fastapi.testclient import TestClient
 
 from v2.clean_room import build_default_kernel
@@ -101,3 +103,44 @@ def test_control_api_contract(tmp_path) -> None:  # type: ignore[no-untyped-def]
     stop = client.post("/stop")
     assert stop.status_code == 200
     assert stop.json()["state"] == "PAUSED"
+
+
+def test_control_api_tick_emits_status_notification(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_notify.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    _ = client.post("/set", json={"key": "notify_interval_sec", "value": "1"})
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    assert tick.json()["ok"] is True
+    assert notifier.send.call_count >= 1
