@@ -323,6 +323,29 @@ async def test_tick_once_shows_human_reason_in_followup(monkeypatch: pytest.Monk
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "no_candidate",
+                },
+            }
+        ),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("결과: 대기 - 사유:" in m and "현재 진입 후보가 없습니다." in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tick_once_handles_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ConnectError")),

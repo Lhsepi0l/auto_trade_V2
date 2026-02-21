@@ -134,6 +134,7 @@ REASON_PREFIX_HINTS = {
     "daily_loss_limit_reached:": "일일 손실 제한에 걸림",
     "dd_limit_reached:": "DD 제한에 걸림",
     "notional_": "주문 기준금액이 제한 조건을 벗어났습니다",
+    "cycle_failed:": "즉시 판단 실행 중 내부 오류가 발생했습니다",
 }
 
 _SYMBOL_LEVERAGE_ERROR_MESSAGES: dict[str, str] = {
@@ -302,6 +303,40 @@ def _build_last_result(last_action: str, last_error: str | None, last_decision: 
     if action != "-":
         return "OK", str(last_action)
     return "-", "-"
+
+
+def _build_tick_once_message(payload: JSONPayload) -> str:
+    sched = payload.get("snapshot") if isinstance(payload, dict) else {}
+    sched_map = _as_dict(sched)
+
+    last_action = _normalize_last_action(str(sched_map.get("last_action") or "-"))
+    last_error = str(sched_map.get("last_error") or "")
+    last_decision = _normalize_last_decision(str(sched_map.get("last_decision_reason") or "-"))
+
+    if last_error:
+        reason = _reason_to_human_readable(last_error)
+        return f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
+
+    if last_action == "no_candidate":
+        decision_reason = last_decision if last_decision != "-" else "no_candidate"
+        reason = _reason_to_human_readable(decision_reason)
+        return f"즉시 판단: {last_action}\n결과: 대기 - 사유: {reason}"
+
+    mapped_reason = ""
+    if last_decision != "-" and last_decision != last_action:
+        mapped_reason = _reason_to_human_readable(last_decision)
+    elif last_action in REASON_HINT_MAP:
+        mapped_reason = _reason_to_human_readable(last_action)
+    else:
+        for prefix in REASON_PREFIX_HINTS:
+            if last_action.startswith(prefix):
+                mapped_reason = _reason_to_human_readable(last_action)
+                break
+
+    if mapped_reason:
+        return f"즉시 판단: {last_action}\n사유: {mapped_reason}"
+
+    return f"즉시 판단 실행 완료: {last_action}"
 
 
 def _interval_label(sec: JSONScalar) -> str:
@@ -1290,17 +1325,7 @@ class SimplePanelView(PanelViewBase):
         except (APIError, RuntimeError):
             logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
-        sched = payload.get("snapshot") if isinstance(payload, dict) else {}
-        last_action = "-"
-        last_error = ""
-        if isinstance(sched, dict):
-            last_action = str(sched.get("last_action") or "-")
-            last_error = str(sched.get("last_error") or "")
-        if last_error:
-            reason = _reason_to_human_readable(last_error)
-            msg = f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
-        else:
-            msg = f"즉시 판단 실행 완료: {last_action}"
+        msg = _build_tick_once_message(payload)
         await interaction.followup.send(msg, ephemeral=True)
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
@@ -1382,17 +1407,7 @@ class AdvancedPanelView(PanelViewBase):
         except (APIError, RuntimeError):
             logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
-        sched = payload.get("snapshot") if isinstance(payload, dict) else {}
-        last_action = "-"
-        last_error = ""
-        if isinstance(sched, dict):
-            last_action = str(sched.get("last_action") or "-")
-            last_error = str(sched.get("last_error") or "")
-        if last_error:
-            reason = _reason_to_human_readable(last_error)
-            msg = f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
-        else:
-            msg = f"즉시 판단 실행 완료: {last_action}"
+        msg = _build_tick_once_message(payload)
         await interaction.followup.send(msg, ephemeral=True)
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
