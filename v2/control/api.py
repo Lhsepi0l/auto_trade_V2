@@ -244,7 +244,11 @@ class RuntimeController:
             ok = True
             error_message = None
         except Exception as exc:  # noqa: BLE001
-            error_message = f"cycle_failed:{type(exc).__name__}"
+            detail = str(exc).strip()
+            if detail:
+                error_message = f"cycle_failed:{type(exc).__name__}:{detail}"
+            else:
+                error_message = f"cycle_failed:{type(exc).__name__}"
             logger.exception("runtime_cycle_failed")
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = "error"
