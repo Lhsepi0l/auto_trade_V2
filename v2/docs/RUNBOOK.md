@@ -41,6 +41,32 @@ python -m v2.run --mode live --env prod --env-file .env --control-http --control
 python -m v2.discord_bot.bot
 ```
 
+### 통합 실행(원커맨드)
+```bash
+# control API + Discord bot 동시 실행
+bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 0.0.0.0 --port 8101
+```
+
+- 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
+- 로그 파일: `v2/logs/control_api.log`, `v2/logs/discord_bot.log`
+- 기본 `TRADER_API_BASE_URL`은 `http://127.0.0.1:<port>`로 자동 설정됩니다.
+
+### systemd 서비스(자동 재시작/부팅 자동기동)
+```bash
+# dry-run으로 유닛 내용 확인
+bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2
+
+# 실제 설치/기동
+bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --mode live --env prod --env-file .env --host 0.0.0.0 --port 8101
+
+# 상태/로그 확인
+sudo systemctl status v2-stack.service --no-pager
+sudo journalctl -u v2-stack.service -f
+```
+
+- 템플릿 유닛 파일은 `v2/systemd/v2-stack.service`에 포함되어 있습니다.
+- 설치 스크립트는 `/etc/systemd/system/v2-stack.service`를 생성하고 `enable --now`까지 수행합니다.
+
 - `TRADER_API_BASE_URL` 기본값은 `http://127.0.0.1:8101` 입니다.
 - Discord 토큰은 `DISCORD_BOT_TOKEN`(또는 하위호환 `DISCORD_TOKEN`)을 사용합니다.
 
