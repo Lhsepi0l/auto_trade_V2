@@ -339,6 +339,16 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
     return f"즉시 판단 실행 완료: {last_action}"
 
 
+def _format_tick_runtime_error(err: RuntimeError) -> str:
+    raw = str(err)
+    if "network_error: ReadTimeout" in raw:
+        return (
+            "즉시 판단 실행 실패: API 응답 시간이 초과되었습니다. "
+            "잠시 후 다시 시도하거나 TRADER_API_TIMEOUT_SEC 값을 늘려주세요."
+        )
+    return f"즉시 판단 실행 실패: {raw}"
+
+
 def _build_live_balance_line(payload: JSONPayload) -> str:
     data = payload if isinstance(payload, dict) else {}
     binance = _as_dict(data.get("binance"))
@@ -1337,7 +1347,10 @@ class SimplePanelView(PanelViewBase):
         try:
             tick = await self.api.tick_scheduler_now()
         except (APIError, RuntimeError) as e:
-            await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            if isinstance(e, RuntimeError):
+                await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
+            else:
+                await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
             return
 
         try:
@@ -1429,7 +1442,10 @@ class AdvancedPanelView(PanelViewBase):
         try:
             tick = await self.api.tick_scheduler_now()
         except (APIError, RuntimeError) as e:
-            await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            if isinstance(e, RuntimeError):
+                await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
+            else:
+                await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
             return
 
         try:

@@ -21,7 +21,7 @@ class DiscordBotSettings(BaseSettings):
     discord_bot_token: str = Field(default="", validation_alias=AliasChoices("DISCORD_BOT_TOKEN", "DISCORD_TOKEN"))
 
     trader_api_base_url: str = Field(default="http://127.0.0.1:8101")
-    trader_api_timeout_sec: float = Field(default=8.0)
+    trader_api_timeout_sec: float = Field(default=20.0)
     trader_api_retry_count: int = Field(default=3)
     trader_api_retry_backoff: float = Field(default=0.25)
 

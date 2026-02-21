@@ -51,10 +51,18 @@ class TraderAPIClient:
     def _as_payload(value: object) -> JSONPayload:
         return value if isinstance(value, dict) else {}
 
-    async def _request_json(self, method: str, path: str, *, json_body: JSONPayload | None = None) -> JSONPayload:
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: JSONPayload | None = None,
+        timeout_sec: float | None = None,
+    ) -> JSONPayload:
         async def _do_once() -> JSONPayload:
+            request_timeout = float(timeout_sec) if timeout_sec is not None else float(self._timeout_sec)
             try:
-                resp = await self._client.request(method, path, json=json_body)
+                resp = await self._client.request(method, path, json=json_body, timeout=httpx.Timeout(request_timeout))
             except httpx.RequestError as e:
                 raise RuntimeError(f"network_error: {type(e).__name__}") from e
 
@@ -123,7 +131,8 @@ class TraderAPIClient:
         return await self._request_json("POST", "/scheduler/interval", json_body={"tick_sec": tick_sec})
 
     async def tick_scheduler_now(self) -> JSONPayload:
-        return await self._request_json("POST", "/scheduler/tick")
+        timeout_sec = max(float(self._timeout_sec), 30.0)
+        return await self._request_json("POST", "/scheduler/tick", timeout_sec=timeout_sec)
 
     async def send_daily_report(self) -> JSONPayload:
         return await self._request_json("POST", "/report")
