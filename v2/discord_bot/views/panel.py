@@ -1281,11 +1281,14 @@ class SimplePanelView(PanelViewBase):
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             tick = await self.api.tick_scheduler_now()
-        except APIError as e:
+        except (APIError, RuntimeError) as e:
             await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
             return
 
-        await self.refresh_message(interaction)
+        try:
+            await self.refresh_message(interaction)
+        except (APIError, RuntimeError):
+            logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
         sched = payload.get("snapshot") if isinstance(payload, dict) else {}
         last_action = "-"
@@ -1370,11 +1373,14 @@ class AdvancedPanelView(PanelViewBase):
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             tick = await self.api.tick_scheduler_now()
-        except APIError as e:
+        except (APIError, RuntimeError) as e:
             await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
             return
 
-        await self.refresh_message(interaction)
+        try:
+            await self.refresh_message(interaction)
+        except (APIError, RuntimeError):
+            logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
         sched = payload.get("snapshot") if isinstance(payload, dict) else {}
         last_action = "-"

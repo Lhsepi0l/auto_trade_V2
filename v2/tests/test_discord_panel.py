@@ -319,3 +319,18 @@ async def test_tick_once_shows_human_reason_in_followup(monkeypatch: pytest.Monk
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any("즉시 판단: hold" in m and "BLOCKED - 사유:" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_handles_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ConnectError")),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("즉시 판단 실행 실패:" in m for m in it.followup.messages)
