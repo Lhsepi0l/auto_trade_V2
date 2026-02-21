@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from v2.clean_room.defaults import (
 from v2.config.loader import BehaviorConfig, RiskConfig
 from v2.engine import EngineStateStore
 from v2.strategies.base import StrategyPlugin
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -201,13 +204,17 @@ def _build_market_snapshot_provider(
         now = datetime.now(timezone.utc)
         if cache_updated_at is None or (now - cache_updated_at).total_seconds() >= 10:
             for interval in ("4h", "1h", "15m"):
-                payload = _run_async_blocking(
-                    lambda interval=interval: rest_client.public_request(
-                        "GET",
-                        "/fapi/v1/klines",
-                        params={"symbol": symbol, "interval": interval, "limit": 260},
+                try:
+                    payload = _run_async_blocking(
+                        lambda interval=interval: rest_client.public_request(
+                            "GET",
+                            "/fapi/v1/klines",
+                            params={"symbol": symbol, "interval": interval, "limit": 260},
+                        )
                     )
-                )
+                except Exception:  # noqa: BLE001
+                    logger.exception("market_snapshot_fetch_failed interval=%s symbol=%s", interval, symbol)
+                    payload = []
                 if isinstance(payload, list):
                     cache[interval] = [row for row in payload if isinstance(row, (list, tuple, dict))]
                 else:
@@ -246,42 +253,46 @@ def _build_overheat_fetcher(
             if "funding" in cache and "ratio" in cache:
                 return cache["funding"], cache["ratio"]
 
-        payload_funding = _run_async_blocking(
-            lambda: rest_client.public_request(
-                "GET",
-                "/fapi/v1/premiumIndex",
-                params={"symbol": symbol},
-            )
-        )
-        if not isinstance(payload_funding, dict):
-            return None
-
-        payload_ratio = _run_async_blocking(
-            lambda: rest_client.public_request(
-                "GET",
-                "/fapi/v1/globalLongShortAccountRatio",
-                params={"symbol": symbol, "period": "5m", "limit": 1},
-            )
-        )
-        if isinstance(payload_ratio, list):
-            payload_ratio = payload_ratio[0] if payload_ratio else {}
-        if not isinstance(payload_ratio, dict):
-            return None
-
-        raw_funding = payload_funding.get("lastFundingRate")
-        raw_ratio = payload_ratio.get("longShortRatio")
         try:
-            funding = float(raw_funding) if raw_funding is not None else None
-            ratio = float(raw_ratio) if raw_ratio is not None else None
-        except (TypeError, ValueError):
-            return None
+            payload_funding = _run_async_blocking(
+                lambda: rest_client.public_request(
+                    "GET",
+                    "/fapi/v1/premiumIndex",
+                    params={"symbol": symbol},
+                )
+            )
+            if not isinstance(payload_funding, dict):
+                return None
 
-        if funding is None or ratio is None:
-            return None
+            payload_ratio = _run_async_blocking(
+                lambda: rest_client.public_request(
+                    "GET",
+                    "/fapi/v1/globalLongShortAccountRatio",
+                    params={"symbol": symbol, "period": "5m", "limit": 1},
+                )
+            )
+            if isinstance(payload_ratio, list):
+                payload_ratio = payload_ratio[0] if payload_ratio else {}
+            if not isinstance(payload_ratio, dict):
+                return None
 
-        cache = {"funding": funding, "ratio": ratio}
-        cache_updated_at = now
-        return funding, ratio
+            raw_funding = payload_funding.get("lastFundingRate")
+            raw_ratio = payload_ratio.get("longShortRatio")
+            try:
+                funding = float(raw_funding) if raw_funding is not None else None
+                ratio = float(raw_ratio) if raw_ratio is not None else None
+            except (TypeError, ValueError):
+                return None
+
+            if funding is None or ratio is None:
+                return None
+
+            cache = {"funding": funding, "ratio": ratio}
+            cache_updated_at = now
+            return funding, ratio
+        except Exception:  # noqa: BLE001
+            logger.exception("overheat_fetch_failed symbol=%s", symbol)
+            return None
 
     return _fetch
 
