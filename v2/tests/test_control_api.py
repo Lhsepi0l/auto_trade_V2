@@ -146,6 +146,46 @@ def test_control_api_tick_emits_status_notification(tmp_path) -> None:  # type: 
     assert notifier.send.call_count >= 1
 
 
+def test_control_api_set_notify_interval_emits_immediate_status(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_notify_set.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    resp = client.post("/set", json={"key": "notify_interval_sec", "value": "30"})
+    assert resp.status_code == 200
+    assert resp.json()["applied_value"] == 30
+    assert notifier.send.call_count >= 1
+
+
 def test_control_api_tick_handles_kernel_exception(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_error.sqlite3")

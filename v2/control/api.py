@@ -70,9 +70,15 @@ class RuntimeController:
         self.order_manager = order_manager
         self.notifier = notifier
         self.rest_client = rest_client
+        if (not self.notifier.enabled) and str(self.notifier.webhook_url or "").strip():
+            self.notifier.enabled = True
+        if str(self.notifier.provider or "none").strip().lower() == "none" and str(self.notifier.webhook_url or "").strip():
+            self.notifier.provider = "discord"
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_stop = threading.Event()
+        self._status_thread_stop = threading.Event()
+        self._status_thread: threading.Thread | None = None
         self._running = False
         self._last_cycle: dict[str, Any] = {
             "tick_started_at": None,
@@ -94,6 +100,7 @@ class RuntimeController:
         self._last_status_notify_at: datetime | None = None
         self._risk = self._initial_risk_config()
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
+        self._start_status_loop()
 
     def _initial_risk_config(self) -> dict[str, Any]:
         risk_cfg = self.cfg.behavior.risk
@@ -260,23 +267,7 @@ class RuntimeController:
             self._report_stats["errors"] += 1
             ok = False
 
-        notify_interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
-        now = datetime.now(timezone.utc)
-        should_notify = (
-            self._last_status_notify_at is None
-            or (now - self._last_status_notify_at).total_seconds() >= float(notify_interval)
-        )
-        if should_notify:
-            summary = (
-                f"status update: state={self.state_store.get().status}, "
-                f"last_action={self._last_cycle.get('last_action')}, "
-                f"reason={self._last_cycle.get('last_decision_reason')}"
-            )
-            try:
-                self.notifier.send(summary)
-                self._last_status_notify_at = now
-            except Exception:  # noqa: BLE001
-                logger.exception("status_notify_failed")
+        self._emit_status_update()
 
         out: dict[str, Any] = {
             "ok": ok,
@@ -286,6 +277,46 @@ class RuntimeController:
         if error_message is not None:
             out["error"] = error_message
         return out
+
+    def _status_summary(self) -> str:
+        return (
+            f"status update: state={self.state_store.get().status}, "
+            f"last_action={self._last_cycle.get('last_action')}, "
+            f"reason={self._last_cycle.get('last_decision_reason')}"
+        )
+
+    def _emit_status_update(self, *, force: bool = False) -> bool:
+        notify_interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
+        now = datetime.now(timezone.utc)
+        should_notify = force or (
+            self._last_status_notify_at is None
+            or (now - self._last_status_notify_at).total_seconds() >= float(notify_interval)
+        )
+        if not should_notify:
+            return False
+        try:
+            self.notifier.send(self._status_summary())
+            self._last_status_notify_at = now
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("status_notify_failed")
+            return False
+
+    def _start_status_loop(self) -> None:
+        if self._status_thread is not None and self._status_thread.is_alive():
+            return
+
+        def _worker() -> None:
+            while not self._status_thread_stop.is_set():
+                interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
+                if self._status_thread_stop.wait(timeout=float(interval)):
+                    break
+                if self._running:
+                    continue
+                self._emit_status_update(force=True)
+
+        self._status_thread = threading.Thread(target=_worker, daemon=True)
+        self._status_thread.start()
 
     def _loop_worker(self) -> None:
         while not self._thread_stop.is_set():
@@ -315,6 +346,7 @@ class RuntimeController:
             self._thread_stop.set()
             self.ops.pause()
             self.state_store.set(status="PAUSED")
+            self._emit_status_update(force=True)
             state = self.state_store.get()
             return {"state": state.status, "updated_at": state.last_transition_at}
 
@@ -322,6 +354,7 @@ class RuntimeController:
         self.stop()
         self.ops.safe_mode()
         self.state_store.set(status="KILLED")
+        self._emit_status_update(force=True)
         result = await self.ops.flatten(symbol=self.cfg.behavior.exchange.default_symbol)
         state = self.state_store.get()
         self._report_stats["closes"] += 1
@@ -352,6 +385,7 @@ class RuntimeController:
         self._risk[key] = parsed
         if key == "notify_interval_sec":
             self.scheduler.tick_seconds = int(_to_float(parsed, default=float(self.scheduler.tick_seconds)))
+            self._emit_status_update(force=True)
         return {
             "key": key,
             "requested_value": value,
