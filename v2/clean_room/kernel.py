@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -178,11 +179,9 @@ def _run_async_blocking(thunk: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
     except RuntimeError:
         return asyncio.run(cast(Coroutine[Any, Any, Any], thunk()))
 
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(thunk())
-    finally:
-        loop.close()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, cast(Coroutine[Any, Any, Any], thunk()))
+        return future.result()
 
 
 def _build_market_snapshot_provider(
