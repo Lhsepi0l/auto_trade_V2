@@ -1,0 +1,19 @@
+[Unit]
+Description=Auto Trader V2 unified stack (control API + Discord bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/home/bot/autotrade/auto_trade_V2
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/bot/autotrade/auto_trade_V2/.env
+ExecStart=/usr/bin/env bash /home/bot/autotrade/auto_trade_V2/v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 0.0.0.0 --port 8101
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
