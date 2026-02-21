@@ -1,2 +1,0 @@
-# Discord bot UI views.
-
