@@ -334,7 +334,12 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
                 },
             }
         ),
-        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {"usdt_balance": {"available": 123.45, "wallet": 130.12}},
+            }
+        ),
     )
     view = PanelView(api=api)  # type: ignore[arg-type]
     monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
@@ -342,6 +347,7 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any("결과: 대기 - 사유:" in m and "현재 진입 후보가 없습니다." in m for m in it.followup.messages)
+    assert any("실시간 잔고:" in m and "123.4500" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit

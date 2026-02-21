@@ -339,6 +339,26 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
     return f"즉시 판단 실행 완료: {last_action}"
 
 
+def _build_live_balance_line(payload: JSONPayload) -> str:
+    data = payload if isinstance(payload, dict) else {}
+    binance = _as_dict(data.get("binance"))
+    usdt = _as_dict(binance.get("usdt_balance"))
+    capital = _as_dict(data.get("capital_snapshot"))
+
+    available = usdt.get("available")
+    if available is None:
+        available = capital.get("available_usdt")
+
+    wallet = usdt.get("wallet")
+    if wallet is None:
+        wallet = capital.get("available_usdt")
+
+    if available is None and wallet is None:
+        return ""
+
+    return f"실시간 잔고: 사용가능 {_fmt_money(available)} USDT / 지갑 {_fmt_money(wallet)} USDT"
+
+
 def _interval_label(sec: JSONScalar) -> str:
     sec_f = _coerce_float(sec, default=-1.0)
     if sec_f <= 0:
@@ -1326,6 +1346,16 @@ class SimplePanelView(PanelViewBase):
             logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
         msg = _build_tick_once_message(payload)
+        status_payload: JSONPayload = {}
+        try:
+            status = await self.api.get_status()
+            if isinstance(status, dict):
+                status_payload = status
+        except (APIError, RuntimeError):
+            logger.exception("panel_status_fetch_failed_after_tick_once")
+        balance_line = _build_live_balance_line(status_payload)
+        if balance_line:
+            msg = f"{msg}\n{balance_line}"
         await interaction.followup.send(msg, ephemeral=True)
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
@@ -1408,6 +1438,16 @@ class AdvancedPanelView(PanelViewBase):
             logger.exception("panel_refresh_failed_after_tick_once")
         payload = tick if isinstance(tick, dict) else {}
         msg = _build_tick_once_message(payload)
+        status_payload: JSONPayload = {}
+        try:
+            status = await self.api.get_status()
+            if isinstance(status, dict):
+                status_payload = status
+        except (APIError, RuntimeError):
+            logger.exception("panel_status_fetch_failed_after_tick_once")
+        balance_line = _build_live_balance_line(status_payload)
+        if balance_line:
+            msg = f"{msg}\n{balance_line}"
         await interaction.followup.send(msg, ephemeral=True)
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
