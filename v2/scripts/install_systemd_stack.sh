@@ -137,9 +137,9 @@ Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=$ENV_FILE_ABS
 ExecStart=/usr/bin/env bash $WORKDIR/v2/scripts/run_stack.sh --mode $MODE --env $ENVIRONMENT --env-file $ENV_FILE --host $HOST --port $PORT
 Restart=always
-RestartSec=5
+RestartSec=2
 KillMode=control-group
-TimeoutStopSec=30
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

@@ -103,14 +103,30 @@ BOT_PID=""
 
 cleanup() {
     set +e
-    if [[ -n "$BOT_PID" ]] && kill -0 "$BOT_PID" 2>/dev/null; then
-        kill "$BOT_PID" 2>/dev/null
-        wait "$BOT_PID" 2>/dev/null || true
-    fi
-    if [[ -n "$CONTROL_PID" ]] && kill -0 "$CONTROL_PID" 2>/dev/null; then
-        kill "$CONTROL_PID" 2>/dev/null
-        wait "$CONTROL_PID" 2>/dev/null || true
-    fi
+
+    terminate_pid() {
+        local pid="$1"
+        local grace_sec="${2:-5}"
+        local waited=0
+
+        if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+
+        kill "$pid" 2>/dev/null || true
+        while kill -0 "$pid" 2>/dev/null; do
+            if (( waited >= grace_sec * 10 )); then
+                kill -9 "$pid" 2>/dev/null || true
+                break
+            fi
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        wait "$pid" 2>/dev/null || true
+    }
+
+    terminate_pid "$BOT_PID" 5
+    terminate_pid "$CONTROL_PID" 5
     rm -f "$PIDS_FILE"
 }
 
@@ -140,11 +156,13 @@ fi
 
 CONTROL_PID=$!
 
-sleep 2
-if ! kill -0 "$CONTROL_PID" 2>/dev/null; then
-    echo "control API failed to start; see $CONTROL_LOG"
-    exit 1
-fi
+for _ in {1..5}; do
+    if ! kill -0 "$CONTROL_PID" 2>/dev/null; then
+        echo "control API failed to start; see $CONTROL_LOG"
+        exit 1
+    fi
+    sleep 0.1
+done
 
 if [[ -z "${TRADER_API_BASE_URL:-}" ]]; then
     export TRADER_API_BASE_URL="http://127.0.0.1:${CONTROL_PORT}"
