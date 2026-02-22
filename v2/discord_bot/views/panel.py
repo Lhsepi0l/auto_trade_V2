@@ -145,6 +145,8 @@ REASON_PREFIX_HINTS = {
 BALANCE_ERROR_HINT_MAP: dict[str, str] = {
     "rest_client_unavailable": "실시간 잔고 연결이 비활성 상태입니다 (키/모드 확인).",
     "balance_fetch_timeout": "바이낸스 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.",
+    "balance_auth_failed": "API 키 권한/유효성/IP 화이트리스트를 확인해주세요.",
+    "balance_rate_limited": "요청 제한에 걸렸습니다. 잠시 후 다시 시도해주세요.",
     "balance_fetch_failed": "바이낸스 잔고 조회 호출이 실패했습니다 (API 권한/IP 제한 확인).",
     "balance_payload_invalid": "잔고 응답 형식이 올바르지 않습니다.",
     "usdt_asset_missing": "잔고 응답에 USDT 항목이 없습니다.",
@@ -373,14 +375,25 @@ def _build_live_balance_line(payload: JSONPayload) -> str:
     usdt = _as_dict(binance.get("usdt_balance"))
     source = str(usdt.get("source") or "").strip().lower()
     private_error = str(binance.get("private_error") or "").strip()
+    private_error_detail = str(binance.get("private_error_detail") or "").strip()
     available = usdt.get("available")
     wallet = usdt.get("wallet")
 
     if source and source != "exchange":
         hint = BALANCE_ERROR_HINT_MAP.get(private_error) or "연결/API 권한 확인 필요"
+        if private_error_detail and private_error in {
+            "balance_auth_failed",
+            "balance_rate_limited",
+        }:
+            hint = f"{hint} ({private_error_detail})"
         return f"실시간 잔고: 바이낸스 실시간 조회 실패 ({hint})"
     if available is None and wallet is None:
         hint = BALANCE_ERROR_HINT_MAP.get(private_error) or "연결/API 권한 확인 필요"
+        if private_error_detail and private_error in {
+            "balance_auth_failed",
+            "balance_rate_limited",
+        }:
+            hint = f"{hint} ({private_error_detail})"
         return f"실시간 잔고: 바이낸스 실시간 조회 실패 ({hint})"
 
     return f"실시간 잔고: 사용가능 {_fmt_money(available)} USDT / 지갑 {_fmt_money(wallet)} USDT"

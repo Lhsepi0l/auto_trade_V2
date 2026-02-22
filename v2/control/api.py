@@ -16,6 +16,7 @@ from v2.clean_room.contracts import KernelCycleResult
 from v2.config.loader import EffectiveConfig
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
+from v2.exchange import BinanceRESTError
 from v2.notify import Notifier
 from v2.ops import OpsController
 
@@ -124,6 +125,7 @@ class RuntimeController:
         self._last_status_notify_at: datetime | None = None
         self._risk = self._initial_risk_config()
         self._last_balance_error: str | None = None
+        self._last_balance_error_detail: str | None = None
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
         self._start_status_loop()
 
@@ -246,6 +248,7 @@ class RuntimeController:
                 },
                 "startup_error": None,
                 "private_error": self._last_balance_error,
+                "private_error_detail": self._last_balance_error_detail,
             },
             "pnl": {
                 "daily_pnl_pct": 0.0,
@@ -260,6 +263,7 @@ class RuntimeController:
     def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, bool]:
         if self.rest_client is None:
             self._last_balance_error = "rest_client_unavailable"
+            self._last_balance_error_detail = "balance_rest_client_not_configured"
             return None, None, False
         rest_client: Any = self.rest_client
         assert rest_client is not None
@@ -268,14 +272,36 @@ class RuntimeController:
         except FutureTimeoutError:
             logger.warning("live_balance_fetch_timed_out")
             self._last_balance_error = "balance_fetch_timeout"
+            self._last_balance_error_detail = "fetch_timeout_over_8s"
+            return None, None, False
+        except BinanceRESTError as e:
+            logger.warning(
+                "live_balance_fetch_rest_error",
+                extra={
+                    "status_code": e.status_code,
+                    "code": e.code,
+                    "path": e.path,
+                },
+            )
+            if e.code in {-2014, -2015} or e.status_code in {401, 403}:
+                self._last_balance_error = "balance_auth_failed"
+            elif e.status_code == 429 or e.code in {-1003}:
+                self._last_balance_error = "balance_rate_limited"
+            else:
+                self._last_balance_error = "balance_fetch_failed"
+            self._last_balance_error_detail = (
+                f"status={e.status_code} code={e.code} path={e.path} msg={e.message}"
+            )
             return None, None, False
         except Exception:  # noqa: BLE001
             logger.exception("live_balance_fetch_failed")
             self._last_balance_error = "balance_fetch_failed"
+            self._last_balance_error_detail = "unexpected_exception"
             return None, None, False
 
         if not isinstance(payload, list):
             self._last_balance_error = "balance_payload_invalid"
+            self._last_balance_error_detail = f"payload_type={type(payload).__name__}"
             return None, None, False
 
         target: dict[str, Any] | None = None
@@ -289,6 +315,7 @@ class RuntimeController:
 
         if target is None:
             self._last_balance_error = "usdt_asset_missing"
+            self._last_balance_error_detail = "asset_usdt_not_found"
             return None, None, False
 
         available = _to_float(
@@ -304,6 +331,7 @@ class RuntimeController:
             default=0.0,
         )
         self._last_balance_error = None
+        self._last_balance_error_detail = None
         return available, wallet, True
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
