@@ -16,7 +16,9 @@ from v2.exchange.types import EnvName
 
 class BinanceRESTError(Exception):
     def __init__(self, *, status_code: int, code: int | None, message: str, path: str) -> None:
-        super().__init__(f"binance_rest_error status={status_code} code={code} path={path} msg={message}")
+        super().__init__(
+            f"binance_rest_error status={status_code} code={code} path={path} msg={message}"
+        )
         self.status_code = status_code
         self.code = code
         self.path = path
@@ -64,8 +66,12 @@ class BinanceRESTClient:
         self._throttler = RequestThrottler(rate_per_sec=rate_limit_per_sec)
         self._backoff = backoff_policy if backoff_policy is not None else BackoffPolicy()
 
-        self._base_url = "https://fapi.binance.com" if env == "prod" else "https://testnet.binancefuture.com"
-        self._client: AsyncRequestClient = transport if transport is not None else httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        self._base_url = (
+            "https://fapi.binance.com" if env == "prod" else "https://testnet.binancefuture.com"
+        )
+        self._client: AsyncRequestClient = (
+            transport if transport is not None else httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        )
         self._owns_client = transport is None
 
     async def aclose(self) -> None:
@@ -87,10 +93,20 @@ class BinanceRESTClient:
         if not self._api_secret:
             raise ValueError("missing BINANCE_API_SECRET")
         query = urllib.parse.urlencode(params, doseq=True)
-        signature = hmac.new(self._api_secret.encode("utf-8"), query.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            self._api_secret.encode("utf-8"), query.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         return f"{query}&signature={signature}"
 
-    async def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None, signed: bool = False, api_key_only: bool = False) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        signed: bool = False,
+        api_key_only: bool = False,
+    ) -> Any:
         if signed and (not self._api_key or not self._api_secret):
             raise ValueError("signed request requires BINANCE_API_KEY and BINANCE_API_SECRET")
         if api_key_only and not self._api_key:
@@ -115,7 +131,9 @@ class BinanceRESTClient:
                 request_params = query_params if query_params else None
 
             try:
-                resp = await self._client.request(method=method, url=url, params=request_params, headers=headers)
+                resp = await self._client.request(
+                    method=method, url=url, params=request_params, headers=headers
+                )
             except httpx.RequestError:
                 if attempt >= 6:
                     raise
@@ -137,7 +155,11 @@ class BinanceRESTClient:
                         code = int(raw_code) if raw_code is not None else None
                     except (TypeError, ValueError):
                         code = None
-                msg = str(payload.get("msg") or resp.text or "error") if isinstance(payload, dict) else str(resp.text or "error")
+                msg = (
+                    str(payload.get("msg") or resp.text or "error")
+                    if isinstance(payload, dict)
+                    else str(resp.text or "error")
+                )
                 retryable = resp.status_code in {418, 429} or resp.status_code >= 500
                 ts_out_of_sync = code == -1021 and signed
                 if ts_out_of_sync and self._time_sync_enabled and attempt <= 2:
@@ -148,14 +170,20 @@ class BinanceRESTClient:
                     await asyncio.sleep(self._backoff.compute_delay(attempt=attempt))
                     attempt += 1
                     continue
-                raise BinanceRESTError(status_code=resp.status_code, code=code, message=msg, path=path)
+                raise BinanceRESTError(
+                    status_code=resp.status_code, code=code, message=msg, path=path
+                )
 
             return payload
 
-    async def public_request(self, method: str, path: str, *, params: dict[str, Any] | None = None) -> Any:
+    async def public_request(
+        self, method: str, path: str, *, params: dict[str, Any] | None = None
+    ) -> Any:
         return await self._request(method, path, params=params, signed=False, api_key_only=False)
 
-    async def signed_request(self, method: str, path: str, *, params: dict[str, Any] | None = None) -> Any:
+    async def signed_request(
+        self, method: str, path: str, *, params: dict[str, Any] | None = None
+    ) -> Any:
         if self._time_sync_enabled and not self._time_synced_once:
             await self.sync_server_time()
         return await self._request(method, path, params=params, signed=True, api_key_only=False)
@@ -168,10 +196,14 @@ class BinanceRESTClient:
         return listen_key
 
     async def keepalive_listen_key(self, *, listen_key: str) -> None:
-        await self._request("PUT", "/fapi/v1/listenKey", params={"listenKey": listen_key}, api_key_only=True)
+        await self._request(
+            "PUT", "/fapi/v1/listenKey", params={"listenKey": listen_key}, api_key_only=True
+        )
 
     async def close_listen_key(self, *, listen_key: str) -> None:
-        await self._request("DELETE", "/fapi/v1/listenKey", params={"listenKey": listen_key}, api_key_only=True)
+        await self._request(
+            "DELETE", "/fapi/v1/listenKey", params={"listenKey": listen_key}, api_key_only=True
+        )
 
     async def get_open_orders(self) -> list[dict[str, Any]]:
         payload = await self.signed_request("GET", "/fapi/v1/openOrders")
@@ -180,7 +212,9 @@ class BinanceRESTClient:
         return []
 
     async def cancel_all_open_orders(self, *, symbol: str) -> dict[str, Any]:
-        payload = await self.signed_request("DELETE", "/fapi/v1/allOpenOrders", params={"symbol": symbol})
+        payload = await self.signed_request(
+            "DELETE", "/fapi/v1/allOpenOrders", params={"symbol": symbol}
+        )
         if isinstance(payload, dict):
             return payload
         return {}
@@ -220,6 +254,16 @@ class BinanceRESTClient:
         if isinstance(payload, list):
             return [item for item in payload if isinstance(item, dict)]
         return []
+
+    async def change_leverage(self, *, symbol: str, leverage: int) -> dict[str, Any]:
+        payload = await self.signed_request(
+            "POST",
+            "/fapi/v1/leverage",
+            params={"symbol": str(symbol).upper(), "leverage": int(leverage)},
+        )
+        if isinstance(payload, dict):
+            return payload
+        return {}
 
     async def place_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
         payload = await self.signed_request("POST", "/fapi/v1/algoOrder", params=params)

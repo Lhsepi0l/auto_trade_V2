@@ -349,3 +349,58 @@ def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_una
     payload = status.json()
     assert payload["binance"]["usdt_balance"]["source"] == "fallback"
     assert payload["binance"]["private_error"] == "rest_client_unavailable"
+
+
+def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_sync.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelStub:
+        def __init__(self) -> None:
+            self.symbols: list[str] = []
+            self.mapping: dict[str, float] = {}
+            self.max_leverage: float = 1.0
+
+        def set_universe_symbols(self, symbols: list[str]) -> None:
+            self.symbols = list(symbols)
+
+        def set_symbol_leverage_map(
+            self, mapping: dict[str, float], *, max_leverage: float
+        ) -> None:
+            self.mapping = dict(mapping)
+            self.max_leverage = float(max_leverage)
+
+        def run_once(self):  # type: ignore[no-untyped-def]
+            from v2.clean_room.contracts import KernelCycleResult
+
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    kernel = _KernelStub()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    set_uni = client.post("/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"})
+    assert set_uni.status_code == 200
+    assert kernel.symbols == ["BTCUSDT", "ETHUSDT"]
+
+    _ = client.post("/set", json={"key": "max_leverage", "value": "20"})
+    lev = client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7})
+    assert lev.status_code == 200
+    assert kernel.mapping.get("ETHUSDT") == 7.0
+    assert kernel.max_leverage == 20.0

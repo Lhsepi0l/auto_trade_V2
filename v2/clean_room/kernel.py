@@ -6,7 +6,7 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from v2.clean_room.contracts import (
     Candidate,
@@ -21,6 +21,7 @@ from v2.clean_room.contracts import (
 from v2.clean_room.defaults import (
     AlwaysAllowedRiskGate,
     BinanceLiveExecutionService,
+    DynamicNotionalSizer,
     FixedNotionalSizer,
     NoopCandidateSelector,
     ReplaySafeExecutionService,
@@ -30,6 +31,21 @@ from v2.engine import EngineStateStore
 from v2.strategies.base import StrategyPlugin
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class UniverseSymbolsMutableSelector(Protocol):
+    def set_symbols(self, symbols: list[str]) -> None: ...
+
+
+@runtime_checkable
+class LeverageConfigMutableSizer(Protocol):
+    def set_leverage_config(
+        self,
+        *,
+        symbol_leverage_map: dict[str, float],
+        max_leverage: float,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -96,7 +112,9 @@ class TradeKernel:
             return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
         return None
 
-    def _size_and_execute(self, *, candidate: Candidate, context: KernelContext) -> KernelCycleResult:
+    def _size_and_execute(
+        self, *, candidate: Candidate, context: KernelContext
+    ) -> KernelCycleResult:
         risk = self._risk_gate.evaluate(candidate=candidate, context=context)
         if not risk.allow:
             return KernelCycleResult(
@@ -165,6 +183,17 @@ class TradeKernel:
             "fills": len(state.last_fills),
         }
 
+    def set_universe_symbols(self, symbols: list[str]) -> None:
+        if isinstance(self._selector, UniverseSymbolsMutableSelector):
+            self._selector.set_symbols(symbols)
+
+    def set_symbol_leverage_map(self, mapping: dict[str, float], *, max_leverage: float) -> None:
+        if isinstance(self._sizer, LeverageConfigMutableSizer):
+            self._sizer.set_leverage_config(
+                symbol_leverage_map=mapping,
+                max_leverage=max_leverage,
+            )
+
 
 def _build_default_risk_gate(risk_cfg: RiskConfig | None = None) -> RiskGate:
     _ = risk_cfg
@@ -190,12 +219,18 @@ def _run_async_blocking(thunk: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
 def _build_market_snapshot_provider(
     *,
     rest_client: Any,
-    symbol: str,
+    symbols: list[str],
 ) -> Callable[[], dict[str, Any]] | None:
     if rest_client is None:
         return None
 
-    cache: dict[str, list[Any]] = {"4h": [], "1h": [], "15m": []}
+    symbol_list = [str(sym).upper() for sym in symbols if str(sym).strip()]
+    if not symbol_list:
+        return None
+    primary_symbol = symbol_list[0]
+    cache: dict[str, dict[str, list[Any]]] = {
+        sym: {"4h": [], "1h": [], "15m": []} for sym in symbol_list
+    }
     cache_updated_at: datetime | None = None
 
     def _provider() -> dict[str, Any]:
@@ -203,31 +238,47 @@ def _build_market_snapshot_provider(
 
         now = datetime.now(timezone.utc)
         if cache_updated_at is None or (now - cache_updated_at).total_seconds() >= 10:
-            for interval in ("4h", "1h", "15m"):
-                try:
-                    payload = _run_async_blocking(
-                        lambda interval=interval: rest_client.public_request(
-                            "GET",
-                            "/fapi/v1/klines",
-                            params={"symbol": symbol, "interval": interval, "limit": 260},
+            for sym in symbol_list:
+                for interval in ("4h", "1h", "15m"):
+                    try:
+                        payload = _run_async_blocking(
+                            lambda sym=sym, interval=interval: rest_client.public_request(
+                                "GET",
+                                "/fapi/v1/klines",
+                                params={"symbol": sym, "interval": interval, "limit": 260},
+                            )
                         )
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception("market_snapshot_fetch_failed interval=%s symbol=%s", interval, symbol)
-                    payload = []
-                if isinstance(payload, list):
-                    cache[interval] = [row for row in payload if isinstance(row, (list, tuple, dict))]
-                else:
-                    cache[interval] = []
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "market_snapshot_fetch_failed interval=%s symbol=%s",
+                            interval,
+                            sym,
+                        )
+                        payload = []
+                    if isinstance(payload, list):
+                        cache[sym][interval] = [
+                            row for row in payload if isinstance(row, (list, tuple, dict))
+                        ]
+                    else:
+                        cache[sym][interval] = []
             cache_updated_at = now
 
+        symbols_payload = {
+            sym: {
+                "4h": cache.get(sym, {}).get("4h", []),
+                "1h": cache.get(sym, {}).get("1h", []),
+                "15m": cache.get(sym, {}).get("15m", []),
+            }
+            for sym in symbol_list
+        }
         return {
-            "symbol": symbol,
+            "symbol": primary_symbol,
             "market": {
-                "4h": cache["4h"],
-                "1h": cache["1h"],
-                "15m": cache["15m"],
+                "4h": symbols_payload[primary_symbol]["4h"],
+                "1h": symbols_payload[primary_symbol]["1h"],
+                "15m": symbols_payload[primary_symbol]["15m"],
             },
+            "symbols": symbols_payload,
         }
 
     return _provider
@@ -310,7 +361,9 @@ def _build_strategy_selector(
         if entry.name == "strategy_pack_v1":
             from v2.strategies.strategy_pack_v1 import StrategyPackV1
 
-            return StrategyPackV1(params=entry.params, overheat_fetcher=overheat_fetcher, logger=journal_logger)
+            return StrategyPackV1(
+                params=entry.params, overheat_fetcher=overheat_fetcher, logger=journal_logger
+            )
     return None
 
 
@@ -323,6 +376,9 @@ def build_default_kernel(
     tick: int = 0,
     dry_run: bool = True,
     rest_client: Any | None = None,
+    universe_symbols: list[str] | None = None,
+    symbol_leverage_map: dict[str, float] | None = None,
+    max_leverage: float | None = None,
     snapshot_provider: Callable[[], dict[str, Any]] | None = None,
     overheat_fetcher: Callable[[str], tuple[float, float] | None] | None = None,
     journal_logger: Callable[[dict[str, Any]], None] | None = None,
@@ -332,10 +388,18 @@ def build_default_kernel(
     else:
         risk_cfg = None
 
+    symbols = [
+        str(sym).upper()
+        for sym in (universe_symbols or [behavior.exchange.default_symbol])
+        if str(sym).strip()
+    ]
+    if not symbols:
+        symbols = [behavior.exchange.default_symbol]
+
     if snapshot_provider is None:
         snapshot_provider = _build_market_snapshot_provider(
             rest_client=rest_client,
-            symbol=behavior.exchange.default_symbol,
+            symbols=symbols,
         )
 
     if overheat_fetcher is None:
@@ -359,16 +423,24 @@ def build_default_kernel(
 
         candidate_selector = StrategyPackV1CandidateSelector(
             strategy=strategy,
-            symbol=behavior.exchange.default_symbol,
+            symbols=symbols,
             snapshot_provider=snapshot_provider,
             journal_logger=journal_logger,
         )
+
+    if max_leverage is None:
+        max_leverage = float(getattr(behavior.risk, "max_leverage", 1.0) or 1.0)
+    sizer = DynamicNotionalSizer(fallback_notional=10.0, default_leverage=max_leverage)
+    sizer.set_leverage_config(
+        symbol_leverage_map=symbol_leverage_map or {},
+        max_leverage=max_leverage,
+    )
 
     return TradeKernel(
         state_store=state_store,
         candidate_selector=candidate_selector,
         risk_gate=_build_default_risk_gate(risk_cfg=risk_cfg),
-        sizer=_build_default_sizer(behavior=behavior),
+        sizer=sizer,
         executor=(
             ReplaySafeExecutionService(enabled=True)
             if dry_run or rest_client is None

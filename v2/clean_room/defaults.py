@@ -82,6 +82,79 @@ class FixedNotionalSizer:
         )
 
 
+class DynamicNotionalSizer:
+    def __init__(
+        self,
+        *,
+        fallback_notional: float = 10.0,
+        default_leverage: float = 1.0,
+        max_notional: float | None = None,
+    ) -> None:
+        self._fallback_notional = float(fallback_notional)
+        self._default_leverage = float(default_leverage)
+        self._max_notional = max_notional
+        self._max_leverage = float(default_leverage)
+        self._symbol_leverage_map: dict[str, float] = {}
+
+    def set_leverage_config(
+        self, *, symbol_leverage_map: dict[str, float], max_leverage: float
+    ) -> None:
+        self._symbol_leverage_map = {
+            str(sym).upper(): float(lev)
+            for sym, lev in symbol_leverage_map.items()
+            if str(sym).strip() and float(lev) > 0
+        }
+        self._max_leverage = max(1.0, float(max_leverage))
+
+    def _resolve_leverage(self, symbol: str) -> float:
+        symbol_u = str(symbol).upper()
+        selected = self._symbol_leverage_map.get(symbol_u, self._default_leverage)
+        selected = max(1.0, float(selected))
+        return min(selected, self._max_leverage)
+
+    def size(
+        self,
+        *,
+        candidate: Candidate,
+        risk: RiskDecision,
+        context: KernelContext,
+    ) -> SizePlan:
+        if candidate.entry_price is None or candidate.entry_price <= 0:
+            return SizePlan(
+                symbol=candidate.symbol,
+                qty=0.0,
+                leverage=self._resolve_leverage(candidate.symbol),
+                notional=0.0,
+                reason="invalid_entry_price",
+            )
+
+        if candidate.score <= 0:
+            return SizePlan(
+                symbol=candidate.symbol,
+                qty=0.0,
+                leverage=self._resolve_leverage(candidate.symbol),
+                notional=0.0,
+                reason="non_positive_signal_score",
+            )
+
+        configured_notional = self._fallback_notional
+        if self._max_notional and self._max_notional > 0:
+            configured_notional = min(configured_notional, self._max_notional)
+        if risk.max_notional and risk.max_notional > 0:
+            configured_notional = min(configured_notional, risk.max_notional)
+        if context.dry_run:
+            configured_notional = min(configured_notional, 1.0)
+
+        qty = configured_notional / candidate.entry_price
+        return SizePlan(
+            symbol=candidate.symbol,
+            qty=qty,
+            leverage=self._resolve_leverage(candidate.symbol),
+            notional=configured_notional,
+            reason="size_ok",
+        )
+
+
 class ReplaySafeExecutionService:
     def __init__(self, *, enabled: bool = True) -> None:
         self._enabled = enabled
@@ -141,6 +214,8 @@ class BinanceLiveExecutionService:
         }
 
         try:
+            leverage_int = int(max(1, min(125, round(float(size.leverage)))))
+            _ = self._run(lambda: self._rest.change_leverage(symbol=symbol, leverage=leverage_int))
             resp = self._run(lambda: self._rest.place_order(params=payload))
         except Exception as exc:  # noqa: BLE001
             return ExecutionResult(ok=False, reason=f"live_order_failed:{type(exc).__name__}")

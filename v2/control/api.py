@@ -128,6 +128,37 @@ class RuntimeController:
         self._last_balance_error_detail: str | None = None
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
         self._start_status_loop()
+        self._sync_kernel_runtime_overrides()
+
+    def _sync_kernel_runtime_overrides(self) -> None:
+        symbols_raw = self._risk.get("universe_symbols")
+        symbols: list[str]
+        if isinstance(symbols_raw, list):
+            symbols = [str(sym).strip().upper() for sym in symbols_raw if str(sym).strip()]
+        else:
+            symbols = [self.cfg.behavior.exchange.default_symbol]
+        if not symbols:
+            symbols = [self.cfg.behavior.exchange.default_symbol]
+
+        max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
+        mapping_raw = self._risk.get("symbol_leverage_map")
+        mapping: dict[str, float] = {}
+        if isinstance(mapping_raw, dict):
+            for sym, lev in mapping_raw.items():
+                sym_u = str(sym).strip().upper()
+                if not sym_u:
+                    continue
+                lev_f = _to_float(lev, default=0.0)
+                if lev_f > 0:
+                    mapping[sym_u] = lev_f
+
+        if hasattr(self.kernel, "set_universe_symbols"):
+            self.kernel.set_universe_symbols(symbols)  # type: ignore[attr-defined]
+        if hasattr(self.kernel, "set_symbol_leverage_map"):
+            self.kernel.set_symbol_leverage_map(  # type: ignore[attr-defined]
+                mapping,
+                max_leverage=max_leverage,
+            )
 
     def _initial_risk_config(self) -> dict[str, Any]:
         risk_cfg = self.cfg.behavior.risk
@@ -340,9 +371,12 @@ class RuntimeController:
             cycle: KernelCycleResult = self.kernel.run_once()
             self.scheduler.run_once()
             if self.ops.can_open_new_entries() and self._running and not self._thread_stop.is_set():
-                self.order_manager.submit(
-                    {"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode}
+                submit_symbol = (
+                    cycle.candidate.symbol
+                    if cycle.candidate is not None and str(cycle.candidate.symbol).strip()
+                    else self.cfg.behavior.exchange.default_symbol
                 )
+                self.order_manager.submit({"symbol": submit_symbol, "mode": self.cfg.mode})
 
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = cycle.state
@@ -518,6 +552,7 @@ class RuntimeController:
             else:
                 parsed = [self.cfg.behavior.exchange.default_symbol]
         self._risk[key] = parsed
+        self._sync_kernel_runtime_overrides()
         if key == "notify_interval_sec":
             self.scheduler.tick_seconds = int(
                 _to_float(parsed, default=float(self.scheduler.tick_seconds))
@@ -541,6 +576,7 @@ class RuntimeController:
         else:
             mapping[symbol_u] = float(leverage)
         self._risk["symbol_leverage_map"] = mapping
+        self._sync_kernel_runtime_overrides()
         return dict(self._risk)
 
     def get_scheduler(self) -> dict[str, Any]:

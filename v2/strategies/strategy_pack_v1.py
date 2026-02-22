@@ -134,7 +134,9 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _bollinger(closes: list[float], period: int = 20, k: float = 2.0) -> tuple[float, float, float] | None:
+def _bollinger(
+    closes: list[float], period: int = 20, k: float = 2.0
+) -> tuple[float, float, float] | None:
     period = int(period)
     if period <= 0 or len(closes) < period:
         return None
@@ -171,7 +173,11 @@ def _adx(candles: list[_Candle], period: int = 14) -> float | None:
         plus_dm.append(up_move if up_move > down_move and up_move > 0 else 0.0)
         minus_dm.append(down_move if down_move > up_move and down_move > 0 else 0.0)
 
-        tr = max(current.high - current.low, abs(current.high - prev.close), abs(current.low - prev.close))
+        tr = max(
+            current.high - current.low,
+            abs(current.high - prev.close),
+            abs(current.low - prev.close),
+        )
         trs.append(float(tr))
         prev = current
 
@@ -259,8 +265,16 @@ def _supertrend(
             final_lower = basic_lower
             direction = 1 if candle.close >= final_lower else -1
         else:
-            final_upper = basic_upper if (basic_upper < prev_upper) or (prev_close > prev_upper) else prev_upper
-            final_lower = basic_lower if (basic_lower > prev_lower) or (prev_close < prev_lower) else prev_lower
+            final_upper = (
+                basic_upper
+                if (basic_upper < prev_upper) or (prev_close > prev_upper)
+                else prev_upper
+            )
+            final_lower = (
+                basic_lower
+                if (basic_lower > prev_lower) or (prev_close < prev_lower)
+                else prev_lower
+            )
 
             next_dir = direction
             if direction == -1 and candle.close > final_upper:
@@ -455,7 +469,9 @@ class StrategyPackV1(StrategyPlugin):
             return "SHORT"
         return "NONE"
 
-    def _entry_signal_1h(self, candles_1h: list[_Candle], mode: str, allowed_side: str, debug: _DecisionDebug) -> dict[str, Any]:
+    def _entry_signal_1h(
+        self, candles_1h: list[_Candle], mode: str, allowed_side: str, debug: _DecisionDebug
+    ) -> dict[str, Any]:
         signal: dict[str, Any] = {
             "long": False,
             "short": False,
@@ -560,7 +576,9 @@ class StrategyPackV1(StrategyPlugin):
             return ",".join(blocks)
         return f"no_entry:{mode}"
 
-    def _build_management_hint(self, signal: dict[str, Any], last_candle: float | None) -> float | None:
+    def _build_management_hint(
+        self, signal: dict[str, Any], last_candle: float | None
+    ) -> float | None:
         if not signal.get("mean_reversion"):
             return None
 
@@ -648,7 +666,9 @@ class StrategyPackV1(StrategyPlugin):
             reason = self._build_reason("LONG", self._entry_mode, blocks)
             if candles_1h:
                 entry_price = candles_1h[-1].close
-            stop_hint = self._build_management_hint(signal, candles_1h[-1].close if candles_1h else None)
+            stop_hint = self._build_management_hint(
+                signal, candles_1h[-1].close if candles_1h else None
+            )
             management_hint = "mean_reversion" if signal.get("mean_reversion") else None
 
         elif signal.get("short") and allowed_side in {"SHORT", "BOTH"} and not blocks:
@@ -658,7 +678,9 @@ class StrategyPackV1(StrategyPlugin):
             reason = self._build_reason("SHORT", self._entry_mode, blocks)
             if candles_1h:
                 entry_price = candles_1h[-1].close
-            stop_hint = self._build_management_hint(signal, candles_1h[-1].close if candles_1h else None)
+            stop_hint = self._build_management_hint(
+                signal, candles_1h[-1].close if candles_1h else None
+            )
             management_hint = "mean_reversion" if signal.get("mean_reversion") else None
         elif signal.get("long") or signal.get("short"):
             reason = "regime_block"
@@ -731,57 +753,80 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
         self,
         *,
         strategy: StrategyPlugin,
-        symbol: str,
+        symbols: list[str],
         snapshot_provider: Any | None = None,
         journal_logger: Any | None = None,
     ) -> None:
         self._strategy = strategy
-        self._symbol = symbol
+        normalized = [str(sym).strip().upper() for sym in symbols if str(sym).strip()]
+        self._symbols = normalized or ["BTCUSDT"]
         self._snapshot_provider = snapshot_provider
         self._journal_logger = journal_logger
 
+    def set_symbols(self, symbols: list[str]) -> None:
+        normalized = [str(sym).strip().upper() for sym in symbols if str(sym).strip()]
+        if normalized:
+            self._symbols = normalized
+
     def select(self, *, context: KernelContext) -> Candidate | None:
         _ = context
-        snapshot: dict[str, Any] = {"symbol": self._symbol}
+        primary_symbol = self._symbols[0]
+        snapshot: dict[str, Any] = {"symbol": primary_symbol}
 
         if self._snapshot_provider is not None:
             provided = self._snapshot_provider()
             if isinstance(provided, dict):
                 snapshot.update(copy.deepcopy(provided))
 
-        decision = self._strategy.decide(snapshot)
-        if self._journal_logger is not None:
-            self._journal_logger(decision)
+        symbols_market = snapshot.get("symbols")
+        candidates: list[Candidate] = []
 
-        if decision.get("intent") not in {"LONG", "SHORT"}:
+        for symbol in self._symbols:
+            symbol_snapshot = dict(snapshot)
+            if isinstance(symbols_market, dict):
+                market = symbols_market.get(symbol)
+                if isinstance(market, dict):
+                    symbol_snapshot["market"] = market
+            symbol_snapshot["symbol"] = symbol
+
+            decision = self._strategy.decide(symbol_snapshot)
+            if self._journal_logger is not None:
+                self._journal_logger(decision)
+
+            if decision.get("intent") not in {"LONG", "SHORT"}:
+                continue
+
+            side = str(decision.get("side") or "NONE")
+            if side == "BUY":
+                trade_side = "BUY"
+            elif side == "SELL":
+                trade_side = "SELL"
+            else:
+                continue
+
+            intent = str(decision.get("intent") or "NONE")
+            if intent == "LONG" and side != "BUY":
+                continue
+            if intent == "SHORT" and side != "SELL":
+                continue
+
+            score = float(decision.get("score", 0.0) or 0.0)
+            if score <= 0:
+                continue
+
+            entry_price = _to_float(decision.get("entry_price"))
+            stop_hint = _to_float(decision.get("stop_hint"))
+            candidates.append(
+                Candidate(
+                    symbol=str(decision.get("symbol") or symbol),
+                    side=trade_side,
+                    score=score,
+                    reason=str(decision.get("reason") or "intent_provided"),
+                    entry_price=entry_price,
+                    volatility_hint=stop_hint,
+                )
+            )
+
+        if not candidates:
             return None
-
-        side = str(decision.get("side") or "NONE")
-        if side == "BUY":
-            trade_side = "BUY"
-        elif side == "SELL":
-            trade_side = "SELL"
-        else:
-            return None
-
-        intent = str(decision.get("intent") or "NONE")
-        if intent == "LONG" and side != "BUY":
-            return None
-        if intent == "SHORT" and side != "SELL":
-            return None
-
-        score = float(decision.get("score", 0.0) or 0.0)
-        if score <= 0:
-            return None
-
-        entry_price = _to_float(decision.get("entry_price"))
-        stop_hint = _to_float(decision.get("stop_hint"))
-
-        return Candidate(
-            symbol=str(decision.get("symbol") or self._symbol),
-            side=trade_side,
-            score=score,
-            reason=str(decision.get("reason") or "intent_provided"),
-            entry_price=entry_price,
-            volatility_hint=stop_hint,
-        )
+        return max(candidates, key=lambda c: float(c.score))
