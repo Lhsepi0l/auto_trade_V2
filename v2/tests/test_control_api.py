@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -1183,6 +1184,114 @@ def test_control_api_status_uses_recent_cached_balance_after_fetch_failure(
     assert p2["binance"]["usdt_balance"]["wallet"] == 222.22
     assert p2["binance"]["usdt_balance"]["source"] in {"exchange", "exchange_cached"}
     assert p2["binance"]["private_error"] is None
+
+
+def test_control_api_status_retries_balance_fetch_once_before_fallback(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_balance_retry.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    class _RetryBalanceREST:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_balances(self):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary_failure")
+            return [{"asset": "USDT", "availableBalance": "77.7", "walletBalance": "88.8"}]
+
+    rest = _RetryBalanceREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert rest.calls == 2
+    assert payload["binance"]["usdt_balance"]["source"] == "exchange"
+    assert payload["binance"]["private_error"] is None
+
+
+def test_control_api_tick_coalesces_when_background_cycle_completes(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_tick_coalesce.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    controller._running = True
+    controller._cycle_seq = 3
+    controller._cycle_done_seq = 2
+    controller._last_cycle["last_action"] = "no_candidate"
+    controller._last_cycle["last_decision_reason"] = "no_candidate"
+
+    _ = controller._lock.acquire(timeout=1.0)
+
+    def _finish_cycle() -> None:
+        time.sleep(0.25)
+        controller._cycle_done_seq = 3
+        controller._last_cycle["tick_finished_at"] = "2026-01-01T00:00:00+00:00"
+
+    worker = threading.Thread(target=_finish_cycle, daemon=True)
+    worker.start()
+    try:
+        out = controller.tick_scheduler_now()
+    finally:
+        controller._lock.release()
+        worker.join(timeout=1.0)
+
+    assert out["ok"] is True
+    assert out["error"] is None
+    assert bool(out["snapshot"].get("coalesced")) is True
 
 
 def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: ignore[no-untyped-def]

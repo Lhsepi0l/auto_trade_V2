@@ -148,7 +148,7 @@ BALANCE_ERROR_HINT_MAP: dict[str, str] = {
     "balance_fetch_timeout": "바이낸스 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.",
     "balance_auth_failed": "API 키 권한/유효성/IP 화이트리스트를 확인해주세요.",
     "balance_rate_limited": "요청 제한에 걸렸습니다. 잠시 후 다시 시도해주세요.",
-    "balance_fetch_failed": "바이낸스 잔고 조회 호출이 실패했습니다 (API 권한/IP 제한 확인).",
+    "balance_fetch_failed": "바이낸스 잔고 조회가 일시 실패했습니다. 잠시 후 자동 재시도됩니다.",
     "balance_payload_invalid": "잔고 응답 형식이 올바르지 않습니다.",
     "usdt_asset_missing": "잔고 응답에 USDT 항목이 없습니다.",
 }

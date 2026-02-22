@@ -190,6 +190,8 @@ class RuntimeController:
         self._last_balance_fetched_mono: float | None = None
         self._trailing_state: dict[str, dict[str, Any]] = {}
         self._watchdog_state: dict[str, Any] = {}
+        self._cycle_seq = 0
+        self._cycle_done_seq = 0
         self._bracket_service = BracketService(
             planner=BracketPlanner(
                 cfg=BracketConfig(
@@ -462,8 +464,21 @@ class RuntimeController:
             return self._cached_or_fallback_balance()
         rest_client: Any = self.rest_client
         assert rest_client is not None
+        payload: Any = None
+        fetch_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
+                fetch_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                fetch_exc = exc
+                if attempt == 0:
+                    time.sleep(0.35)
+                    continue
         try:
-            payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
+            if fetch_exc is not None:
+                raise fetch_exc
         except FutureTimeoutError:
             logger.warning("live_balance_fetch_timed_out")
             self._last_balance_error = "balance_fetch_timeout"
@@ -939,6 +954,8 @@ class RuntimeController:
         self._bracket_thread.start()
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
+        self._cycle_seq += 1
+        cycle_seq = self._cycle_seq
         self._last_cycle["tick_started_at"] = _utcnow_iso()
         self._last_cycle["last_error"] = None
         self._last_cycle["bracket"] = None
@@ -987,6 +1004,7 @@ class RuntimeController:
                 self._report_stats["blocks"] += 1
             ok = True
             error_message = None
+            self._cycle_done_seq = cycle_seq
         except Exception as exc:  # noqa: BLE001
             detail = str(exc).strip()
             if detail:
@@ -1004,6 +1022,7 @@ class RuntimeController:
             self._report_stats["total_records"] += 1
             self._report_stats["errors"] += 1
             ok = False
+            self._cycle_done_seq = cycle_seq
 
         self._emit_status_update()
 
@@ -1234,8 +1253,32 @@ class RuntimeController:
         }
 
     def tick_scheduler_now(self) -> dict[str, Any]:
-        acquired = self._lock.acquire(timeout=6.0)
-        if not acquired:
+        if self._lock.acquire(blocking=False):
+            try:
+                return self._run_cycle_once_locked()
+            finally:
+                self._lock.release()
+
+        if self._running:
+            deadline = time.monotonic() + 7.0
+            target_seq = max(1, int(self._cycle_seq))
+            while time.monotonic() < deadline:
+                if int(self._cycle_done_seq) >= target_seq:
+                    snapshot = dict(self._last_cycle)
+                    snapshot["coalesced"] = True
+                    return {
+                        "ok": True,
+                        "tick_sec": float(self.scheduler.tick_seconds),
+                        "snapshot": snapshot,
+                        "error": None,
+                    }
+                if self._lock.acquire(timeout=0.1):
+                    try:
+                        return self._run_cycle_once_locked()
+                    finally:
+                        self._lock.release()
+                time.sleep(0.1)
+
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = "blocked"
             self._last_cycle["last_decision_reason"] = "tick_busy"
@@ -1248,10 +1291,24 @@ class RuntimeController:
                 "snapshot": dict(self._last_cycle),
                 "error": "tick_busy",
             }
-        try:
-            return self._run_cycle_once_locked()
-        finally:
-            self._lock.release()
+
+        if self._lock.acquire(timeout=6.0):
+            try:
+                return self._run_cycle_once_locked()
+            finally:
+                self._lock.release()
+        self._last_cycle["tick_finished_at"] = _utcnow_iso()
+        self._last_cycle["last_action"] = "blocked"
+        self._last_cycle["last_decision_reason"] = "tick_busy"
+        self._last_cycle["last_error"] = "tick_busy"
+        self._last_cycle["candidate"] = None
+        self._last_cycle["last_candidate"] = None
+        return {
+            "ok": False,
+            "tick_sec": float(self.scheduler.tick_seconds),
+            "snapshot": dict(self._last_cycle),
+            "error": "tick_busy",
+        }
 
     def send_daily_report(self) -> dict[str, Any]:
         payload = {
