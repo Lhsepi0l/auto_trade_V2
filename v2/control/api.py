@@ -5,6 +5,7 @@ import logging
 import threading
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from typing import Any
 
@@ -52,15 +53,21 @@ def _parse_value(raw: str) -> Any:
     return value
 
 
-def _run_async_blocking(thunk: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+def _run_async_blocking(
+    thunk: Callable[[], Coroutine[Any, Any, Any]], *, timeout_sec: float | None = None
+) -> Any:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(thunk())
+        if timeout_sec is None:
+            return asyncio.run(thunk())
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, thunk())
+            return future.result(timeout=timeout_sec)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, thunk())
-        return future.result()
+        return future.result(timeout=timeout_sec)
 
 
 class RuntimeController:
@@ -255,7 +262,10 @@ class RuntimeController:
         rest_client: Any = self.rest_client
         assert rest_client is not None
         try:
-            payload = _run_async_blocking(lambda: rest_client.get_balances())
+            payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=2.5)
+        except FutureTimeoutError:
+            logger.warning("live_balance_fetch_timed_out")
+            return None, None, False
         except Exception:  # noqa: BLE001
             logger.exception("live_balance_fetch_failed")
             return None, None, False
@@ -294,7 +304,7 @@ class RuntimeController:
         try:
             cycle: KernelCycleResult = self.kernel.run_once()
             self.scheduler.run_once()
-            if self.ops.can_open_new_entries():
+            if self.ops.can_open_new_entries() and self._running and not self._thread_stop.is_set():
                 self.order_manager.submit(
                     {"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode}
                 )
@@ -627,7 +637,7 @@ def create_control_http_app(*, controller: RuntimeController) -> FastAPI:
 
     @app.get("/status")
     async def status() -> dict[str, Any]:
-        return controller._status_snapshot()
+        return await asyncio.to_thread(controller._status_snapshot)
 
     @app.get("/risk")
     async def risk() -> dict[str, Any]:

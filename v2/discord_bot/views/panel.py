@@ -18,6 +18,7 @@ from v2.discord_bot.services.discord_utils import is_admin as _is_admin
 from v2.discord_bot.services.discord_utils import safe_defer as _safe_defer
 from v2.discord_bot.services.formatting import format_status_payload
 from v2.discord_bot.ui_labels import (
+    ADVANCED_TOGGLE_LABEL,
     EXEC_MODE_SELECT_PLACEHOLDER,
     MARGIN_BUDGET_BUTTON_LABEL,
     PANIC_BUTTON_LABEL,
@@ -1533,6 +1534,22 @@ class SimplePanelView(PanelViewBase):
         if not await self._guard(interaction):
             return
         await self._open_margin_budget_modal(interaction)
+
+    @discord.ui.button(label=ADVANCED_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
+    async def advanced_toggle_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+
+        await self._swap_view(
+            interaction,
+            AdvancedPanelView(
+                api=self.api,
+                message_id=self.message_id,
+                initial_payload=self._get_cached_status(max_age_sec=30.0),
+            ),
+        )
 
 
 class AdvancedPanelView(PanelViewBase):
