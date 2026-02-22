@@ -129,7 +129,7 @@ REASON_HINT_MAP: dict[str, str] = {
     "notional_unavailable": "주문 기준금액 계산값이 없습니다.",
     "per_trade_risk_exceeded": "1회 위험 기준을 넘는 주문입니다.",
     "book_unavailable_market_disabled": "호가창 데이터가 없습니다.",
-    "tick_busy": "이전 판단 작업이 아직 진행 중입니다. 잠시 후 다시 시도해주세요.",
+    "tick_busy": "이전 판단(자동 스캔/즉시 판단)이 아직 진행 중입니다. 1~2초 후 다시 시도해주세요.",
 }
 
 REASON_PREFIX_HINTS = {
@@ -1416,7 +1416,7 @@ class PanelViewBase(discord.ui.View):
             )
             return
 
-        status_payload = await self.refresh_message(interaction, force_status=True)
+        status_payload = await self.refresh_message(interaction, force_status=False)
         payload = tick if isinstance(tick, dict) else {}
         msg = _build_tick_once_message(payload)
         balance_line = _build_live_balance_line(status_payload)

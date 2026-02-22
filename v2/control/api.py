@@ -1124,7 +1124,7 @@ class RuntimeController:
         }
 
     def tick_scheduler_now(self) -> dict[str, Any]:
-        acquired = self._lock.acquire(timeout=0.5)
+        acquired = self._lock.acquire(timeout=2.0)
         if not acquired:
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = "blocked"
