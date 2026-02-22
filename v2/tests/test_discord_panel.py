@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
+from v2.discord_bot.services.api_client import APIError
 from v2.discord_bot.ui_labels import (
     ADVANCED_PANEL_BUTTON_LABELS,
     EXEC_MODE_SELECT_PLACEHOLDER,
@@ -453,3 +454,20 @@ async def test_tick_once_handles_read_timeout_with_hint(monkeypatch: pytest.Monk
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any("API 응답 시간이 초과" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_start_button_reports_api_error_instead_of_interaction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        start=AsyncMock(side_effect=APIError(status_code=503, message="Service Unavailable")),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "STOPPED"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[0]).callback(it)  # type: ignore[arg-type]
+    assert any("API 오류:" in m for m in it.followup.messages)

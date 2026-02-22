@@ -5,6 +5,8 @@ import json
 import logging
 import math
 import re
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -1281,10 +1283,20 @@ class NotifyIntervalModal(discord.ui.Modal, title="상태 알림 주기 설정")
 
 
 class PanelViewBase(discord.ui.View):
-    def __init__(self, *, api: TraderAPI, message_id: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        api: TraderAPI,
+        message_id: int | None = None,
+        initial_payload: JSONPayload | None = None,
+    ) -> None:
         super().__init__(timeout=None)
         self.api = api
         self.message_id = message_id
+        self._status_cache: JSONPayload = (
+            initial_payload if isinstance(initial_payload, dict) else {}
+        )
+        self._status_cache_at: float = time.monotonic() if self._status_cache else 0.0
 
     @property
     def _mode(self) -> Literal["simple", "advanced"]:
@@ -1299,129 +1311,64 @@ class PanelViewBase(discord.ui.View):
             return False
         return True
 
-    async def refresh_message(self, interaction: discord.Interaction) -> None:
-        payload = await self.api.get_status()
-        if not isinstance(payload, dict):
-            payload = {}
+    def _update_status_cache(self, payload: JSONPayload) -> JSONPayload:
+        self._status_cache = payload if isinstance(payload, dict) else {}
+        self._status_cache_at = time.monotonic() if self._status_cache else 0.0
+        return self._status_cache
 
-        embed = build_embed(payload, mode=self._mode)
+    def _get_cached_status(self, *, max_age_sec: float) -> JSONPayload | None:
+        if not self._status_cache:
+            return None
+        if (time.monotonic() - self._status_cache_at) <= max_age_sec:
+            return self._status_cache
+        return None
 
-        if interaction.message is not None:
-            msg = interaction.message
-            if msg is not None and hasattr(msg, "edit"):
-                try:
-                    _ = await msg.edit(embed=embed, view=self)
-                    return
-                except discord.HTTPException as e:
-                    logger.warning("panel_message_edit_failed", extra={"err": type(e).__name__})
-
-        if self.message_id is None or interaction.channel is None:
-            return
-        if not isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
-            return
+    async def _fetch_status_cached(
+        self,
+        *,
+        max_age_sec: float = 1.2,
+        timeout_sec: float = 2.0,
+        force: bool = False,
+    ) -> JSONPayload:
+        if not force:
+            cached = self._get_cached_status(max_age_sec=max_age_sec)
+            if cached is not None:
+                return cached
         try:
-            msg = await interaction.channel.fetch_message(self.message_id)
-            _ = await msg.edit(embed=embed, view=self)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
-
-    async def _get_risk_config(self) -> JSONPayload:
-        try:
-            payload = await self.api.get_status()
-            cfg = _as_dict(payload.get("risk_config"))
-            if cfg:
-                return cfg
-        except (RuntimeError, APIError):
-            logger.exception("panel_get_status_failed")
-        return {}
-
-    async def _get_scoring_setup_defaults(self) -> JSONPayload:
-        try:
-            payload = await self.api.get_status()
-            cfg = _as_dict(payload.get("config"))
-            if cfg:
-                return cfg
-            risk_cfg = _as_dict(payload.get("risk_config"))
-            if risk_cfg:
-                return risk_cfg
-        except (RuntimeError, APIError):
-            logger.exception("panel_get_status_failed")
-            return {}
-        return {}
-
-    async def _swap_view(self, interaction: discord.Interaction, new_view: "PanelViewBase") -> None:
-        payload: JSONPayload = {}
-        try:
-            status = await asyncio.wait_for(self.api.get_status(), timeout=2.0)
+            status = await asyncio.wait_for(self.api.get_status(), timeout=timeout_sec)
             if isinstance(status, dict):
-                payload = status
+                return self._update_status_cache(status)
+        except (RuntimeError, APIError, asyncio.TimeoutError):
+            logger.exception("panel_get_status_failed")
         except Exception:  # noqa: BLE001
-            logger.exception("panel_swap_view_status_failed")
-        embed = build_embed(payload, mode=new_view._mode)
-        if not interaction.response.is_done():
-            try:
-                _ = await interaction.response.edit_message(embed=embed, view=new_view)
-                return
-            except (discord.HTTPException, RuntimeError):
-                logger.warning("panel_swap_view_response_edit_failed")
-        if interaction.message is not None:
-            try:
-                _ = await interaction.message.edit(embed=embed, view=new_view)
-                return
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                logger.warning("panel_swap_view_message_edit_failed")
+            logger.exception("panel_get_status_failed")
+        return self._get_cached_status(max_age_sec=3600.0) or {}
+
+    async def _run_action(
+        self,
+        interaction: discord.Interaction,
+        *,
+        action: Callable[[], Awaitable[object]],
+        success_message: str,
+    ) -> None:
+        if not await _safe_defer(interaction):
+            return
         try:
-            await interaction.followup.send(
-                "패널 전환에 실패했습니다. 다시 시도해주세요.", ephemeral=True
-            )
+            _ = await action()
+            _ = await self.refresh_message(interaction, force_status=True)
+            await interaction.followup.send(success_message, ephemeral=True)
+        except APIError as e:
+            await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
+        except RuntimeError as e:
+            await interaction.followup.send(f"실행 실패: {e}", ephemeral=True)
         except Exception:  # noqa: BLE001
-            logger.exception("panel_swap_view_followup_failed")
+            logger.exception("panel_action_failed")
+            await interaction.followup.send(
+                "실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                ephemeral=True,
+            )
 
-
-class SimplePanelView(PanelViewBase):
-    @property
-    def _mode(self) -> Literal["simple", "advanced"]:
-        return "simple"
-
-    @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
-    async def start_btn(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
-    ) -> None:
-        if not await self._guard(interaction):
-            return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.start()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
-
-    @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
-    async def stop_btn(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
-    ) -> None:
-        if not await self._guard(interaction):
-            return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.stop()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
-
-    @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
-    async def panic_btn(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
-    ) -> None:
-        if not await self._guard(interaction):
-            return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.panic()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
-
-    @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
-    async def tick_once_btn(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
-    ) -> None:
-        if not await self._guard(interaction):
-            return
+    async def _run_tick_once(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
             return
         try:
@@ -1440,19 +1387,9 @@ class SimplePanelView(PanelViewBase):
             )
             return
 
-        try:
-            await self.refresh_message(interaction)
-        except (APIError, RuntimeError):
-            logger.exception("panel_refresh_failed_after_tick_once")
+        status_payload = await self.refresh_message(interaction, force_status=True)
         payload = tick if isinstance(tick, dict) else {}
         msg = _build_tick_once_message(payload)
-        status_payload: JSONPayload = {}
-        try:
-            status = await self.api.get_status()
-            if isinstance(status, dict):
-                status_payload = status
-        except (APIError, RuntimeError):
-            logger.exception("panel_status_fetch_failed_after_tick_once")
         balance_line = _build_live_balance_line(status_payload)
         if balance_line:
             msg = f"{msg}\n{balance_line}"
@@ -1461,30 +1398,142 @@ class SimplePanelView(PanelViewBase):
         except Exception:  # noqa: BLE001
             logger.exception("panel_tick_once_followup_send_failed")
 
+    async def _open_margin_budget_modal(self, interaction: discord.Interaction) -> None:
+        current_budget = None
+        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.5)
+        cfg = _as_dict(payload.get("config"))
+        cur = cfg.get("margin_budget_usdt")
+        if cur is not None:
+            current_budget = _coerce_float(cur, default=0.0)
+
+        _ = await interaction.response.send_modal(
+            MarginBudgetModal(api=self.api, view=self, current_budget=current_budget)
+        )
+
+    async def refresh_message(
+        self,
+        interaction: discord.Interaction,
+        *,
+        force_status: bool = False,
+    ) -> JSONPayload:
+        payload = await self._fetch_status_cached(force=force_status)
+
+        embed = build_embed(payload, mode=self._mode)
+
+        if interaction.message is not None:
+            msg = interaction.message
+            if msg is not None and hasattr(msg, "edit"):
+                try:
+                    _ = await msg.edit(embed=embed, view=self)
+                    return payload
+                except discord.HTTPException as e:
+                    logger.warning("panel_message_edit_failed", extra={"err": type(e).__name__})
+
+        if self.message_id is None or interaction.channel is None:
+            return payload
+        if not isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+            return payload
+        try:
+            msg = await interaction.channel.fetch_message(self.message_id)
+            _ = await msg.edit(embed=embed, view=self)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+        return payload
+
+    async def _get_risk_config(self) -> JSONPayload:
+        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.8)
+        cfg = _as_dict(payload.get("risk_config"))
+        if cfg:
+            return cfg
+        return {}
+
+    async def _get_scoring_setup_defaults(self) -> JSONPayload:
+        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.8)
+        cfg = _as_dict(payload.get("config"))
+        if cfg:
+            return cfg
+        risk_cfg = _as_dict(payload.get("risk_config"))
+        if risk_cfg:
+            return risk_cfg
+        return {}
+
+    async def _swap_view(self, interaction: discord.Interaction, new_view: "PanelViewBase") -> None:
+        payload = self._get_cached_status(max_age_sec=30.0) or {}
+        if payload:
+            new_view._update_status_cache(payload)
+        embed = build_embed(payload, mode=new_view._mode)
+        if not interaction.response.is_done():
+            try:
+                _ = await interaction.response.edit_message(embed=embed, view=new_view)
+            except (discord.HTTPException, RuntimeError):
+                logger.warning("panel_swap_view_response_edit_failed")
+        if interaction.message is not None and interaction.response.is_done():
+            try:
+                _ = await interaction.message.edit(embed=embed, view=new_view)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                logger.warning("panel_swap_view_message_edit_failed")
+
+        latest = await self._fetch_status_cached(force=True, timeout_sec=2.0)
+        if latest:
+            new_view._update_status_cache(latest)
+            latest_embed = build_embed(latest, mode=new_view._mode)
+            try:
+                if interaction.message is not None:
+                    _ = await interaction.message.edit(embed=latest_embed, view=new_view)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                logger.warning("panel_swap_view_refresh_failed")
+
+
+class SimplePanelView(PanelViewBase):
+    @property
+    def _mode(self) -> Literal["simple", "advanced"]:
+        return "simple"
+
+    @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
+    async def start_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._run_action(
+            interaction, action=self.api.start, success_message="엔진을 시작했습니다."
+        )
+
+    @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
+    async def stop_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._run_action(
+            interaction, action=self.api.stop, success_message="엔진을 중지했습니다."
+        )
+
+    @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
+    async def panic_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._run_action(
+            interaction, action=self.api.panic, success_message="패닉 명령을 전송했습니다."
+        )
+
+    @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
+    async def tick_once_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._run_tick_once(interaction)
+
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
     async def margin_budget_btn(
         self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
     ) -> None:
         if not await self._guard(interaction):
             return
-
-        current_budget = None
-        try:
-            payload = await self.api.get_status()
-            cfg = _as_dict(payload.get("config"))
-            cur = cfg.get("margin_budget_usdt")
-            if cur is not None:
-                current_budget = _coerce_float(cur, default=0.0)
-        except (TypeError, ValueError):
-            current_budget = None
-
-        _ = await interaction.response.send_modal(
-            MarginBudgetModal(
-                api=self.api,
-                view=self,
-                current_budget=current_budget,
-            )
-        )
+        await self._open_margin_budget_modal(interaction)
 
     @discord.ui.button(label=ADVANCED_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
     async def advanced_toggle_btn(
@@ -1494,7 +1543,12 @@ class SimplePanelView(PanelViewBase):
             return
 
         await self._swap_view(
-            interaction, AdvancedPanelView(api=self.api, message_id=self.message_id)
+            interaction,
+            AdvancedPanelView(
+                api=self.api,
+                message_id=self.message_id,
+                initial_payload=self._get_cached_status(max_age_sec=30.0),
+            ),
         )
 
 
@@ -1509,10 +1563,9 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.start()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
+        await self._run_action(
+            interaction, action=self.api.start, success_message="엔진을 시작했습니다."
+        )
 
     @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
     async def stop_btn(
@@ -1520,10 +1573,9 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.stop()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
+        await self._run_action(
+            interaction, action=self.api.stop, success_message="엔진을 중지했습니다."
+        )
 
     @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
     async def panic_btn(
@@ -1531,10 +1583,9 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.panic()
-        await self.refresh_message(interaction)
-        await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
+        await self._run_action(
+            interaction, action=self.api.panic, success_message="패닉 명령을 전송했습니다."
+        )
 
     @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
     async def tick_once_btn(
@@ -1542,44 +1593,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        if not await _safe_defer(interaction):
-            return
-        try:
-            tick = await self.api.tick_scheduler_now()
-        except (APIError, RuntimeError) as e:
-            if isinstance(e, RuntimeError):
-                await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
-            else:
-                await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
-            return
-        except Exception:  # noqa: BLE001
-            logger.exception("panel_tick_once_failed")
-            await interaction.followup.send(
-                "즉시 판단 실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            await self.refresh_message(interaction)
-        except (APIError, RuntimeError):
-            logger.exception("panel_refresh_failed_after_tick_once")
-        payload = tick if isinstance(tick, dict) else {}
-        msg = _build_tick_once_message(payload)
-        status_payload: JSONPayload = {}
-        try:
-            status = await self.api.get_status()
-            if isinstance(status, dict):
-                status_payload = status
-        except (APIError, RuntimeError):
-            logger.exception("panel_status_fetch_failed_after_tick_once")
-        balance_line = _build_live_balance_line(status_payload)
-        if balance_line:
-            msg = f"{msg}\n{balance_line}"
-        try:
-            await interaction.followup.send(msg, ephemeral=True)
-        except Exception:  # noqa: BLE001
-            logger.exception("panel_tick_once_followup_send_failed")
+        await self._run_tick_once(interaction)
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
     async def margin_budget_btn(
@@ -1587,24 +1601,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-
-        current_budget = None
-        try:
-            payload = await self.api.get_status()
-            cfg = _as_dict(payload.get("config"))
-            cur = cfg.get("margin_budget_usdt")
-            if cur is not None:
-                current_budget = _coerce_float(cur, default=0.0)
-        except (TypeError, ValueError):
-            current_budget = None
-
-        _ = await interaction.response.send_modal(
-            MarginBudgetModal(
-                api=self.api,
-                view=self,
-                current_budget=current_budget,
-            )
-        )
+        await self._open_margin_budget_modal(interaction)
 
     @discord.ui.button(label=SIMPLE_TOGGLE_LABEL, style=discord.ButtonStyle.primary, row=1)
     async def simple_toggle_btn(
@@ -1613,7 +1610,12 @@ class AdvancedPanelView(PanelViewBase):
         if not await self._guard(interaction):
             return
         await self._swap_view(
-            interaction, SimplePanelView(api=self.api, message_id=self.message_id)
+            interaction,
+            SimplePanelView(
+                api=self.api,
+                message_id=self.message_id,
+                initial_payload=self._get_cached_status(max_age_sec=30.0),
+            ),
         )
 
     @discord.ui.button(label=RISK_BASIC_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
@@ -1723,10 +1725,11 @@ class AdvancedPanelView(PanelViewBase):
         if not await self._guard(interaction):
             return
         val = str(select.values[0]).upper()
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        _ = await self.api.set_value("exec_mode_default", val)
-        await self.refresh_message(interaction)
-        await interaction.followup.send(f"실행모드가 {val}로 변경되었습니다.", ephemeral=True)
+        await self._run_action(
+            interaction,
+            action=lambda: self.api.set_value("exec_mode_default", val),
+            success_message=f"실행모드가 {val}로 변경되었습니다.",
+        )
 
     @discord.ui.select(
         placeholder=SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
@@ -1749,17 +1752,12 @@ class AdvancedPanelView(PanelViewBase):
         except (TypeError, ValueError):
             _ = await interaction.response.send_message("유효하지 않은 간격입니다.", ephemeral=True)
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            _ = await self.api.set_scheduler_interval(tick_sec)
-            await self.refresh_message(interaction)
-            minutes = int(tick_sec // 60)
-            await interaction.followup.send(
-                f"판단 주기를 {minutes}분으로 변경했습니다. 상태 알림도 같은 주기로 변경됩니다.",
-                ephemeral=True,
-            )
-        except APIError as e:
-            await interaction.followup.send(f"스캔 간격 변경 실패: {e}", ephemeral=True)
+        minutes = int(tick_sec // 60)
+        await self._run_action(
+            interaction,
+            action=lambda: self.api.set_scheduler_interval(tick_sec),
+            success_message=f"판단 주기를 {minutes}분으로 변경했습니다. 상태 알림도 같은 주기로 변경됩니다.",
+        )
 
     @discord.ui.button(label="상태 알림 주기 설정", style=discord.ButtonStyle.secondary, row=2)
     async def notify_interval_btn(

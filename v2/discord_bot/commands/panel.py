@@ -31,7 +31,7 @@ class PanelControl(commands.Cog):
         try:
             payload = await self.api.get_status()
             embed = build_embed(payload)
-            view = PanelView(api=self.api, message_id=None)
+            view = PanelView(api=self.api, message_id=None, initial_payload=payload)
             await interaction.followup.send(
                 "패널을 새로고침 했습니다.",
                 embed=embed,
