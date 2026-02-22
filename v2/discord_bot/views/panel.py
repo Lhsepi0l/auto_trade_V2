@@ -379,7 +379,7 @@ def _build_live_balance_line(payload: JSONPayload) -> str:
     available = usdt.get("available")
     wallet = usdt.get("wallet")
 
-    if source and source != "exchange":
+    if source and source not in {"exchange", "exchange_cached"}:
         hint = BALANCE_ERROR_HINT_MAP.get(private_error) or "연결/API 권한 확인 필요"
         if private_error_detail and private_error in {
             "balance_auth_failed",
@@ -396,7 +396,11 @@ def _build_live_balance_line(payload: JSONPayload) -> str:
             hint = f"{hint} ({private_error_detail})"
         return f"실시간 잔고: 바이낸스 실시간 조회 실패 ({hint})"
 
-    return f"실시간 잔고: 사용가능 {_fmt_money(available)} USDT / 지갑 {_fmt_money(wallet)} USDT"
+    suffix = " (최근 캐시)" if source == "exchange_cached" else ""
+    return (
+        f"실시간 잔고: 사용가능 {_fmt_money(available)} USDT / "
+        f"지갑 {_fmt_money(wallet)} USDT{suffix}"
+    )
 
 
 def _interval_label(sec: JSONScalar) -> str:

@@ -9,6 +9,7 @@ from v2.config.loader import load_effective_config
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
+from v2.exchange import BinanceRESTError
 from v2.notify import Notifier
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
@@ -386,6 +387,70 @@ def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_una
     payload = status.json()
     assert payload["binance"]["usdt_balance"]["source"] == "fallback"
     assert payload["binance"]["private_error"] == "rest_client_unavailable"
+
+
+def test_control_api_status_uses_recent_cached_balance_after_fetch_failure(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_balance_cached.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    class _FlakyBalanceREST:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_balances(self):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                return [{"asset": "USDT", "availableBalance": "111.11", "walletBalance": "222.22"}]
+            raise BinanceRESTError(
+                status_code=500,
+                code=-1000,
+                message="internal error",
+                path="/fapi/v2/balance",
+            )
+
+    rest = _FlakyBalanceREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    first = client.get("/status")
+    assert first.status_code == 200
+    p1 = first.json()
+    assert p1["binance"]["usdt_balance"]["source"] == "exchange"
+    assert p1["binance"]["private_error"] is None
+
+    second = client.get("/status")
+    assert second.status_code == 200
+    p2 = second.json()
+    assert p2["capital_snapshot"]["available_usdt"] == 111.11
+    assert p2["binance"]["usdt_balance"]["wallet"] == 222.22
+    assert p2["binance"]["usdt_balance"]["source"] in {"exchange", "exchange_cached"}
+    assert p2["binance"]["private_error"] is None
 
 
 def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: ignore[no-untyped-def]

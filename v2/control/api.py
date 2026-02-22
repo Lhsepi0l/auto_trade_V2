@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -160,6 +161,9 @@ class RuntimeController:
         self._load_persisted_risk_config()
         self._last_balance_error: str | None = None
         self._last_balance_error_detail: str | None = None
+        self._last_balance_available_usdt: float | None = None
+        self._last_balance_wallet_usdt: float | None = None
+        self._last_balance_fetched_mono: float | None = None
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
         self.scheduler.tick_seconds = max(
             1,
@@ -285,7 +289,7 @@ class RuntimeController:
                 "position_side": "LONG" if row.position_amt > 0 else "SHORT",
             }
         budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
-        live_available_usdt, live_wallet_usdt, live_balance_ok = self._fetch_live_usdt_balance()
+        live_available_usdt, live_wallet_usdt, live_balance_source = self._fetch_live_usdt_balance()
         available_usdt = live_available_usdt if live_available_usdt is not None else budget
         wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else budget
         config = dict(self._risk)
@@ -335,7 +339,7 @@ class RuntimeController:
                 "usdt_balance": {
                     "wallet": wallet_usdt,
                     "available": available_usdt,
-                    "source": "exchange" if live_balance_ok else "fallback",
+                    "source": live_balance_source,
                 },
                 "startup_error": None,
                 "private_error": self._last_balance_error,
@@ -351,11 +355,39 @@ class RuntimeController:
             "last_error": self._last_cycle.get("last_error"),
         }
 
-    def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, bool]:
+    def _cached_live_balance(
+        self, *, max_age_sec: float
+    ) -> tuple[float | None, float | None] | None:
+        fetched_at = self._last_balance_fetched_mono
+        if fetched_at is None:
+            return None
+        if (time.monotonic() - fetched_at) > max(0.0, float(max_age_sec)):
+            return None
+        if self._last_balance_available_usdt is None or self._last_balance_wallet_usdt is None:
+            return None
+        return self._last_balance_available_usdt, self._last_balance_wallet_usdt
+
+    def _cached_or_fallback_balance(self) -> tuple[float | None, float | None, str]:
+        cached = self._cached_live_balance(max_age_sec=300.0)
+        if cached is None:
+            return None, None, "fallback"
+        available, wallet = cached
+        self._last_balance_error = None
+        self._last_balance_error_detail = "served_from_recent_cache"
+        return available, wallet, "exchange_cached"
+
+    def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, str]:
+        fresh_cache = self._cached_live_balance(max_age_sec=8.0)
+        if fresh_cache is not None:
+            self._last_balance_error = None
+            self._last_balance_error_detail = None
+            available, wallet = fresh_cache
+            return available, wallet, "exchange"
+
         if self.rest_client is None:
             self._last_balance_error = "rest_client_unavailable"
             self._last_balance_error_detail = "balance_rest_client_not_configured"
-            return None, None, False
+            return self._cached_or_fallback_balance()
         rest_client: Any = self.rest_client
         assert rest_client is not None
         try:
@@ -364,7 +396,7 @@ class RuntimeController:
             logger.warning("live_balance_fetch_timed_out")
             self._last_balance_error = "balance_fetch_timeout"
             self._last_balance_error_detail = "fetch_timeout_over_8s"
-            return None, None, False
+            return self._cached_or_fallback_balance()
         except BinanceRESTError as e:
             logger.warning(
                 "live_balance_fetch_rest_error",
@@ -383,17 +415,17 @@ class RuntimeController:
             self._last_balance_error_detail = (
                 f"status={e.status_code} code={e.code} path={e.path} msg={e.message}"
             )
-            return None, None, False
+            return self._cached_or_fallback_balance()
         except Exception:  # noqa: BLE001
             logger.exception("live_balance_fetch_failed")
             self._last_balance_error = "balance_fetch_failed"
             self._last_balance_error_detail = "unexpected_exception"
-            return None, None, False
+            return self._cached_or_fallback_balance()
 
         if not isinstance(payload, list):
             self._last_balance_error = "balance_payload_invalid"
             self._last_balance_error_detail = f"payload_type={type(payload).__name__}"
-            return None, None, False
+            return self._cached_or_fallback_balance()
 
         target: dict[str, Any] | None = None
         for item in payload:
@@ -407,7 +439,7 @@ class RuntimeController:
         if target is None:
             self._last_balance_error = "usdt_asset_missing"
             self._last_balance_error_detail = "asset_usdt_not_found"
-            return None, None, False
+            return self._cached_or_fallback_balance()
 
         available = _to_float(
             target.get("availableBalance")
@@ -421,9 +453,12 @@ class RuntimeController:
             or target.get("balance"),
             default=0.0,
         )
+        self._last_balance_available_usdt = available
+        self._last_balance_wallet_usdt = wallet
+        self._last_balance_fetched_mono = time.monotonic()
         self._last_balance_error = None
         self._last_balance_error_detail = None
-        return available, wallet, True
+        return available, wallet, "exchange"
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
         self._last_cycle["tick_started_at"] = _utcnow_iso()

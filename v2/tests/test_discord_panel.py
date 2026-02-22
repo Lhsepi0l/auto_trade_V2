@@ -413,6 +413,44 @@ async def test_tick_once_shows_live_balance_fetch_failure_hint(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_shows_cached_live_balance_without_failure_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "no_candidate",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {
+                    "usdt_balance": {
+                        "available": 100.0,
+                        "wallet": 100.0,
+                        "source": "exchange_cached",
+                    },
+                    "private_error": "balance_fetch_failed",
+                },
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("실시간 잔고:" in m and "최근 캐시" in m for m in it.followup.messages)
+    assert all("바이낸스 실시간 조회 실패" not in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tick_once_handles_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ConnectError")),
