@@ -141,7 +141,7 @@ class TraderAPIClient:
         )
 
     async def tick_scheduler_now(self) -> JSONPayload:
-        timeout_sec = min(max(float(self._timeout_sec), 10.0), 20.0)
+        timeout_sec = max(float(self._timeout_sec), 15.0)
         return await self._request_json(
             "POST", "/scheduler/tick", timeout_sec=timeout_sec, retry_count=1
         )

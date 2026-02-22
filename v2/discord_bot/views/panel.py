@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -1349,17 +1350,32 @@ class PanelViewBase(discord.ui.View):
         return {}
 
     async def _swap_view(self, interaction: discord.Interaction, new_view: "PanelViewBase") -> None:
-        payload = await self.api.get_status()
-        if not isinstance(payload, dict):
-            payload = {}
+        payload: JSONPayload = {}
+        try:
+            status = await asyncio.wait_for(self.api.get_status(), timeout=2.0)
+            if isinstance(status, dict):
+                payload = status
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_swap_view_status_failed")
         embed = build_embed(payload, mode=new_view._mode)
         if not interaction.response.is_done():
-            _ = await interaction.response.edit_message(embed=embed, view=new_view)
-        else:
-            if interaction.message is not None:
+            try:
+                _ = await interaction.response.edit_message(embed=embed, view=new_view)
+                return
+            except (discord.HTTPException, RuntimeError):
+                logger.warning("panel_swap_view_response_edit_failed")
+        if interaction.message is not None:
+            try:
                 _ = await interaction.message.edit(embed=embed, view=new_view)
-            else:
-                raise RuntimeError("interaction_message_missing")
+                return
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                logger.warning("panel_swap_view_message_edit_failed")
+        try:
+            await interaction.followup.send(
+                "패널 전환에 실패했습니다. 다시 시도해주세요.", ephemeral=True
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_swap_view_followup_failed")
 
 
 class SimplePanelView(PanelViewBase):
