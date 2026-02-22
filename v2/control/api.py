@@ -920,7 +920,39 @@ class RuntimeController:
         reason = self._translate_status_token(
             str(self._last_cycle.get("last_decision_reason") or "-"), _REASON_LABELS_KO
         )
-        return f"상태 알림: 엔진={state_ko}, 마지막판단={last_action}, 사유={reason}"
+        pnl_summary = self._status_pnl_summary()
+        return f"상태 알림: 엔진={state_ko}, 마지막판단={last_action}, 사유={reason}, {pnl_summary}"
+
+    @staticmethod
+    def _fmt_signed(value: float) -> str:
+        return f"{float(value):+.4f}"
+
+    def _status_pnl_summary(self) -> str:
+        state = self.state_store.get()
+        total_unrealized = 0.0
+        per_symbol: list[str] = []
+        for symbol, row in sorted(state.current_position.items()):
+            pnl = _to_float(row.unrealized_pnl, default=0.0)
+            total_unrealized += pnl
+            per_symbol.append(f"{symbol}:{self._fmt_signed(pnl)}")
+
+        parts = [f"미실현PnL={self._fmt_signed(total_unrealized)} USDT"]
+        if per_symbol:
+            preview = ", ".join(per_symbol[:3])
+            if len(per_symbol) > 3:
+                preview = f"{preview}, ..."
+            parts.append(f"포지션별={preview}")
+
+        latest_realized: float | None = None
+        for fill in state.last_fills:
+            if fill.realized_pnl is None:
+                continue
+            latest_realized = _to_float(fill.realized_pnl, default=0.0)
+            break
+        if latest_realized is not None:
+            parts.append(f"최근실현PnL={self._fmt_signed(latest_realized)} USDT")
+
+        return ", ".join(parts)
 
     @staticmethod
     def _translate_status_token(raw: str, labels: dict[str, str]) -> str:
