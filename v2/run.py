@@ -17,7 +17,7 @@ from v2.config.loader import EffectiveConfig, load_effective_config, render_effe
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import Event, EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
-from v2.exchange import BinanceAdapter
+from v2.exchange import BackoffPolicy, BinanceAdapter, BinanceRESTClient
 from v2.notify import Notifier
 from v2.ops import OpsController, create_ops_http_app
 from v2.risk import KillSwitch, RiskManager
@@ -27,7 +27,9 @@ from v2.tpsl import BracketConfig, BracketPlanner
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="V2 scaffold runner")
-    parser.add_argument("--profile", default="normal", choices=["conservative", "normal", "aggressive"])
+    parser.add_argument(
+        "--profile", default="normal", choices=["conservative", "normal", "aggressive"]
+    )
     parser.add_argument("--mode", default="shadow", choices=["shadow", "live"])
     parser.add_argument("--env", default="testnet", choices=["testnet", "prod"])
     parser.add_argument("--env-file", default=".env", help="path to dotenv file for secrets")
@@ -38,23 +40,40 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["none", "pause", "resume", "safe_mode", "flatten"],
     )
     parser.add_argument("--ops-symbol", default=None, help="symbol for ops actions like flatten")
-    parser.add_argument("--ops-http", action="store_true", help="run optional HTTP ops control server")
+    parser.add_argument(
+        "--ops-http", action="store_true", help="run optional HTTP ops control server"
+    )
     parser.add_argument("--ops-http-host", default="127.0.0.1")
     parser.add_argument("--ops-http-port", type=int, default=8102)
-    parser.add_argument("--control-http", action="store_true", help="run v2 full control HTTP API (Discord compatible)")
+    parser.add_argument(
+        "--control-http",
+        action="store_true",
+        help="run v2 full control HTTP API (Discord compatible)",
+    )
     parser.add_argument("--control-http-host", default="127.0.0.1")
     parser.add_argument("--control-http-port", type=int, default=8101)
     parser.add_argument("--replay", default=None, help="path to replay source")
     parser.add_argument("--report-dir", default="v2/reports", help="directory for replay reports")
     parser.add_argument("--report-path", default=None, help="write report to exact path")
     parser.add_argument("--loop", action="store_true", help="run continuous tick loop")
-    parser.add_argument("--max-cycles", type=int, default=0, help="max cycle count when --loop is enabled (0 = unlimited)")
-    parser.add_argument("--deploy-prep", action="store_true", help="run one-command deployment preparation")
-    parser.add_argument("--keep-reports", type=int, default=None, help="retention count for deploy-prep reports")
+    parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="max cycle count when --loop is enabled (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--deploy-prep", action="store_true", help="run one-command deployment preparation"
+    )
+    parser.add_argument(
+        "--keep-reports", type=int, default=None, help="retention count for deploy-prep reports"
+    )
     return parser
 
 
-def _build_runtime(cfg: EffectiveConfig) -> tuple[RuntimeStorage, EngineStateStore, OpsController, BinanceAdapter, Any | None]:
+def _build_runtime(
+    cfg: EffectiveConfig,
+) -> tuple[RuntimeStorage, EngineStateStore, OpsController, BinanceAdapter, Any | None]:
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -132,11 +151,17 @@ def _normalize_snapshot(payload: dict[str, Any], *, default_symbol: str) -> _Rep
 
 
 def _normalize_replay_rows(items: list[Any], *, default_symbol: str) -> list[_ReplayFrame]:
-    normalized = [_normalize_snapshot(row, default_symbol=default_symbol) for row in items if isinstance(row, dict)]
+    normalized = [
+        _normalize_snapshot(row, default_symbol=default_symbol)
+        for row in items
+        if isinstance(row, dict)
+    ]
     return [row for row in normalized if row is not None]
 
 
-def _load_replay_rows_json(*, path: Path, default_symbol: str, is_jsonl: bool = False) -> list[_ReplayFrame]:
+def _load_replay_rows_json(
+    *, path: Path, default_symbol: str, is_jsonl: bool = False
+) -> list[_ReplayFrame]:
     if is_jsonl:
         jsonl_rows: list[Any] = []
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -464,9 +489,16 @@ def _run_replay(
 ) -> int:
     _storage, state_store, _ops, _adapter, _rest_client = _build_runtime(cfg)
     state_store.set(mode=cfg.mode, status="RUNNING")
-    frames = _load_replay_frames(path=replay_path, default_symbol=cfg.behavior.exchange.default_symbol)
+    frames = _load_replay_frames(
+        path=replay_path, default_symbol=cfg.behavior.exchange.default_symbol
+    )
     if not frames:
-        print(json.dumps({"replay": {"source": replay_path, "cycles": 0}, "error": "no replay data"}, ensure_ascii=True))
+        print(
+            json.dumps(
+                {"replay": {"source": replay_path, "cycles": 0}, "error": "no replay data"},
+                ensure_ascii=True,
+            )
+        )
         return 1
 
     if cfg.behavior.ops.pause_on_start:
@@ -561,6 +593,7 @@ def _boot(cfg: EffectiveConfig, *, loop_enabled: bool = False, max_cycles: int =
     journal_logger = None
 
     if cfg.mode == "shadow":
+
         def _journal_logger(payload: dict[str, Any]) -> None:
             print(
                 json.dumps(
@@ -570,8 +603,12 @@ def _boot(cfg: EffectiveConfig, *, loop_enabled: bool = False, max_cycles: int =
                         "allowed_side": payload.get("allowed_side"),
                         "signals": payload.get("signals"),
                         "blocks": payload.get("blocks"),
-                        "decision": payload.get("decision", {}).get("intent") if isinstance(payload.get("decision"), dict) else None,
-                        "reasons": payload.get("decision", {}).get("reason") if isinstance(payload.get("decision"), dict) else None,
+                        "decision": payload.get("decision", {}).get("intent")
+                        if isinstance(payload.get("decision"), dict)
+                        else None,
+                        "reasons": payload.get("decision", {}).get("reason")
+                        if isinstance(payload.get("decision"), dict)
+                        else None,
                     },
                     ensure_ascii=True,
                 )
@@ -667,11 +704,17 @@ def _run_ops_action(cfg: EffectiveConfig, *, action: str, symbol: str | None) ->
         return 0
     if action == "resume":
         ops.resume()
-        print(json.dumps({"action": "resume", "paused": False, "safe_mode": False}, ensure_ascii=True))
+        print(
+            json.dumps({"action": "resume", "paused": False, "safe_mode": False}, ensure_ascii=True)
+        )
         return 0
     if action == "safe_mode":
         ops.safe_mode()
-        print(json.dumps({"action": "safe_mode", "paused": True, "safe_mode": True}, ensure_ascii=True))
+        print(
+            json.dumps(
+                {"action": "safe_mode", "paused": True, "safe_mode": True}, ensure_ascii=True
+            )
+        )
         return 0
     if action == "flatten":
         result = asyncio.run(ops.flatten(symbol=symbol_v))
@@ -728,6 +771,9 @@ def _serve_control_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
     _ = storage
     _ = adapter
     scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    balance_rest_client = _build_control_balance_rest_client(
+        cfg=cfg, runtime_rest_client=rest_client
+    )
     controller = build_runtime_controller(
         cfg=cfg,
         state_store=state_store,
@@ -736,11 +782,32 @@ def _serve_control_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
         scheduler=scheduler,
         event_bus=event_bus,
         notifier=notifier,
-        rest_client=rest_client,
+        rest_client=balance_rest_client,
     )
     app = create_control_http_app(controller=controller)
     uvicorn.run(app, host=host, port=port)
     return 0
+
+
+def _build_control_balance_rest_client(
+    *, cfg: EffectiveConfig, runtime_rest_client: Any | None
+) -> Any | None:
+    if runtime_rest_client is not None:
+        return runtime_rest_client
+    if not cfg.secrets.binance_api_key or not cfg.secrets.binance_api_secret:
+        return None
+    return BinanceRESTClient(
+        env=cfg.env,
+        api_key=cfg.secrets.binance_api_key,
+        api_secret=cfg.secrets.binance_api_secret,
+        recv_window_ms=cfg.behavior.exchange.recv_window_ms,
+        time_sync_enabled=True,
+        rate_limit_per_sec=cfg.behavior.exchange.request_rate_limit_per_sec,
+        backoff_policy=BackoffPolicy(
+            base_seconds=cfg.behavior.exchange.backoff_base_seconds,
+            cap_seconds=cfg.behavior.exchange.backoff_cap_seconds,
+        ),
+    )
 
 
 def _run_deploy_prep(args: argparse.Namespace) -> int:
@@ -788,7 +855,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _serve_ops_http(effective, host=args.ops_http_host, port=args.ops_http_port)
 
     if args.control_http:
-        return _serve_control_http(effective, host=args.control_http_host, port=args.control_http_port)
+        return _serve_control_http(
+            effective, host=args.control_http_host, port=args.control_http_port
+        )
 
     if args.replay is not None:
         return _run_replay(
