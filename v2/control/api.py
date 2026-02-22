@@ -123,6 +123,7 @@ class RuntimeController:
         }
         self._last_status_notify_at: datetime | None = None
         self._risk = self._initial_risk_config()
+        self._last_balance_error: str | None = None
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
         self._start_status_loop()
 
@@ -244,7 +245,7 @@ class RuntimeController:
                     "source": "exchange" if live_balance_ok else "fallback",
                 },
                 "startup_error": None,
-                "private_error": None,
+                "private_error": self._last_balance_error,
             },
             "pnl": {
                 "daily_pnl_pct": 0.0,
@@ -258,19 +259,23 @@ class RuntimeController:
 
     def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, bool]:
         if self.rest_client is None:
+            self._last_balance_error = "rest_client_unavailable"
             return None, None, False
         rest_client: Any = self.rest_client
         assert rest_client is not None
         try:
-            payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=2.5)
+            payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
         except FutureTimeoutError:
             logger.warning("live_balance_fetch_timed_out")
+            self._last_balance_error = "balance_fetch_timeout"
             return None, None, False
         except Exception:  # noqa: BLE001
             logger.exception("live_balance_fetch_failed")
+            self._last_balance_error = "balance_fetch_failed"
             return None, None, False
 
         if not isinstance(payload, list):
+            self._last_balance_error = "balance_payload_invalid"
             return None, None, False
 
         target: dict[str, Any] | None = None
@@ -283,6 +288,7 @@ class RuntimeController:
                 break
 
         if target is None:
+            self._last_balance_error = "usdt_asset_missing"
             return None, None, False
 
         available = _to_float(
@@ -297,6 +303,7 @@ class RuntimeController:
             or target.get("balance"),
             default=0.0,
         )
+        self._last_balance_error = None
         return available, wallet, True
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:

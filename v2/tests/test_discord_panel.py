@@ -397,7 +397,8 @@ async def test_tick_once_shows_live_balance_fetch_failure_hint(
             return_value={
                 "engine_state": {"state": "RUNNING"},
                 "binance": {
-                    "usdt_balance": {"available": 100.0, "wallet": 100.0, "source": "fallback"}
+                    "usdt_balance": {"available": 100.0, "wallet": 100.0, "source": "fallback"},
+                    "private_error": "balance_fetch_failed",
                 },
             }
         ),

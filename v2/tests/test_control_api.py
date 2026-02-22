@@ -335,6 +335,7 @@ def test_control_api_status_uses_live_usdt_balance(tmp_path) -> None:  # type: i
     assert payload["capital_snapshot"]["available_usdt"] == 321.45
     assert payload["binance"]["usdt_balance"]["wallet"] == 345.67
     assert payload["binance"]["usdt_balance"]["source"] == "exchange"
+    assert payload["binance"]["private_error"] is None
 
 
 def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_unavailable(
@@ -347,3 +348,4 @@ def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_una
     assert status.status_code == 200
     payload = status.json()
     assert payload["binance"]["usdt_balance"]["source"] == "fallback"
+    assert payload["binance"]["private_error"] == "rest_client_unavailable"
