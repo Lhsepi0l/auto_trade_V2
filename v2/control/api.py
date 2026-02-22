@@ -157,11 +157,38 @@ class RuntimeController:
         }
         self._last_status_notify_at: datetime | None = None
         self._risk = self._initial_risk_config()
+        self._load_persisted_risk_config()
         self._last_balance_error: str | None = None
         self._last_balance_error_detail: str | None = None
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
+        self.scheduler.tick_seconds = max(
+            1,
+            int(
+                _to_float(
+                    self._risk.get("notify_interval_sec"),
+                    default=float(self.scheduler.tick_seconds),
+                )
+            ),
+        )
         self._start_status_loop()
         self._sync_kernel_runtime_overrides()
+
+    def _load_persisted_risk_config(self) -> None:
+        try:
+            persisted = self.state_store.load_runtime_risk_config()
+        except Exception:  # noqa: BLE001
+            logger.exception("runtime_risk_config_load_failed")
+            return
+        if not isinstance(persisted, dict) or not persisted:
+            return
+        for key, value in persisted.items():
+            self._risk[key] = value
+
+    def _persist_risk_config(self) -> None:
+        try:
+            self.state_store.save_runtime_risk_config(config=dict(self._risk))
+        except Exception:  # noqa: BLE001
+            logger.exception("runtime_risk_config_save_failed")
 
     def _sync_kernel_runtime_overrides(self) -> None:
         symbols_raw = self._risk.get("universe_symbols")
@@ -606,6 +633,7 @@ class RuntimeController:
                 parsed = [self.cfg.behavior.exchange.default_symbol]
         self._risk[key] = parsed
         self._sync_kernel_runtime_overrides()
+        self._persist_risk_config()
         if key == "notify_interval_sec":
             self.scheduler.tick_seconds = int(
                 _to_float(parsed, default=float(self.scheduler.tick_seconds))
@@ -630,6 +658,7 @@ class RuntimeController:
             mapping[symbol_u] = float(leverage)
         self._risk["symbol_leverage_map"] = mapping
         self._sync_kernel_runtime_overrides()
+        self._persist_risk_config()
         return dict(self._risk)
 
     def get_scheduler(self) -> dict[str, Any]:
@@ -643,6 +672,7 @@ class RuntimeController:
         sec = max(1, int(tick_sec))
         self.scheduler.tick_seconds = sec
         self._risk["notify_interval_sec"] = sec
+        self._persist_risk_config()
         return {
             "tick_sec": float(self.scheduler.tick_seconds),
             "running": bool(self._running),
@@ -693,6 +723,8 @@ class RuntimeController:
         elif profile == "aggressive":
             self._risk["max_leverage"] = 20.0
             self._risk["per_trade_risk_pct"] = 20.0
+        self._sync_kernel_runtime_overrides()
+        self._persist_risk_config()
         return dict(self._risk)
 
     async def close_position(self, *, symbol: str) -> dict[str, Any]:

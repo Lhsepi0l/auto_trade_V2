@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -10,6 +11,15 @@ from typing import Any
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _to_float(value: Any, *, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -114,6 +124,23 @@ class RuntimeStorage:
                 """.strip(),
                 (_utcnow_iso(),),
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_risk_config (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    config_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.strip()
+            )
+            conn.execute(
+                """
+                INSERT INTO runtime_risk_config(id, config_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """.strip(),
+                ("{}", _utcnow_iso()),
+            )
 
     def append_journal_event(
         self,
@@ -146,7 +173,9 @@ class RuntimeStorage:
             payload_json=payload_json,
         )
 
-    def list_journal_events(self, *, limit: int | None = None, ascending: bool = True) -> list[dict[str, Any]]:
+    def list_journal_events(
+        self, *, limit: int | None = None, ascending: bool = True
+    ) -> list[dict[str, Any]]:
         order = "ASC" if ascending else "DESC"
         sql = f"SELECT id, event_id, event_type, reason, payload_json, created_at FROM journal_events ORDER BY id {order}"
         params: tuple[Any, ...] = ()
@@ -205,7 +234,9 @@ class RuntimeStorage:
                 ),
             )
 
-    def mark_order_status(self, *, client_id: str, status: str, event_time_ms: int | None = None) -> None:
+    def mark_order_status(
+        self, *, client_id: str, status: str, event_time_ms: int | None = None
+    ) -> None:
         now = _utcnow_iso()
         with self._connect() as conn:
             conn.execute(
@@ -301,9 +332,13 @@ class RuntimeStorage:
                     """.strip(),
                     (
                         str(row.get("symbol") or ""),
-                        float(row.get("position_amt") or 0.0),
-                        float(row.get("entry_price")) if row.get("entry_price") is not None else None,
-                        float(row.get("unrealized_pnl")) if row.get("unrealized_pnl") is not None else None,
+                        _to_float(row.get("position_amt"), default=0.0),
+                        _to_float(row.get("entry_price"))
+                        if row.get("entry_price") is not None
+                        else None,
+                        _to_float(row.get("unrealized_pnl"))
+                        if row.get("unrealized_pnl") is not None
+                        else None,
                         snapshot_time_ms,
                         source_event_id,
                         now,
@@ -374,3 +409,31 @@ class RuntimeStorage:
         if row is None:
             return {"paused": False, "safe_mode": False}
         return {"paused": bool(row["paused"]), "safe_mode": bool(row["safe_mode"])}
+
+    def save_runtime_risk_config(self, *, config: dict[str, Any]) -> None:
+        payload = json.dumps(config, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_risk_config(id, config_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    config_json=excluded.config_json,
+                    updated_at=excluded.updated_at
+                """.strip(),
+                (payload, _utcnow_iso()),
+            )
+
+    def load_runtime_risk_config(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT config_json FROM runtime_risk_config WHERE id=1").fetchone()
+        if row is None:
+            return {}
+        raw = row["config_json"]
+        if not isinstance(raw, str) or not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

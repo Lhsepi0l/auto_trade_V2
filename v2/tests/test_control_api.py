@@ -441,3 +441,86 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
     assert lev.status_code == 200
     assert kernel.mapping.get("ETHUSDT") == 7.0
     assert kernel.max_leverage == 20.0
+
+
+def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    sqlite_path = str(tmp_path / "control_persist.sqlite3")
+    cfg.behavior.storage.sqlite_path = sqlite_path
+
+    storage1 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage1.ensure_schema()
+    state_store1 = EngineStateStore(storage=storage1, mode=cfg.mode)
+    event_bus1 = EventBus()
+    scheduler1 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus1)
+    ops1 = OpsController(state_store=state_store1, exchange=None)
+    kernel1 = build_default_kernel(
+        state_store=state_store1,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller1 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store1,
+        ops=ops1,
+        kernel=kernel1,
+        scheduler=scheduler1,
+        event_bus=event_bus1,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app1 = create_control_http_app(controller=controller1)
+    client1 = TestClient(app1)
+
+    assert (
+        client1.post("/set", json={"key": "margin_budget_usdt", "value": "250"}).status_code == 200
+    )
+    assert (
+        client1.post(
+            "/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"}
+        ).status_code
+        == 200
+    )
+    assert client1.post("/set", json={"key": "max_leverage", "value": "15"}).status_code == 200
+    assert (
+        client1.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 8}).status_code
+        == 200
+    )
+
+    storage2 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage2.ensure_schema()
+    state_store2 = EngineStateStore(storage=storage2, mode=cfg.mode)
+    event_bus2 = EventBus()
+    scheduler2 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus2)
+    ops2 = OpsController(state_store=state_store2, exchange=None)
+    kernel2 = build_default_kernel(
+        state_store=state_store2,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller2 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store2,
+        ops=ops2,
+        kernel=kernel2,
+        scheduler=scheduler2,
+        event_bus=event_bus2,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app2 = create_control_http_app(controller=controller2)
+    client2 = TestClient(app2)
+
+    risk = client2.get("/risk")
+    assert risk.status_code == 200
+    payload = risk.json()
+    assert payload["margin_budget_usdt"] == 250
+    assert payload["max_leverage"] == 15
+    assert payload["universe_symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert payload["symbol_leverage_map"]["ETHUSDT"] == 8.0

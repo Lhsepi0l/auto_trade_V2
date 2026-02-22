@@ -94,7 +94,9 @@ class EngineStateStore:
 
     def _hydrate_from_storage(self) -> None:
         ops = self._storage.get_ops_state()
-        self._state.operational = OperationalMode(paused=bool(ops["paused"]), safe_mode=bool(ops["safe_mode"]))
+        self._state.operational = OperationalMode(
+            paused=bool(ops["paused"]), safe_mode=bool(ops["safe_mode"])
+        )
 
         open_orders: dict[str, OrderState] = {}
         for row in self._storage.list_open_orders():
@@ -103,7 +105,9 @@ class EngineStateStore:
                 continue
             open_orders[client_id] = OrderState(
                 client_id=client_id,
-                exchange_id=str(row.get("exchange_id")) if row.get("exchange_id") is not None else None,
+                exchange_id=str(row.get("exchange_id"))
+                if row.get("exchange_id") is not None
+                else None,
                 symbol=str(row.get("symbol") or ""),
                 status=str(row.get("status") or ""),
                 order_type=str(row.get("order_type") or ""),
@@ -125,8 +129,12 @@ class EngineStateStore:
             positions[symbol] = PositionState(
                 symbol=symbol,
                 position_amt=position_amt,
-                entry_price=_to_float(row.get("entry_price")) if row.get("entry_price") is not None else None,
-                unrealized_pnl=_to_float(row.get("unrealized_pnl")) if row.get("unrealized_pnl") is not None else None,
+                entry_price=_to_float(row.get("entry_price"))
+                if row.get("entry_price") is not None
+                else None,
+                unrealized_pnl=_to_float(row.get("unrealized_pnl"))
+                if row.get("unrealized_pnl") is not None
+                else None,
             )
         self._state.current_position = positions
 
@@ -135,13 +143,19 @@ class EngineStateStore:
             fills.append(
                 FillState(
                     fill_id=str(row.get("fill_id") or ""),
-                    client_id=str(row.get("client_id")) if row.get("client_id") is not None else None,
-                    exchange_id=str(row.get("exchange_id")) if row.get("exchange_id") is not None else None,
+                    client_id=str(row.get("client_id"))
+                    if row.get("client_id") is not None
+                    else None,
+                    exchange_id=str(row.get("exchange_id"))
+                    if row.get("exchange_id") is not None
+                    else None,
                     symbol=str(row.get("symbol") or ""),
                     side=str(row.get("side") or ""),
                     qty=_to_float(row.get("qty")),
                     price=_to_float(row.get("price")),
-                    realized_pnl=_to_float(row.get("realized_pnl")) if row.get("realized_pnl") is not None else None,
+                    realized_pnl=_to_float(row.get("realized_pnl"))
+                    if row.get("realized_pnl") is not None
+                    else None,
                     fill_time_ms=_to_int_or_none(row.get("fill_time_ms")),
                 )
             )
@@ -150,7 +164,15 @@ class EngineStateStore:
     def get(self) -> EngineRuntimeState:
         return self._state
 
-    def set(self, *, mode: EngineMode | None = None, status: EngineStatus | None = None) -> EngineRuntimeState:
+    def load_runtime_risk_config(self) -> dict[str, Any]:
+        return self._storage.load_runtime_risk_config()
+
+    def save_runtime_risk_config(self, *, config: dict[str, Any]) -> None:
+        self._storage.save_runtime_risk_config(config=config)
+
+    def set(
+        self, *, mode: EngineMode | None = None, status: EngineStatus | None = None
+    ) -> EngineRuntimeState:
         current = self._state
         self._state = EngineRuntimeState(
             mode=mode if mode is not None else current.mode,
@@ -181,19 +203,25 @@ class EngineStateStore:
             exchange_id = str(order.get("i") or order.get("orderId") or "")
             trade_id = str(order.get("t") or "")
             execution_type = str(order.get("x") or "")
-            return f"ws-{event_type}-{event_ms}-{client_id}-{exchange_id}-{trade_id}-{execution_type}"
+            return (
+                f"ws-{event_type}-{event_ms}-{client_id}-{exchange_id}-{trade_id}-{execution_type}"
+            )
         if event_type == "ACCOUNT_UPDATE":
             return f"ws-{event_type}-{event_ms}"
         return self._event_hash(event_type=f"ws.{event_type}", payload=event, reason=None)
 
-    def startup_reconcile(self, *, snapshot: ResyncSnapshot, reason: str = "startup_reconcile") -> EngineRuntimeState:
+    def startup_reconcile(
+        self, *, snapshot: ResyncSnapshot, reason: str = "startup_reconcile"
+    ) -> EngineRuntimeState:
         payload = {
             "open_orders": snapshot.open_orders,
             "positions": snapshot.positions,
             "balances": snapshot.balances,
         }
         event_id = self._event_hash(event_type="reconcile.startup", payload=payload, reason=reason)
-        return self._apply_reconcile_payload(payload=payload, reason=reason, event_id=event_id, write_journal=True)
+        return self._apply_reconcile_payload(
+            payload=payload, reason=reason, event_id=event_id, write_journal=True
+        )
 
     def apply_reconciliation(
         self,
@@ -209,7 +237,9 @@ class EngineStateStore:
             "positions": positions,
             "balances": balances,
         }
-        effective_event_id = event_id or self._event_hash(event_type="reconcile", payload=payload, reason=reason)
+        effective_event_id = event_id or self._event_hash(
+            event_type="reconcile", payload=payload, reason=reason
+        )
         return self._apply_reconcile_payload(
             payload=payload,
             reason=reason,
@@ -242,7 +272,9 @@ class EngineStateStore:
         for item in open_orders_list:
             if not isinstance(item, dict):
                 continue
-            client_id = str(item.get("clientOrderId") or item.get("client_id") or item.get("c") or "")
+            client_id = str(
+                item.get("clientOrderId") or item.get("client_id") or item.get("c") or ""
+            )
             if not client_id:
                 continue
             exchange_id = item.get("orderId") or item.get("exchange_id") or item.get("i")
@@ -281,7 +313,9 @@ class EngineStateStore:
                 event_time_ms=event_time_ms,
             )
 
-        for stale_id in set(self._state.open_orders.keys()).difference(set(next_open_orders.keys())):
+        for stale_id in set(self._state.open_orders.keys()).difference(
+            set(next_open_orders.keys())
+        ):
             if persist_storage:
                 self._storage.mark_order_status(client_id=stale_id, status="CANCELED")
 
@@ -295,9 +329,17 @@ class EngineStateStore:
             symbol = str(item.get("symbol") or item.get("s") or "").upper()
             if not symbol:
                 continue
-            position_amt = _to_float(item.get("positionAmt") if item.get("positionAmt") is not None else item.get("pa"))
-            entry_price_raw = item.get("entryPrice") if item.get("entryPrice") is not None else item.get("ep")
-            unrealized_raw = item.get("unRealizedProfit") if item.get("unRealizedProfit") is not None else item.get("up")
+            position_amt = _to_float(
+                item.get("positionAmt") if item.get("positionAmt") is not None else item.get("pa")
+            )
+            entry_price_raw = (
+                item.get("entryPrice") if item.get("entryPrice") is not None else item.get("ep")
+            )
+            unrealized_raw = (
+                item.get("unRealizedProfit")
+                if item.get("unRealizedProfit") is not None
+                else item.get("up")
+            )
             entry_price = _to_float(entry_price_raw) if entry_price_raw is not None else None
             unrealized_pnl = _to_float(unrealized_raw) if unrealized_raw is not None else None
             if abs(position_amt) > 0:
@@ -328,13 +370,19 @@ class EngineStateStore:
         self._state.last_reconcile_at = _utcnow_iso()
         return self._state
 
-    def apply_exchange_event(self, *, event: dict[str, Any], reason: str | None = None) -> EngineRuntimeState:
+    def apply_exchange_event(
+        self, *, event: dict[str, Any], reason: str | None = None
+    ) -> EngineRuntimeState:
         event_type = str(event.get("e") or "UNKNOWN")
         event_id = self._event_id_for_ws(event)
-        inserted = self._journal.write(event_type=f"ws.{event_type}", payload=event, reason=reason, event_id=event_id)
+        inserted = self._journal.write(
+            event_type=f"ws.{event_type}", payload=event, reason=reason, event_id=event_id
+        )
         if not inserted:
             return self._state
-        return self._apply_exchange_event_payload(event_type=event_type, payload=event, source_event_id=event_id)
+        return self._apply_exchange_event_payload(
+            event_type=event_type, payload=event, source_event_id=event_id
+        )
 
     def _apply_exchange_event_payload(
         self,
@@ -392,7 +440,9 @@ class EngineStateStore:
 
             if str(order.get("x") or "") == "TRADE":
                 trade_id = order.get("t")
-                fill_time_ms = _to_int_or_none(order.get("T") if order.get("T") is not None else payload.get("E"))
+                fill_time_ms = _to_int_or_none(
+                    order.get("T") if order.get("T") is not None else payload.get("E")
+                )
                 fill_id = (
                     str(trade_id)
                     if trade_id is not None and str(trade_id) != ""
@@ -408,7 +458,9 @@ class EngineStateStore:
                         side=str(order.get("S") or ""),
                         qty=_to_float(order.get("l")),
                         price=_to_float(order.get("L")),
-                        realized_pnl=_to_float(order.get("rp")) if order.get("rp") is not None else None,
+                        realized_pnl=_to_float(order.get("rp"))
+                        if order.get("rp") is not None
+                        else None,
                         fill_time_ms=fill_time_ms,
                     )
                 if inserted_fill:
@@ -421,7 +473,9 @@ class EngineStateStore:
                             side=str(order.get("S") or ""),
                             qty=_to_float(order.get("l")),
                             price=_to_float(order.get("L")),
-                            realized_pnl=_to_float(order.get("rp")) if order.get("rp") is not None else None,
+                            realized_pnl=_to_float(order.get("rp"))
+                            if order.get("rp") is not None
+                            else None,
                             fill_time_ms=fill_time_ms,
                         )
                     )
@@ -490,7 +544,9 @@ class EngineStateStore:
             "paused": current.paused if paused is None else bool(paused),
             "safe_mode": current.safe_mode if safe_mode is None else bool(safe_mode),
         }
-        effective_event_id = event_id or self._event_hash(event_type="ops.UPDATE", payload=payload, reason=reason)
+        effective_event_id = event_id or self._event_hash(
+            event_type="ops.UPDATE", payload=payload, reason=reason
+        )
         inserted = self._journal.write(
             event_type="ops.UPDATE",
             payload=payload,
@@ -500,7 +556,9 @@ class EngineStateStore:
         if not inserted:
             return self._state
         self._storage.set_ops_state(paused=payload["paused"], safe_mode=payload["safe_mode"])
-        self._state.operational = OperationalMode(paused=payload["paused"], safe_mode=payload["safe_mode"])
+        self._state.operational = OperationalMode(
+            paused=payload["paused"], safe_mode=payload["safe_mode"]
+        )
         return self._state
 
     def replay_from_journal(self) -> EngineRuntimeState:
