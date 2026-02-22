@@ -23,6 +23,39 @@ from v2.ops import OpsController
 logger = logging.getLogger(__name__)
 
 
+_ACTION_LABELS_KO: dict[str, str] = {
+    "blocked": "차단",
+    "no_candidate": "대기",
+    "risk_rejected": "리스크거부",
+    "size_invalid": "수량오류",
+    "executed": "실행완료",
+    "dry_run": "모의실행",
+    "execution_failed": "실행실패",
+    "error": "오류",
+    "hold": "대기",
+    "enter": "진입",
+    "close": "청산",
+}
+
+
+_REASON_LABELS_KO: dict[str, str] = {
+    "ops_paused": "운영 일시정지",
+    "safe_mode": "안전모드",
+    "position_open": "기존 포지션 보유중",
+    "no_candidate": "현재 진입 후보가 없습니다",
+    "invalid_size": "유효하지 않은 주문 수량",
+    "would_execute": "모의모드에서 실행 가능",
+    "executed": "주문 실행 완료",
+    "execution_failed": "주문 실행 실패",
+    "risk_rejected": "리스크 검증에서 거부됨",
+    "size_invalid": "수량 검증 실패",
+    "tick_busy": "이미 판단 작업이 진행중",
+    "cycle_failed": "사이클 실행 실패",
+    "live_order_failed": "실주문 제출 실패",
+    "network_error": "네트워크 오류",
+}
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -442,9 +475,29 @@ class RuntimeController:
             "STOPPED": "중지",
             "KILLED": "강제중지",
         }.get(state_raw, state_raw)
-        last_action = str(self._last_cycle.get("last_action") or "-")
-        reason = str(self._last_cycle.get("last_decision_reason") or "-")
+        last_action = self._translate_status_token(
+            str(self._last_cycle.get("last_action") or "-"), _ACTION_LABELS_KO
+        )
+        reason = self._translate_status_token(
+            str(self._last_cycle.get("last_decision_reason") or "-"), _REASON_LABELS_KO
+        )
         return f"상태 알림: 엔진={state_ko}, 마지막판단={last_action}, 사유={reason}"
+
+    @staticmethod
+    def _translate_status_token(raw: str, labels: dict[str, str]) -> str:
+        value = str(raw or "").strip()
+        if not value or value == "-":
+            return "-"
+        direct = labels.get(value)
+        if direct is not None:
+            return direct
+        head, sep, tail = value.partition(":")
+        head_ko = labels.get(head)
+        if head_ko is None:
+            return value
+        if sep:
+            return f"{head_ko}:{tail}"
+        return head_ko
 
     def _emit_status_update(self, *, force: bool = False) -> bool:
         notify_interval = max(
