@@ -22,7 +22,9 @@ class _FakeResponse:
     async def defer(self, *, ephemeral: bool = True, thinking: bool = True) -> None:
         self._done = True
 
-    async def send_message(self, content: str, *, ephemeral: bool = True, embed: discord.Embed | None = None) -> None:
+    async def send_message(
+        self, content: str, *, ephemeral: bool = True, embed: discord.Embed | None = None
+    ) -> None:
         self._done = True
         if content:
             self.messages.append(content)
@@ -35,7 +37,13 @@ class _FakeFollowup:
         self.contents: List[str | None] = []
         self.embeds: List[discord.Embed] = []
 
-    async def send(self, content: str | None = None, *, embed: discord.Embed | None = None, ephemeral: bool = True) -> None:
+    async def send(
+        self,
+        content: str | None = None,
+        *,
+        embed: discord.Embed | None = None,
+        ephemeral: bool = True,
+    ) -> None:
         self.contents.append(content)
         if embed is not None:
             self.embeds.append(embed)
@@ -61,7 +69,13 @@ async def test_help_command_shows_beginner_guide(monkeypatch: pytest.MonkeyPatch
 
     assert it.followup.embeds, "help should return embed"
     em = it.followup.embeds[0]
-    all_text = "\n".join([str(em.title), str(em.description), "".join(str(v) for f in em.fields for v in [f.name, f.value])])
+    all_text = "\n".join(
+        [
+            str(em.title),
+            str(em.description),
+            "".join(str(v) for f in em.fields for v in [f.name, f.value]),
+        ]
+    )
     assert "초보자용 도움말" in str(em.title)
     assert "/panel" in all_text
     assert "관리자만 사용 가능합니다" in all_text
@@ -84,7 +98,7 @@ async def test_help_command_shows_admin_features(monkeypatch: pytest.MonkeyPatch
     all_text = "".join(str(v) for f in em.fields for v in [f.name, f.value])
     assert "/risk" in all_text
     assert "/set" in all_text
-    assert "고급설정" in all_text
+    assert "증거금 설정" in all_text
     for label in ADVANCED_PANEL_BUTTON_LABELS:
         assert f"`{label}`" in all_text
 

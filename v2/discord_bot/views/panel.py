@@ -18,7 +18,6 @@ from v2.discord_bot.services.discord_utils import is_admin as _is_admin
 from v2.discord_bot.services.discord_utils import safe_defer as _safe_defer
 from v2.discord_bot.services.formatting import format_status_payload
 from v2.discord_bot.ui_labels import (
-    ADVANCED_TOGGLE_LABEL,
     EXEC_MODE_SELECT_PLACEHOLDER,
     MARGIN_BUDGET_BUTTON_LABEL,
     PANIC_BUTTON_LABEL,
@@ -73,7 +72,6 @@ HELP_SIMPLE = (
             PANIC_BUTTON_LABEL,
             TICK_ONCE_BUTTON_LABEL,
             MARGIN_BUDGET_BUTTON_LABEL,
-            ADVANCED_TOGGLE_LABEL,
         ]
     )
     + " 입니다.\n"
@@ -130,6 +128,7 @@ REASON_HINT_MAP: dict[str, str] = {
     "notional_unavailable": "주문 기준금액 계산값이 없습니다.",
     "per_trade_risk_exceeded": "1회 위험 기준을 넘는 주문입니다.",
     "book_unavailable_market_disabled": "호가창 데이터가 없습니다.",
+    "tick_busy": "이전 판단 작업이 아직 진행 중입니다. 잠시 후 다시 시도해주세요.",
 }
 
 REASON_PREFIX_HINTS = {
@@ -1534,22 +1533,6 @@ class SimplePanelView(PanelViewBase):
         if not await self._guard(interaction):
             return
         await self._open_margin_budget_modal(interaction)
-
-    @discord.ui.button(label=ADVANCED_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
-    async def advanced_toggle_btn(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
-    ) -> None:
-        if not await self._guard(interaction):
-            return
-
-        await self._swap_view(
-            interaction,
-            AdvancedPanelView(
-                api=self.api,
-                message_id=self.message_id,
-                initial_payload=self._get_cached_status(max_age_sec=30.0),
-            ),
-        )
 
 
 class AdvancedPanelView(PanelViewBase):

@@ -422,7 +422,8 @@ class RuntimeController:
             return {"state": state.status, "updated_at": state.last_transition_at}
 
     def stop(self) -> dict[str, Any]:
-        with self._lock:
+        acquired = self._lock.acquire(timeout=1.0)
+        try:
             self._running = False
             self._thread_stop.set()
             self.ops.pause()
@@ -430,6 +431,9 @@ class RuntimeController:
             self._emit_status_update(force=True)
             state = self.state_store.get()
             return {"state": state.status, "updated_at": state.last_transition_at}
+        finally:
+            if acquired:
+                self._lock.release()
 
     async def panic(self) -> dict[str, Any]:
         self.stop()
@@ -507,8 +511,24 @@ class RuntimeController:
         }
 
     def tick_scheduler_now(self) -> dict[str, Any]:
-        with self._lock:
+        acquired = self._lock.acquire(timeout=0.5)
+        if not acquired:
+            self._last_cycle["tick_finished_at"] = _utcnow_iso()
+            self._last_cycle["last_action"] = "blocked"
+            self._last_cycle["last_decision_reason"] = "tick_busy"
+            self._last_cycle["last_error"] = "tick_busy"
+            self._last_cycle["candidate"] = None
+            self._last_cycle["last_candidate"] = None
+            return {
+                "ok": False,
+                "tick_sec": float(self.scheduler.tick_seconds),
+                "snapshot": dict(self._last_cycle),
+                "error": "tick_busy",
+            }
+        try:
             return self._run_cycle_once_locked()
+        finally:
+            self._lock.release()
 
     def send_daily_report(self) -> dict[str, Any]:
         payload = {

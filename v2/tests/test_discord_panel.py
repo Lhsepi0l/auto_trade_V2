@@ -140,25 +140,8 @@ async def test_simple_buttons_call_api_and_toggle(monkeypatch: pytest.MonkeyPatc
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     api.tick_scheduler_now.assert_awaited_once()
 
-    it = _FakeInteraction()
-    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[5]).callback(it)  # type: ignore[arg-type]
-    assert any(isinstance(item.get("view"), AdvancedPanelView) for item in it.response.edits)
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_advanced_toggle_survives_status_fetch_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    api = SimpleNamespace(
-        get_status=AsyncMock(side_effect=RuntimeError("status timeout")),
-    )
-    view = PanelView(api=api)  # type: ignore[arg-type]
-    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
-
-    it = _FakeInteraction()
-    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[5]).callback(it)  # type: ignore[arg-type]
-    assert any(isinstance(item.get("view"), AdvancedPanelView) for item in it.response.edits)
+    buttons = [str(item.label) for item in view.children if isinstance(item, discord.ui.Button)]
+    assert "고급설정" not in buttons
 
 
 @pytest.mark.unit

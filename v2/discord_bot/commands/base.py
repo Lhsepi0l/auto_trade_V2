@@ -17,7 +17,6 @@ from v2.discord_bot.services.formatting import (
 )
 from v2.discord_bot.ui_labels import (
     ADVANCED_PANEL_BUTTON_LABELS,
-    ADVANCED_TOGGLE_LABEL,
     MARGIN_BUDGET_BUTTON_LABEL,
     SIMPLE_PANEL_BUTTON_LABELS,
 )
@@ -161,7 +160,6 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
             f"`{SIMPLE_PANEL_BUTTON_LABELS[2]}` : 포지션 마감(선택)\n"
             f"`{SIMPLE_PANEL_BUTTON_LABELS[3]}` : 긴급 정리 및 상태확인\n"
             f"`{MARGIN_BUDGET_BUTTON_LABEL}` : 예산 기반 자금 배분 설정\n"
-            f"`{ADVANCED_TOGGLE_LABEL}` : 고급설정 패널 토글(자동/수동)\n"
         ),
         inline=False,
     )
@@ -329,7 +327,9 @@ class RemoteControl(commands.Cog):
             k = key.strip()
             if k not in RISK_KEYS:
                 await interaction.followup.send(
-                    "허용된 key가 아닙니다. 사용 가능한 key는 아래를 참고하세요:\n" + ", ".join(RISK_KEYS[:15]) + ", ...",
+                    "허용된 key가 아닙니다. 사용 가능한 key는 아래를 참고하세요:\n"
+                    + ", ".join(RISK_KEYS[:15])
+                    + ", ...",
                     ephemeral=True,
                 )
                 return
@@ -356,7 +356,6 @@ class RemoteControl(commands.Cog):
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except Exception as e:  # noqa: BLE001
             await interaction.followup.send(f"오류: {type(e).__name__}: {e}", ephemeral=True)
-
 
     @app_commands.command(name="profile", description="사전 저장된 프리셋을 빠르게 적용")
     @app_commands.describe(
