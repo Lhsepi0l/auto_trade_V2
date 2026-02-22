@@ -188,6 +188,8 @@ class RuntimeController:
         self._last_balance_available_usdt: float | None = None
         self._last_balance_wallet_usdt: float | None = None
         self._last_balance_fetched_mono: float | None = None
+        self._trailing_state: dict[str, dict[str, Any]] = {}
+        self._watchdog_state: dict[str, Any] = {}
         self._bracket_service = BracketService(
             planner=BracketPlanner(
                 cfg=BracketConfig(
@@ -387,7 +389,7 @@ class RuntimeController:
                 "running": bool(self._running),
                 **dict(self._last_cycle),
             },
-            "watchdog": {},
+            "watchdog": dict(self._watchdog_state),
             "capital_snapshot": {
                 "symbol": self.cfg.behavior.exchange.default_symbol,
                 "available_usdt": available_usdt,
@@ -698,22 +700,25 @@ class RuntimeController:
             return
         self._last_cycle["bracket"] = {"state": "active", "symbol": symbol, "policy": bracket_meta}
 
-    def _fetch_live_position_map(self) -> tuple[dict[str, float], bool]:
+    def _fetch_live_positions(
+        self,
+    ) -> tuple[dict[str, float], dict[str, dict[str, Any]], bool]:
         rest_client = self.rest_client
         if rest_client is None or not hasattr(rest_client, "get_positions"):
-            return {}, False
+            return {}, {}, False
         rest_client_any: Any = rest_client
         try:
             payload = _run_async_blocking(lambda: rest_client_any.get_positions(), timeout_sec=8.0)
         except FutureTimeoutError:
             logger.warning("live_positions_fetch_timed_out")
-            return {}, False
+            return {}, {}, False
         except Exception:  # noqa: BLE001
             logger.exception("live_positions_fetch_failed")
-            return {}, False
+            return {}, {}, False
         if not isinstance(payload, list):
-            return {}, False
+            return {}, {}, False
         out: dict[str, float] = {}
+        rows_by_symbol: dict[str, dict[str, Any]] = {}
         for row in payload:
             if not isinstance(row, dict):
                 continue
@@ -722,7 +727,103 @@ class RuntimeController:
                 continue
             position_amt = _to_float(row.get("positionAmt"), default=0.0)
             out[symbol] = position_amt
-        return out, True
+            rows_by_symbol[symbol] = dict(row)
+        return out, rows_by_symbol, True
+
+    @staticmethod
+    def _position_pnl_pct(row: dict[str, Any]) -> float | None:
+        position_amt = _to_float(row.get("positionAmt"), default=0.0)
+        if abs(position_amt) <= 0.0:
+            return None
+        entry_price = _to_float(row.get("entryPrice"), default=0.0)
+        mark_price = _to_float(row.get("markPrice"), default=0.0)
+        if entry_price <= 0.0 or mark_price <= 0.0:
+            return None
+        if position_amt > 0.0:
+            return ((mark_price - entry_price) / entry_price) * 100.0
+        return ((entry_price - mark_price) / entry_price) * 100.0
+
+    def _trailing_distance_pct(self, *, row: dict[str, Any]) -> float:
+        mode = str(self._risk.get("trailing_mode") or "PCT").strip().upper()
+        if mode == "ATR":
+            min_pct = _to_float(self._risk.get("atr_trail_min_pct"), default=0.6)
+            max_pct = _to_float(self._risk.get("atr_trail_max_pct"), default=1.8)
+            return _clamp(min_pct, 0.0, max(min_pct, max_pct))
+        return max(0.0, _to_float(self._risk.get("trail_distance_pnl_pct"), default=0.8))
+
+    def _maybe_trigger_trailing_exit(
+        self,
+        *,
+        symbol: str,
+        row: dict[str, Any],
+        rest_client: Any,
+    ) -> bool:
+        if not _to_bool(self._risk.get("trailing_enabled"), default=False):
+            return False
+
+        pnl_pct = self._position_pnl_pct(row)
+        if pnl_pct is None:
+            return False
+
+        now = time.monotonic()
+        state = self._trailing_state.get(symbol) or {
+            "first_seen_mono": now,
+            "peak_pnl_pct": pnl_pct,
+            "armed": False,
+        }
+        first_seen = _to_float(state.get("first_seen_mono"), default=now)
+        peak = max(_to_float(state.get("peak_pnl_pct"), default=pnl_pct), pnl_pct)
+        arm_pct = max(0.0, _to_float(self._risk.get("trail_arm_pnl_pct"), default=1.2))
+        grace_minutes = max(0, int(_to_float(self._risk.get("trail_grace_minutes"), default=0.0)))
+        distance_pct = self._trailing_distance_pct(row=row)
+
+        state["peak_pnl_pct"] = peak
+        state["armed"] = bool(state.get("armed")) or peak >= arm_pct
+        state["first_seen_mono"] = first_seen
+        self._trailing_state[symbol] = state
+
+        self._watchdog_state["last_trailing_symbol"] = symbol
+        self._watchdog_state["last_trailing_pnl_pct"] = round(float(pnl_pct), 4)
+        self._watchdog_state["last_trailing_peak_pct"] = round(float(peak), 4)
+        self._watchdog_state["last_trailing_distance_pct"] = round(float(distance_pct), 4)
+
+        if grace_minutes > 0 and (now - first_seen) < float(grace_minutes * 60):
+            return False
+        if not bool(state.get("armed")):
+            return False
+        if pnl_pct > (peak - distance_pct):
+            return False
+
+        position_amt = _to_float(row.get("positionAmt"), default=0.0)
+        if abs(position_amt) <= 0.0:
+            return False
+        exit_side: Literal["BUY", "SELL"] = "SELL" if position_amt > 0.0 else "BUY"
+        position_side = str(row.get("positionSide") or "BOTH").strip().upper() or "BOTH"
+        try:
+            _ = _run_async_blocking(
+                lambda s=symbol, side=exit_side, qty=abs(position_amt), ps=position_side: (
+                    rest_client.close_position_market(
+                        symbol=s,
+                        side=side,
+                        quantity=qty,
+                        position_side=ps,
+                    )
+                ),
+                timeout_sec=8.0,
+            )
+            _ = _run_async_blocking(
+                lambda s=symbol: self._bracket_service.cleanup_if_flat(symbol=s, position_amt=0.0),
+                timeout_sec=8.0,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("trailing_exit_failed symbol=%s", symbol)
+            return False
+
+        self._watchdog_state["last_trailing_triggered_symbol"] = symbol
+        self._watchdog_state["last_trailing_triggered_at"] = _utcnow_iso()
+        self._watchdog_state["last_trailing_triggered_pnl_pct"] = round(float(pnl_pct), 4)
+        self._trailing_state.pop(symbol, None)
+        return True
 
     def _list_tracked_brackets(self) -> list[dict[str, Any]]:
         rows = self.state_store.runtime_storage().list_bracket_states()
@@ -747,7 +848,7 @@ class RuntimeController:
         if not tracked:
             return
 
-        positions, positions_ok = self._fetch_live_position_map()
+        positions, position_rows, positions_ok = self._fetch_live_positions()
         for row in tracked:
             symbol = str(row.get("symbol") or "").strip().upper()
             if not symbol:
@@ -792,6 +893,15 @@ class RuntimeController:
                     except Exception:  # noqa: BLE001
                         logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
                     continue
+
+                position_row = position_rows.get(symbol)
+                if isinstance(position_row, dict):
+                    if self._maybe_trigger_trailing_exit(
+                        symbol=symbol,
+                        row=position_row,
+                        rest_client=rest_client_any,
+                    ):
+                        continue
 
             tp_open = tp_id in open_ids
             sl_open = sl_id in open_ids

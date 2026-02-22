@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -678,6 +679,120 @@ def test_control_api_bracket_poller_cleans_open_algos_when_position_flat(
     assert rows[0]["state"] == "CLEANED"
     canceled = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
     assert {"tp-2", "sl-2", "extra-3"}.issubset(canceled)
+
+
+def test_control_api_trailing_exit_closes_position_on_profit_drawdown(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_trailing.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-t",
+        sl_order_client_id="sl-t",
+        state="ACTIVE",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="no_candidate",
+                candidate=None,
+            )
+
+    class _AlgoRESTTrailing:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+            self.close_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [
+                {"symbol": "BTCUSDT", "clientAlgoId": "tp-t"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "sl-t"},
+            ]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.01",
+                    "entryPrice": "100.0",
+                    "markPrice": "101.0",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+        async def close_position_market(
+            self,
+            *,
+            symbol: str,
+            side: str,
+            quantity: float,
+            position_side: str = "BOTH",
+        ) -> dict[str, str]:
+            self.close_calls.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": str(quantity),
+                    "position_side": position_side,
+                }
+            )
+            return {}
+
+    rest = _AlgoRESTTrailing()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    controller._risk["trailing_enabled"] = True
+    controller._risk["trailing_mode"] = "PCT"
+    controller._risk["trail_arm_pnl_pct"] = 1.0
+    controller._risk["trail_distance_pnl_pct"] = 0.5
+    controller._risk["trail_grace_minutes"] = 0
+    controller._trailing_state["BTCUSDT"] = {
+        "first_seen_mono": time.monotonic() - 600.0,
+        "peak_pnl_pct": 2.0,
+        "armed": True,
+    }
+
+    controller._poll_brackets_once()
+
+    assert len(rest.close_calls) == 1
+    close = rest.close_calls[0]
+    assert close["symbol"] == "BTCUSDT"
+    assert close["side"] == "SELL"
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    assert float(controller._status_snapshot()["watchdog"]["last_trailing_distance_pct"]) == 0.5
 
 
 def test_control_api_adaptive_regime_tpsl_scales_with_bull_multiplier(
