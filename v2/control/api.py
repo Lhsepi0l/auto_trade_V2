@@ -401,11 +401,16 @@ class RuntimeController:
         return out
 
     def _status_summary(self) -> str:
-        return (
-            f"status update: state={self.state_store.get().status}, "
-            f"last_action={self._last_cycle.get('last_action')}, "
-            f"reason={self._last_cycle.get('last_decision_reason')}"
-        )
+        state_raw = str(self.state_store.get().status)
+        state_ko = {
+            "RUNNING": "실행중",
+            "PAUSED": "일시정지",
+            "STOPPED": "중지",
+            "KILLED": "강제중지",
+        }.get(state_raw, state_raw)
+        last_action = str(self._last_cycle.get("last_action") or "-")
+        reason = str(self._last_cycle.get("last_decision_reason") or "-")
+        return f"상태 알림: 엔진={state_ko}, 마지막판단={last_action}, 사유={reason}"
 
     def _emit_status_update(self, *, force: bool = False) -> bool:
         notify_interval = max(
