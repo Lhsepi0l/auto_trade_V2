@@ -32,6 +32,7 @@ class Candidate:
     reason: str | None = None
     entry_price: float | None = None
     volatility_hint: float | None = None
+    regime_hint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,13 +69,11 @@ class KernelCycleResult:
 
 
 class CandidateSelector(Protocol):
-    def select(self, *, context: KernelContext) -> Candidate | None:
-        ...
+    def select(self, *, context: KernelContext) -> Candidate | None: ...
 
 
 class RiskGate(Protocol):
-    def evaluate(self, *, candidate: Candidate, context: KernelContext) -> RiskDecision:
-        ...
+    def evaluate(self, *, candidate: Candidate, context: KernelContext) -> RiskDecision: ...
 
 
 class Sizer(Protocol):
@@ -84,8 +83,7 @@ class Sizer(Protocol):
         candidate: Candidate,
         risk: RiskDecision,
         context: KernelContext,
-    ) -> SizePlan:
-        ...
+    ) -> SizePlan: ...
 
 
 class ExecutionService(Protocol):
@@ -95,5 +93,4 @@ class ExecutionService(Protocol):
         candidate: Candidate,
         size: SizePlan,
         context: KernelContext,
-    ) -> ExecutionResult:
-        ...
+    ) -> ExecutionResult: ...

@@ -170,6 +170,9 @@ class EngineStateStore:
     def save_runtime_risk_config(self, *, config: dict[str, Any]) -> None:
         self._storage.save_runtime_risk_config(config=config)
 
+    def runtime_storage(self) -> RuntimeStorage:
+        return self._storage
+
     def set(
         self, *, mode: EngineMode | None = None, status: EngineStatus | None = None
     ) -> EngineRuntimeState:

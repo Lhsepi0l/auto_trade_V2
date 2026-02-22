@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from v2.engine import EngineStateStore, OrderManager
 from v2.exchange import BinanceRESTError
 from v2.notify import Notifier
 from v2.ops import OpsController
+from v2.tpsl import BracketConfig, BracketPlanner, BracketService
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ _REASON_LABELS_KO: dict[str, str] = {
     "tick_busy": "이미 판단 작업이 진행중",
     "cycle_failed": "사이클 실행 실패",
     "live_order_failed": "실주문 제출 실패",
+    "bracket_failed": "TP/SL 브래킷 주문 실패",
     "network_error": "네트워크 오류",
 }
 
@@ -66,6 +68,25 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(str(value))
     except (TypeError, ValueError):
         return default
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
 
 
 def _parse_value(raw: str) -> Any:
@@ -138,6 +159,8 @@ class RuntimeController:
         self._thread_stop = threading.Event()
         self._status_thread_stop = threading.Event()
         self._status_thread: threading.Thread | None = None
+        self._bracket_thread_stop = threading.Event()
+        self._bracket_thread: threading.Thread | None = None
         self._running = False
         self._last_cycle: dict[str, Any] = {
             "tick_started_at": None,
@@ -147,6 +170,7 @@ class RuntimeController:
             "last_error": None,
             "candidate": None,
             "last_candidate": None,
+            "bracket": None,
         }
         self._report_stats = {
             "entries": 0,
@@ -164,6 +188,17 @@ class RuntimeController:
         self._last_balance_available_usdt: float | None = None
         self._last_balance_wallet_usdt: float | None = None
         self._last_balance_fetched_mono: float | None = None
+        self._bracket_service = BracketService(
+            planner=BracketPlanner(
+                cfg=BracketConfig(
+                    take_profit_pct=float(self.cfg.behavior.tpsl.take_profit_pct),
+                    stop_loss_pct=float(self.cfg.behavior.tpsl.stop_loss_pct),
+                )
+            ),
+            storage=self.state_store.runtime_storage(),
+            rest_client=self.rest_client,
+            mode=self.cfg.mode,
+        )
         self.state_store.set(mode=self.cfg.mode, status="STOPPED")
         self.scheduler.tick_seconds = max(
             1,
@@ -174,8 +209,23 @@ class RuntimeController:
                 )
             ),
         )
+        self._recover_brackets_on_boot()
+        self._start_bracket_loop()
         self._start_status_loop()
         self._sync_kernel_runtime_overrides()
+
+    def _recover_brackets_on_boot(self) -> None:
+        if self.cfg.mode != "live" or self.rest_client is None:
+            return
+        try:
+            _ = _run_async_blocking(
+                lambda: self._bracket_service.recover(),
+                timeout_sec=10.0,
+            )
+        except FutureTimeoutError:
+            logger.warning("bracket_recover_timed_out")
+        except Exception:  # noqa: BLE001
+            logger.exception("bracket_recover_failed")
 
     def _load_persisted_risk_config(self) -> None:
         try:
@@ -267,6 +317,26 @@ class RuntimeController:
             "atr_trail_k": 2.0,
             "atr_trail_min_pct": 0.6,
             "atr_trail_max_pct": 1.8,
+            "tpsl_policy": "adaptive_regime",
+            "tpsl_method": "percent",
+            "tpsl_base_take_profit_pct": float(tpsl_cfg.take_profit_pct),
+            "tpsl_base_stop_loss_pct": float(tpsl_cfg.stop_loss_pct),
+            "tpsl_regime_mult_bull": 1.15,
+            "tpsl_regime_mult_bear": 1.15,
+            "tpsl_regime_mult_sideways": 0.9,
+            "tpsl_regime_mult_unknown": 1.0,
+            "tpsl_volatility_norm_enabled": False,
+            "tpsl_atr_pct_ref": 0.01,
+            "tpsl_vol_mult_min": 0.85,
+            "tpsl_vol_mult_max": 1.2,
+            "tpsl_tp_min_pct": 0.0025,
+            "tpsl_tp_max_pct": 0.06,
+            "tpsl_sl_min_pct": 0.0025,
+            "tpsl_sl_max_pct": 0.03,
+            "tpsl_rr_min": 0.8,
+            "tpsl_rr_max": 3.0,
+            "tpsl_tp_atr": 2.0,
+            "tpsl_sl_atr": 1.0,
             "tf_weight_4h": 0.25,
             "tf_weight_1h": 0.25,
             "tf_weight_30m": 0.25,
@@ -460,8 +530,308 @@ class RuntimeController:
         self._last_balance_error_detail = None
         return available, wallet, "exchange"
 
+    def _resolve_bracket_config_for_cycle(
+        self,
+        *,
+        cycle: KernelCycleResult,
+        entry_price: float,
+    ) -> tuple[BracketConfig, float | None, dict[str, Any]]:
+        base_tp = max(
+            0.0,
+            _to_float(
+                self._risk.get("tpsl_base_take_profit_pct"),
+                default=float(self.cfg.behavior.tpsl.take_profit_pct),
+            ),
+        )
+        base_sl = max(
+            0.0,
+            _to_float(
+                self._risk.get("tpsl_base_stop_loss_pct"),
+                default=float(self.cfg.behavior.tpsl.stop_loss_pct),
+            ),
+        )
+        policy = str(self._risk.get("tpsl_policy") or "adaptive_regime").strip().lower()
+        method_raw = str(self._risk.get("tpsl_method") or "percent").strip().lower()
+        method: Literal["percent", "atr"] = "atr" if method_raw == "atr" else "percent"
+
+        regime = str(getattr(cycle.candidate, "regime_hint", "") or "").strip().upper()
+        bull_mult = _to_float(self._risk.get("tpsl_regime_mult_bull"), default=1.15)
+        bear_mult = _to_float(self._risk.get("tpsl_regime_mult_bear"), default=1.15)
+        sideways_mult = _to_float(self._risk.get("tpsl_regime_mult_sideways"), default=0.9)
+        unknown_mult = _to_float(self._risk.get("tpsl_regime_mult_unknown"), default=1.0)
+        regime_mult = unknown_mult
+        if policy == "adaptive_regime":
+            if regime == "BULL":
+                regime_mult = bull_mult
+            elif regime == "BEAR":
+                regime_mult = bear_mult
+            elif regime == "SIDEWAYS":
+                regime_mult = sideways_mult
+
+        tp_pct = base_tp * regime_mult
+        sl_pct = base_sl * regime_mult
+
+        volatility_mult = 1.0
+        atr_hint = _to_float(getattr(cycle.candidate, "volatility_hint", 0.0), default=0.0)
+        if _to_bool(self._risk.get("tpsl_volatility_norm_enabled"), default=False):
+            if atr_hint > 0.0 and entry_price > 0.0:
+                atr_pct = atr_hint / max(entry_price, 1e-9)
+                atr_pct_ref = max(
+                    1e-6,
+                    _to_float(self._risk.get("tpsl_atr_pct_ref"), default=0.01),
+                )
+                raw_mult = (atr_pct / atr_pct_ref) ** 0.5
+                vol_min = max(0.1, _to_float(self._risk.get("tpsl_vol_mult_min"), default=0.85))
+                vol_max = max(vol_min, _to_float(self._risk.get("tpsl_vol_mult_max"), default=1.2))
+                volatility_mult = _clamp(raw_mult, vol_min, vol_max)
+                tp_pct *= volatility_mult
+                sl_pct *= volatility_mult
+
+        tp_min = max(0.0, _to_float(self._risk.get("tpsl_tp_min_pct"), default=0.0025))
+        tp_max = max(tp_min, _to_float(self._risk.get("tpsl_tp_max_pct"), default=0.06))
+        sl_min = max(0.0, _to_float(self._risk.get("tpsl_sl_min_pct"), default=0.0025))
+        sl_max = max(sl_min, _to_float(self._risk.get("tpsl_sl_max_pct"), default=0.03))
+        tp_pct = _clamp(tp_pct, tp_min, tp_max)
+        sl_pct = _clamp(sl_pct, sl_min, sl_max)
+
+        rr_min = max(0.1, _to_float(self._risk.get("tpsl_rr_min"), default=0.8))
+        rr_max = max(rr_min, _to_float(self._risk.get("tpsl_rr_max"), default=3.0))
+        if sl_pct > 0.0:
+            rr_now = tp_pct / sl_pct
+            if rr_now < rr_min:
+                tp_pct = _clamp(sl_pct * rr_min, tp_min, tp_max)
+            elif rr_now > rr_max:
+                tp_pct = _clamp(sl_pct * rr_max, tp_min, tp_max)
+
+        atr_for_bracket: float | None = None
+        if method == "atr":
+            if atr_hint > 0.0:
+                atr_for_bracket = atr_hint
+            else:
+                method = "percent"
+
+        cfg = BracketConfig(
+            method=method,
+            take_profit_pct=tp_pct,
+            stop_loss_pct=sl_pct,
+            tp_atr=max(0.1, _to_float(self._risk.get("tpsl_tp_atr"), default=2.0)),
+            sl_atr=max(0.1, _to_float(self._risk.get("tpsl_sl_atr"), default=1.0)),
+            working_type="MARK_PRICE",
+            price_protect=True,
+        )
+        meta = {
+            "policy": policy,
+            "regime": regime or "UNKNOWN",
+            "regime_mult": regime_mult,
+            "volatility_mult": volatility_mult,
+            "method": cfg.method,
+            "tp_pct": tp_pct,
+            "sl_pct": sl_pct,
+        }
+        return cfg, atr_for_bracket, meta
+
+    def _place_brackets_for_cycle(self, *, cycle: KernelCycleResult) -> None:
+        self._last_cycle["bracket"] = None
+        if cycle.state != "executed":
+            return
+        if cycle.candidate is None or cycle.size is None:
+            return
+
+        symbol = str(cycle.candidate.symbol or "").strip().upper()
+        side = str(cycle.candidate.side or "").strip().upper()
+        qty = _to_float(cycle.size.qty, default=0.0)
+        entry_price = _to_float(cycle.candidate.entry_price, default=0.0)
+        if not symbol or side not in {"BUY", "SELL"} or qty <= 0.0 or entry_price <= 0.0:
+            self._last_cycle["bracket"] = {
+                "state": "skipped",
+                "reason": "invalid_bracket_inputs",
+            }
+            return
+
+        bracket_cfg, atr_for_bracket, bracket_meta = self._resolve_bracket_config_for_cycle(
+            cycle=cycle,
+            entry_price=entry_price,
+        )
+        runtime_bracket_service = BracketService(
+            planner=BracketPlanner(cfg=bracket_cfg),
+            storage=self.state_store.runtime_storage(),
+            rest_client=self.rest_client,
+            mode=self.cfg.mode,
+        )
+
+        try:
+
+            def _create_bracket(entry_side: Literal["BUY", "SELL"]):
+                return runtime_bracket_service.create_and_place(
+                    symbol=symbol,
+                    entry_side=entry_side,
+                    entry_price=entry_price,
+                    quantity=qty,
+                    atr=atr_for_bracket,
+                )
+
+            out = _run_async_blocking(
+                (lambda: _create_bracket("BUY"))
+                if side == "BUY"
+                else (lambda: _create_bracket("SELL")),
+                timeout_sec=10.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            detail = str(exc).strip()
+            err = f"bracket_failed:{type(exc).__name__}"
+            if detail:
+                err = f"{err}:{detail}"
+            logger.exception("runtime_bracket_place_failed symbol=%s", symbol)
+            self._last_cycle["bracket"] = {"state": "failed", "error": err}
+            self._last_cycle["last_error"] = err
+            return
+
+        planned = out.get("planned") if isinstance(out, dict) else None
+        if isinstance(planned, dict):
+            self._last_cycle["bracket"] = {
+                "state": "active",
+                "symbol": symbol,
+                "take_profit": _to_float(planned.get("take_profit_price"), default=0.0),
+                "stop_loss": _to_float(planned.get("stop_loss_price"), default=0.0),
+                "policy": bracket_meta,
+            }
+            return
+        self._last_cycle["bracket"] = {"state": "active", "symbol": symbol, "policy": bracket_meta}
+
+    def _fetch_live_position_map(self) -> tuple[dict[str, float], bool]:
+        rest_client = self.rest_client
+        if rest_client is None or not hasattr(rest_client, "get_positions"):
+            return {}, False
+        rest_client_any: Any = rest_client
+        try:
+            payload = _run_async_blocking(lambda: rest_client_any.get_positions(), timeout_sec=8.0)
+        except FutureTimeoutError:
+            logger.warning("live_positions_fetch_timed_out")
+            return {}, False
+        except Exception:  # noqa: BLE001
+            logger.exception("live_positions_fetch_failed")
+            return {}, False
+        if not isinstance(payload, list):
+            return {}, False
+        out: dict[str, float] = {}
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            position_amt = _to_float(row.get("positionAmt"), default=0.0)
+            out[symbol] = position_amt
+        return out, True
+
+    def _list_tracked_brackets(self) -> list[dict[str, Any]]:
+        rows = self.state_store.runtime_storage().list_bracket_states()
+        tracked: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol") or "").strip().upper()
+            state = str(row.get("state") or "").strip().upper()
+            if not symbol or state == "CLEANED":
+                continue
+            tracked.append(row)
+        return tracked
+
+    def _poll_brackets_once(self) -> None:
+        rest_client = self.rest_client
+        if self.cfg.mode != "live" or rest_client is None:
+            return
+        rest_client_any: Any = rest_client
+
+        tracked = self._list_tracked_brackets()
+        if not tracked:
+            return
+
+        positions, positions_ok = self._fetch_live_position_map()
+        for row in tracked:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            tp_id = str(row.get("tp_order_client_id") or "").strip()
+            sl_id = str(row.get("sl_order_client_id") or "").strip()
+            if not tp_id or not sl_id:
+                continue
+
+            try:
+                open_orders = _run_async_blocking(
+                    lambda s=symbol: rest_client_any.get_open_algo_orders(symbol=s),
+                    timeout_sec=8.0,
+                )
+            except FutureTimeoutError:
+                logger.warning("open_algo_orders_fetch_timed_out symbol=%s", symbol)
+                continue
+            except Exception:  # noqa: BLE001
+                logger.exception("open_algo_orders_fetch_failed symbol=%s", symbol)
+                continue
+
+            open_ids: set[str] = set()
+            if isinstance(open_orders, list):
+                for item in open_orders:
+                    if not isinstance(item, dict):
+                        continue
+                    cid = str(item.get("clientAlgoId") or item.get("clientOrderId") or "").strip()
+                    if cid:
+                        open_ids.add(cid)
+
+            if positions_ok:
+                position_amt = _to_float(positions.get(symbol), default=0.0)
+                if abs(position_amt) <= 0.0:
+                    try:
+                        _ = _run_async_blocking(
+                            lambda s=symbol: self._bracket_service.cleanup_if_flat(
+                                symbol=s,
+                                position_amt=0.0,
+                            ),
+                            timeout_sec=8.0,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
+                    continue
+
+            tp_open = tp_id in open_ids
+            sl_open = sl_id in open_ids
+            if tp_open == sl_open:
+                continue
+
+            filled_id = sl_id if tp_open else tp_id
+            try:
+                _ = _run_async_blocking(
+                    lambda s=symbol, cid=filled_id: self._bracket_service.on_leg_filled(
+                        symbol=s,
+                        filled_client_algo_id=cid,
+                    ),
+                    timeout_sec=8.0,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
+
+    def _start_bracket_loop(self) -> None:
+        if self.cfg.mode != "live" or self.rest_client is None:
+            return
+        if self._bracket_thread is not None and self._bracket_thread.is_alive():
+            return
+
+        def _worker() -> None:
+            while not self._bracket_thread_stop.is_set():
+                interval = max(
+                    5.0, _to_float(self._risk.get("watchdog_interval_sec"), default=15.0)
+                )
+                if self._bracket_thread_stop.wait(timeout=interval):
+                    break
+                self._poll_brackets_once()
+
+        self._bracket_thread = threading.Thread(target=_worker, daemon=True)
+        self._bracket_thread.start()
+
     def _run_cycle_once_locked(self) -> dict[str, Any]:
         self._last_cycle["tick_started_at"] = _utcnow_iso()
+        self._last_cycle["last_error"] = None
+        self._last_cycle["bracket"] = None
         try:
             cycle: KernelCycleResult = self.kernel.run_once()
             self.scheduler.run_once()
@@ -473,6 +843,8 @@ class RuntimeController:
                 )
                 self.order_manager.submit({"symbol": submit_symbol, "mode": self.cfg.mode})
 
+            self._place_brackets_for_cycle(cycle=cycle)
+
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = cycle.state
             self._last_cycle["last_decision_reason"] = cycle.reason
@@ -481,16 +853,20 @@ class RuntimeController:
                     "symbol": cycle.candidate.symbol,
                     "side": cycle.candidate.side,
                     "score": cycle.candidate.score,
+                    "regime_hint": getattr(cycle.candidate, "regime_hint", None),
+                    "volatility_hint": getattr(cycle.candidate, "volatility_hint", None),
                 }
                 if cycle.candidate is not None
                 else None
             )
             self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
-            self._last_cycle["last_error"] = (
+            cycle_error = (
                 cycle.reason
                 if cycle.state in {"blocked", "risk_rejected", "execution_failed"}
                 else None
             )
+            existing_error = str(self._last_cycle.get("last_error") or "").strip()
+            self._last_cycle["last_error"] = existing_error or cycle_error
 
             self._report_stats["total_records"] += 1
             if cycle.state in {"executed", "dry_run"}:
@@ -514,6 +890,7 @@ class RuntimeController:
             self._last_cycle["candidate"] = None
             self._last_cycle["last_candidate"] = None
             self._last_cycle["last_error"] = error_message
+            self._last_cycle["bracket"] = None
             self._report_stats["total_records"] += 1
             self._report_stats["errors"] += 1
             ok = False

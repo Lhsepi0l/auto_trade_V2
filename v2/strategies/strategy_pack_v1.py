@@ -815,7 +815,13 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
                 continue
 
             entry_price = _to_float(decision.get("entry_price"))
-            stop_hint = _to_float(decision.get("stop_hint"))
+            indicators = decision.get("indicators") if isinstance(decision, dict) else None
+            atr_hint = None
+            if isinstance(indicators, dict):
+                atr_hint = _to_float(indicators.get("atr_1h"))
+            if atr_hint is None:
+                atr_hint = _to_float(decision.get("stop_hint"))
+            regime_hint = str(decision.get("regime") or "").strip().upper() or None
             candidates.append(
                 Candidate(
                     symbol=str(decision.get("symbol") or symbol),
@@ -823,7 +829,8 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
                     score=score,
                     reason=str(decision.get("reason") or "intent_provided"),
                     entry_price=entry_price,
-                    volatility_hint=stop_hint,
+                    volatility_hint=atr_hint,
+                    regime_hint=regime_hint,
                 )
             )
 

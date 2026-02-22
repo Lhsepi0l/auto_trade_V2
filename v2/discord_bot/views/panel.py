@@ -140,6 +140,7 @@ REASON_PREFIX_HINTS = {
     "dd_limit_reached:": "DD 제한에 걸림",
     "notional_": "주문 기준금액이 제한 조건을 벗어났습니다",
     "cycle_failed:": "즉시 판단 실행 중 내부 오류가 발생했습니다",
+    "bracket_failed:": "진입 후 TP/SL 브래킷 주문 생성에 실패했습니다",
 }
 
 BALANCE_ERROR_HINT_MAP: dict[str, str] = {

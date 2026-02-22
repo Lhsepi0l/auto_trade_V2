@@ -466,6 +466,29 @@ async def test_tick_once_handles_runtime_error(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_maps_bracket_failure_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "executed",
+                    "last_error": "bracket_failed:RuntimeError:algo_reject",
+                    "last_decision_reason": "executed",
+                },
+            }
+        ),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("브래킷 주문 생성에 실패" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tick_once_handles_read_timeout_with_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     api = SimpleNamespace(
         tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ReadTimeout")),

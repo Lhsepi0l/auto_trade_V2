@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from v2.clean_room import build_default_kernel
+from v2.clean_room.contracts import Candidate, ExecutionResult, KernelCycleResult, SizePlan
 from v2.config.loader import load_effective_config
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
@@ -257,6 +258,564 @@ def test_control_api_tick_handles_kernel_exception(tmp_path) -> None:  # type: i
     assert payload["ok"] is False
     assert str(payload.get("error", "")).startswith("cycle_failed:")
     assert payload["snapshot"]["last_action"] == "error"
+
+
+def test_control_api_tick_places_tpsl_brackets_after_live_execution(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="ETHUSDT",
+                    side="BUY",
+                    score=1.0,
+                    reason="test",
+                    entry_price=2000.0,
+                ),
+                size=SizePlan(
+                    symbol="ETHUSDT",
+                    qty=0.02,
+                    leverage=5.0,
+                    notional=40.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(ok=True, order_id="oid-1", reason="live_order_submitted"),
+            )
+
+    class _AlgoREST:
+        def __init__(self) -> None:
+            self.algo_orders: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.algo_orders.append(dict(params))
+            return {"clientAlgoId": str(params.get("clientAlgoId") or "")}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+    rest = _AlgoREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    payload = tick.json()
+    assert payload["ok"] is True
+    assert payload["snapshot"]["last_action"] == "executed"
+    assert payload["snapshot"]["bracket"]["state"] == "active"
+
+    assert len(rest.algo_orders) == 2
+    algo_types = {str(row.get("type") or "") for row in rest.algo_orders}
+    assert algo_types == {"TAKE_PROFIT_MARKET", "STOP_MARKET"}
+
+
+def test_control_api_tick_reports_bracket_failure_in_last_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_fail.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=1.0,
+                    reason="test",
+                    entry_price=100000.0,
+                ),
+                size=SizePlan(
+                    symbol="BTCUSDT",
+                    qty=0.001,
+                    leverage=5.0,
+                    notional=100.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(ok=True, order_id="oid-2", reason="live_order_submitted"),
+            )
+
+    class _AlgoRESTFail:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            raise RuntimeError("algo_reject")
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_AlgoRESTFail(),
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    payload = tick.json()
+    assert payload["ok"] is True
+    assert payload["snapshot"]["last_action"] == "executed"
+    assert str(payload["snapshot"].get("last_error") or "").startswith("bracket_failed:")
+    bracket = payload["snapshot"].get("bracket")
+    assert isinstance(bracket, dict)
+    assert bracket.get("state") == "failed"
+
+
+def test_control_api_recovers_active_brackets_on_live_boot(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_recover.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-1",
+        sl_order_client_id="sl-1",
+        state="CREATED",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="no_candidate",
+                candidate=None,
+            )
+
+    class _AlgoRESTRecover:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    _ = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_AlgoRESTRecover(),
+    )
+
+    rows = storage.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "ACTIVE"
+
+
+def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_poller.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-1",
+        sl_order_client_id="sl-1",
+        state="ACTIVE",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="no_candidate",
+                candidate=None,
+            )
+
+    class _AlgoRESTPoller:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    rest = _AlgoRESTPoller()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "CLEANED"
+    assert len(rest.cancel_calls) == 1
+    assert str(rest.cancel_calls[0].get("clientAlgoId") or "") == "tp-1"
+
+
+def test_control_api_bracket_poller_cleans_open_algos_when_position_flat(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_flat.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="ETHUSDT",
+        tp_order_client_id="tp-2",
+        sl_order_client_id="sl-2",
+        state="ACTIVE",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="no_candidate",
+                candidate=None,
+            )
+
+    class _AlgoRESTFlat:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [
+                {"symbol": "ETHUSDT", "clientAlgoId": "tp-2"},
+                {"symbol": "ETHUSDT", "clientAlgoId": "sl-2"},
+                {"symbol": "ETHUSDT", "clientAlgoId": "extra-3"},
+            ]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "ETHUSDT", "positionAmt": "0"}]
+
+    rest = _AlgoRESTFlat()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    canceled = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
+    assert {"tp-2", "sl-2", "extra-3"}.issubset(canceled)
+
+
+def test_control_api_adaptive_regime_tpsl_scales_with_bull_multiplier(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_adaptive.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=1.0,
+                    reason="entry_pullback_long",
+                    entry_price=100.0,
+                    regime_hint="BULL",
+                ),
+                size=SizePlan(
+                    symbol="BTCUSDT",
+                    qty=0.01,
+                    leverage=3.0,
+                    notional=1.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(
+                    ok=True, order_id="oid-adaptive", reason="live_order_submitted"
+                ),
+            )
+
+    class _AlgoREST:
+        def __init__(self) -> None:
+            self.algo_orders: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.algo_orders.append(dict(params))
+            return {"clientAlgoId": str(params.get("clientAlgoId") or "")}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    rest = _AlgoREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    assert (
+        client.post("/set", json={"key": "tpsl_policy", "value": "adaptive_regime"}).status_code
+        == 200
+    )
+    assert (
+        client.post("/set", json={"key": "tpsl_base_take_profit_pct", "value": "0.02"}).status_code
+        == 200
+    )
+    assert (
+        client.post("/set", json={"key": "tpsl_base_stop_loss_pct", "value": "0.01"}).status_code
+        == 200
+    )
+    assert (
+        client.post("/set", json={"key": "tpsl_regime_mult_bull", "value": "1.2"}).status_code
+        == 200
+    )
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    assert tick.json()["ok"] is True
+
+    assert len(rest.algo_orders) == 2
+    by_type = {str(row.get("type") or ""): row for row in rest.algo_orders}
+    tp_trigger = float(str(by_type["TAKE_PROFIT_MARKET"]["triggerPrice"]))
+    sl_trigger = float(str(by_type["STOP_MARKET"]["triggerPrice"]))
+    assert tp_trigger == 102.4
+    assert sl_trigger == 98.8
+
+
+def test_control_api_atr_tpsl_method_uses_candidate_volatility_hint(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_atr.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="ETHUSDT",
+                    side="BUY",
+                    score=1.0,
+                    reason="entry_pullback_long",
+                    entry_price=100.0,
+                    volatility_hint=3.0,
+                    regime_hint="BULL",
+                ),
+                size=SizePlan(
+                    symbol="ETHUSDT",
+                    qty=0.01,
+                    leverage=3.0,
+                    notional=1.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(
+                    ok=True, order_id="oid-atr", reason="live_order_submitted"
+                ),
+            )
+
+    class _AlgoREST:
+        def __init__(self) -> None:
+            self.algo_orders: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.algo_orders.append(dict(params))
+            return {"clientAlgoId": str(params.get("clientAlgoId") or "")}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "ETHUSDT", "positionAmt": "0.01"}]
+
+    rest = _AlgoREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    assert client.post("/set", json={"key": "tpsl_method", "value": "atr"}).status_code == 200
+    assert client.post("/set", json={"key": "tpsl_tp_atr", "value": "2"}).status_code == 200
+    assert client.post("/set", json={"key": "tpsl_sl_atr", "value": "1"}).status_code == 200
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    assert tick.json()["ok"] is True
+
+    assert len(rest.algo_orders) == 2
+    by_type = {str(row.get("type") or ""): row for row in rest.algo_orders}
+    tp_trigger = float(str(by_type["TAKE_PROFIT_MARKET"]["triggerPrice"]))
+    sl_trigger = float(str(by_type["STOP_MARKET"]["triggerPrice"]))
+    assert tp_trigger == 106.0
+    assert sl_trigger == 97.0
 
 
 def test_control_api_tick_from_async_endpoint_with_rest_snapshot(tmp_path) -> None:  # type: ignore[no-untyped-def]
