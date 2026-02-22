@@ -1416,8 +1416,21 @@ class PanelViewBase(discord.ui.View):
             )
             return
 
-        status_payload = await self.refresh_message(interaction, force_status=False)
         payload = tick if isinstance(tick, dict) else {}
+        if str(payload.get("error") or "").strip() == "tick_busy":
+            await asyncio.sleep(1.2)
+            try:
+                tick_retry = await self.api.tick_scheduler_now()
+                if isinstance(tick_retry, dict):
+                    payload = tick_retry
+            except Exception:  # noqa: BLE001
+                logger.exception("panel_tick_once_retry_failed")
+
+        status_payload = await self.refresh_message(
+            interaction,
+            force_status=False,
+            max_age_sec=20.0,
+        )
         msg = _build_tick_once_message(payload)
         balance_line = _build_live_balance_line(status_payload)
         if balance_line:
@@ -1444,8 +1457,9 @@ class PanelViewBase(discord.ui.View):
         interaction: discord.Interaction,
         *,
         force_status: bool = False,
+        max_age_sec: float = 1.2,
     ) -> JSONPayload:
-        payload = await self._fetch_status_cached(force=force_status)
+        payload = await self._fetch_status_cached(force=force_status, max_age_sec=max_age_sec)
 
         embed = build_embed(payload, mode=self._mode)
 

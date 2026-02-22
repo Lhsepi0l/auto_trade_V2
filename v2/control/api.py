@@ -438,7 +438,7 @@ class RuntimeController:
         return self._last_balance_available_usdt, self._last_balance_wallet_usdt
 
     def _cached_or_fallback_balance(self) -> tuple[float | None, float | None, str]:
-        cached = self._cached_live_balance(max_age_sec=300.0)
+        cached = self._cached_live_balance(max_age_sec=1800.0)
         if cached is None:
             return None, None, "fallback"
         available, wallet = cached
@@ -447,7 +447,7 @@ class RuntimeController:
         return available, wallet, "exchange_cached"
 
     def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, str]:
-        fresh_cache = self._cached_live_balance(max_age_sec=8.0)
+        fresh_cache = self._cached_live_balance(max_age_sec=20.0)
         if fresh_cache is not None:
             self._last_balance_error = None
             self._last_balance_error_detail = None
@@ -1124,7 +1124,7 @@ class RuntimeController:
         }
 
     def tick_scheduler_now(self) -> dict[str, Any]:
-        acquired = self._lock.acquire(timeout=2.0)
+        acquired = self._lock.acquire(timeout=6.0)
         if not acquired:
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = "blocked"
