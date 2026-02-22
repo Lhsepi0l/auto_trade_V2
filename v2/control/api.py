@@ -86,7 +86,10 @@ class RuntimeController:
         self.rest_client = rest_client
         if (not self.notifier.enabled) and str(self.notifier.webhook_url or "").strip():
             self.notifier.enabled = True
-        if str(self.notifier.provider or "none").strip().lower() == "none" and str(self.notifier.webhook_url or "").strip():
+        if (
+            str(self.notifier.provider or "none").strip().lower() == "none"
+            and str(self.notifier.webhook_url or "").strip()
+        ):
             self.notifier.provider = "discord"
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -181,7 +184,7 @@ class RuntimeController:
                 "position_side": "LONG" if row.position_amt > 0 else "SHORT",
             }
         budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
-        live_available_usdt, live_wallet_usdt = self._fetch_live_usdt_balance()
+        live_available_usdt, live_wallet_usdt, live_balance_ok = self._fetch_live_usdt_balance()
         available_usdt = live_available_usdt if live_available_usdt is not None else budget
         wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else budget
         config = dict(self._risk)
@@ -223,9 +226,16 @@ class RuntimeController:
                 "block_reason": "ops_paused" if not self.ops.can_open_new_entries() else None,
             },
             "binance": {
-                "enabled_symbols": list(self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]),
+                "enabled_symbols": list(
+                    self._risk.get("universe_symbols")
+                    or [self.cfg.behavior.exchange.default_symbol]
+                ),
                 "positions": positions_payload,
-                "usdt_balance": {"wallet": wallet_usdt, "available": available_usdt},
+                "usdt_balance": {
+                    "wallet": wallet_usdt,
+                    "available": available_usdt,
+                    "source": "exchange" if live_balance_ok else "fallback",
+                },
                 "startup_error": None,
                 "private_error": None,
             },
@@ -239,19 +249,19 @@ class RuntimeController:
             "last_error": self._last_cycle.get("last_error"),
         }
 
-    def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None]:
+    def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, bool]:
         if self.rest_client is None:
-            return None, None
+            return None, None, False
         rest_client: Any = self.rest_client
         assert rest_client is not None
         try:
             payload = _run_async_blocking(lambda: rest_client.get_balances())
         except Exception:  # noqa: BLE001
             logger.exception("live_balance_fetch_failed")
-            return None, None
+            return None, None, False
 
         if not isinstance(payload, list):
-            return None, None
+            return None, None, False
 
         target: dict[str, Any] | None = None
         for item in payload:
@@ -263,7 +273,7 @@ class RuntimeController:
                 break
 
         if target is None:
-            return None, None
+            return None, None, False
 
         available = _to_float(
             target.get("availableBalance")
@@ -277,7 +287,7 @@ class RuntimeController:
             or target.get("balance"),
             default=0.0,
         )
-        return available, wallet
+        return available, wallet, True
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
         self._last_cycle["tick_started_at"] = _utcnow_iso()
@@ -285,18 +295,28 @@ class RuntimeController:
             cycle: KernelCycleResult = self.kernel.run_once()
             self.scheduler.run_once()
             if self.ops.can_open_new_entries():
-                self.order_manager.submit({"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode})
+                self.order_manager.submit(
+                    {"symbol": self.cfg.behavior.exchange.default_symbol, "mode": self.cfg.mode}
+                )
 
             self._last_cycle["tick_finished_at"] = _utcnow_iso()
             self._last_cycle["last_action"] = cycle.state
             self._last_cycle["last_decision_reason"] = cycle.reason
-            self._last_cycle["candidate"] = {
-                "symbol": cycle.candidate.symbol,
-                "side": cycle.candidate.side,
-                "score": cycle.candidate.score,
-            } if cycle.candidate is not None else None
+            self._last_cycle["candidate"] = (
+                {
+                    "symbol": cycle.candidate.symbol,
+                    "side": cycle.candidate.side,
+                    "score": cycle.candidate.score,
+                }
+                if cycle.candidate is not None
+                else None
+            )
             self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
-            self._last_cycle["last_error"] = cycle.reason if cycle.state in {"blocked", "risk_rejected", "execution_failed"} else None
+            self._last_cycle["last_error"] = (
+                cycle.reason
+                if cycle.state in {"blocked", "risk_rejected", "execution_failed"}
+                else None
+            )
 
             self._report_stats["total_records"] += 1
             if cycle.state in {"executed", "dry_run"}:
@@ -343,7 +363,9 @@ class RuntimeController:
         )
 
     def _emit_status_update(self, *, force: bool = False) -> bool:
-        notify_interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
+        notify_interval = max(
+            1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0))
+        )
         now = datetime.now(timezone.utc)
         should_notify = force or (
             self._last_status_notify_at is None
@@ -365,7 +387,9 @@ class RuntimeController:
 
         def _worker() -> None:
             while not self._status_thread_stop.is_set():
-                interval = max(1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0)))
+                interval = max(
+                    1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0))
+                )
                 if self._status_thread_stop.wait(timeout=float(interval)):
                     break
                 if self._running:
@@ -441,7 +465,9 @@ class RuntimeController:
                 parsed = [self.cfg.behavior.exchange.default_symbol]
         self._risk[key] = parsed
         if key == "notify_interval_sec":
-            self.scheduler.tick_seconds = int(_to_float(parsed, default=float(self.scheduler.tick_seconds)))
+            self.scheduler.tick_seconds = int(
+                _to_float(parsed, default=float(self.scheduler.tick_seconds))
+            )
             self._emit_status_update(force=True)
         return {
             "key": key,
@@ -525,7 +551,9 @@ class RuntimeController:
         }
 
     async def close_all(self) -> dict[str, Any]:
-        symbols = set(self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol])
+        symbols = set(
+            self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]
+        )
         for sym in self.state_store.get().current_position.keys():
             symbols.add(sym)
         details: list[dict[str, Any]] = []

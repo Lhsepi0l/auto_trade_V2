@@ -58,11 +58,16 @@ class TraderAPIClient:
         *,
         json_body: JSONPayload | None = None,
         timeout_sec: float | None = None,
+        retry_count: int | None = None,
     ) -> JSONPayload:
         async def _do_once() -> JSONPayload:
-            request_timeout = float(timeout_sec) if timeout_sec is not None else float(self._timeout_sec)
+            request_timeout = (
+                float(timeout_sec) if timeout_sec is not None else float(self._timeout_sec)
+            )
             try:
-                resp = await self._client.request(method, path, json=json_body, timeout=httpx.Timeout(request_timeout))
+                resp = await self._client.request(
+                    method, path, json=json_body, timeout=httpx.Timeout(request_timeout)
+                )
             except httpx.RequestError as e:
                 raise RuntimeError(f"network_error: {type(e).__name__}") from e
 
@@ -88,7 +93,10 @@ class TraderAPIClient:
             except ValueError:
                 return {}
 
-        return await retry_async(_do_once, attempts=self._retry_count, base_delay_sec=self._retry_backoff)
+        attempts = int(retry_count) if retry_count is not None else int(self._retry_count)
+        return await retry_async(
+            _do_once, attempts=max(1, attempts), base_delay_sec=self._retry_backoff
+        )
 
     async def get_status(self) -> JSONPayload:
         return await self._request_json("GET", "/status")
@@ -128,11 +136,15 @@ class TraderAPIClient:
         return await self._request_json("GET", "/scheduler")
 
     async def set_scheduler_interval(self, tick_sec: float) -> JSONPayload:
-        return await self._request_json("POST", "/scheduler/interval", json_body={"tick_sec": tick_sec})
+        return await self._request_json(
+            "POST", "/scheduler/interval", json_body={"tick_sec": tick_sec}
+        )
 
     async def tick_scheduler_now(self) -> JSONPayload:
-        timeout_sec = max(float(self._timeout_sec), 30.0)
-        return await self._request_json("POST", "/scheduler/tick", timeout_sec=timeout_sec)
+        timeout_sec = min(max(float(self._timeout_sec), 10.0), 20.0)
+        return await self._request_json(
+            "POST", "/scheduler/tick", timeout_sec=timeout_sec, retry_count=1
+        )
 
     async def send_daily_report(self) -> JSONPayload:
         return await self._request_json("POST", "/report")

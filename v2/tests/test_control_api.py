@@ -242,7 +242,22 @@ def test_control_api_tick_from_async_endpoint_with_rest_snapshot(tmp_path) -> No
                     h = o + 0.05
                     low_price = o - 0.05
                     c = o + 0.01
-                    out.append([idx, str(o), str(h), str(low_price), str(c), "10", idx + 1, "0", "0", "0", "0", "0"])
+                    out.append(
+                        [
+                            idx,
+                            str(o),
+                            str(h),
+                            str(low_price),
+                            str(c),
+                            "10",
+                            idx + 1,
+                            "0",
+                            "0",
+                            "0",
+                            "0",
+                            "0",
+                        ]
+                    )
                 return out
             if path == "/fapi/v1/premiumIndex":
                 return {"lastFundingRate": "0.0001"}
@@ -319,3 +334,16 @@ def test_control_api_status_uses_live_usdt_balance(tmp_path) -> None:  # type: i
     payload = status.json()
     assert payload["capital_snapshot"]["available_usdt"] == 321.45
     assert payload["binance"]["usdt_balance"]["wallet"] == 345.67
+    assert payload["binance"]["usdt_balance"]["source"] == "exchange"
+
+
+def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_unavailable(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    app = _build_app(tmp_path)
+    client = TestClient(app)
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["binance"]["usdt_balance"]["source"] == "fallback"

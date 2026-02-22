@@ -12,6 +12,7 @@ import discord
 from v2.discord_bot.services.api_client import APIError
 from v2.discord_bot.services.contracts import TraderAPI
 from v2.discord_bot.services.discord_utils import is_admin as _is_admin
+from v2.discord_bot.services.discord_utils import safe_defer as _safe_defer
 from v2.discord_bot.services.formatting import format_status_payload
 from v2.discord_bot.ui_labels import (
     ADVANCED_TOGGLE_LABEL,
@@ -57,6 +58,7 @@ def _as_str_list(value: JSONValue) -> list[str]:
     if isinstance(value, tuple):
         return [str(item) for item in value]
     return []
+
 
 ADMIN_ONLY_MSG = "관리자만 조작할 수 있습니다."
 HELP_SIMPLE = (
@@ -176,7 +178,9 @@ def _extract_api_validation_message(error: APIError) -> tuple[str, list[dict[str
     return "validation_failed", parsed
 
 
-def _format_symbol_leverage_error(error: APIError, *, symbol: str, max_leverage: float | None = None) -> str:
+def _format_symbol_leverage_error(
+    error: APIError, *, symbol: str, max_leverage: float | None = None
+) -> str:
     base, errors = _extract_api_validation_message(error)
     if base != "validation_failed" or not errors:
         return f"설정 실패: {error}"
@@ -195,6 +199,7 @@ def _format_symbol_leverage_error(error: APIError, *, symbol: str, max_leverage:
     if not hints:
         return f"설정 실패: {error}"
     return "\n".join(hints)
+
 
 def _fmt_money(v: JSONValue, *, digits: int = 4) -> str:
     try:
@@ -290,7 +295,9 @@ def _normalize_last_decision(raw: str | None) -> str:
     return value
 
 
-def _build_last_result(last_action: str, last_error: str | None, last_decision: str | None = None) -> tuple[str, str]:
+def _build_last_result(
+    last_action: str, last_error: str | None, last_decision: str | None = None
+) -> tuple[str, str]:
     if last_error:
         human = _reason_to_human_readable(last_error)
         return "BLOCKED", f"사유: {human}"
@@ -353,18 +360,14 @@ def _build_live_balance_line(payload: JSONPayload) -> str:
     data = payload if isinstance(payload, dict) else {}
     binance = _as_dict(data.get("binance"))
     usdt = _as_dict(binance.get("usdt_balance"))
-    capital = _as_dict(data.get("capital_snapshot"))
-
+    source = str(usdt.get("source") or "").strip().lower()
     available = usdt.get("available")
-    if available is None:
-        available = capital.get("available_usdt")
-
     wallet = usdt.get("wallet")
-    if wallet is None:
-        wallet = capital.get("available_usdt")
 
+    if source and source != "exchange":
+        return "실시간 잔고: 바이낸스 실시간 조회 실패 (연결/API 권한 확인 필요)"
     if available is None and wallet is None:
-        return ""
+        return "실시간 잔고: 바이낸스 실시간 조회 실패 (연결/API 권한 확인 필요)"
 
     return f"실시간 잔고: 사용가능 {_fmt_money(available)} USDT / 지갑 {_fmt_money(wallet)} USDT"
 
@@ -418,7 +421,6 @@ def _budget_display(payload: JSONPayload) -> tuple[str, str]:
     return _fmt_money(budget), _fmt_money(order_amt)
 
 
-
 def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, str]:
     eng = _as_dict(payload.get("engine_state"))
     dry_run = bool(payload.get("dry_run", False))
@@ -432,7 +434,9 @@ def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, 
         last_action, str(last_error) if last_error is not None else None, last_decision
     )
     if last_reason:
-        last_result = " - ".join([x for x in (last_status, str(last_reason)) if x not in {"-",""}]) or "-"
+        last_result = (
+            " - ".join([x for x in (last_status, str(last_reason)) if x not in {"-", ""}]) or "-"
+        )
     else:
         last_result = "아직 판단 없음"
 
@@ -480,7 +484,7 @@ def _build_advanced_lines(payload: JSONPayload) -> list[str]:
         "트레일링="
         + (
             f"ON({risk.get('trailing_mode')}, 시작={risk.get('trail_arm_pnl_pct')}%, "
-            f"distance={risk.get('trail_distance_pnl_pct') if risk.get('trailing_mode') == 'PCT' else (wd.get('last_trailing_distance_pct') or '-') }%)"
+            f"distance={risk.get('trail_distance_pnl_pct') if risk.get('trailing_mode') == 'PCT' else (wd.get('last_trailing_distance_pct') or '-')}%)"
         ),
     ]
     if symbol_items:
@@ -488,42 +492,49 @@ def _build_advanced_lines(payload: JSONPayload) -> list[str]:
     return lines
 
 
-def build_embed(payload: JSONPayload, *, mode: Literal["simple", "advanced"] = "simple") -> discord.Embed:
+def build_embed(
+    payload: JSONPayload, *, mode: Literal["simple", "advanced"] = "simple"
+) -> discord.Embed:
     payload = payload if isinstance(payload, dict) else {}
     title = "오토트레이더 패널 (간단)" if mode == "simple" else "오토트레이더 패널 (고급)"
     em = discord.Embed(title=title)
     if mode == "simple":
         em.description = "현재 화면 버튼: " + "/".join(SIMPLE_PANEL_BUTTON_LABELS)
     else:
-        em.description = (
-            "고급 화면 버튼: "
-            + "/".join(
-                [
-                    RISK_BASIC_BUTTON_LABEL,
-                    RISK_ADVANCED_BUTTON_LABEL,
-                    TRAILING_BUTTON_LABEL,
-                    SYMBOL_LEVERAGE_BUTTON_LABEL,
-                    UNIVERSE_SYMBOLS_BUTTON_LABEL,
-                    UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
-                    EXEC_MODE_SELECT_PLACEHOLDER,
-                    SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
-                ]
-            )
+        em.description = "고급 화면 버튼: " + "/".join(
+            [
+                RISK_BASIC_BUTTON_LABEL,
+                RISK_ADVANCED_BUTTON_LABEL,
+                TRAILING_BUTTON_LABEL,
+                SYMBOL_LEVERAGE_BUTTON_LABEL,
+                UNIVERSE_SYMBOLS_BUTTON_LABEL,
+                UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
+                EXEC_MODE_SELECT_PLACEHOLDER,
+                SCHEDULER_INTERVAL_SELECT_PLACEHOLDER,
+            ]
         )
-    line1, next_decision, margin_line, order_line, judge_line, interval_line = _build_simple_lines(payload)
+    line1, next_decision, margin_line, order_line, judge_line, interval_line = _build_simple_lines(
+        payload
+    )
     _ = em.add_field(name="엔진 상태", value=line1, inline=False)
     _ = em.add_field(name="다음 판단", value=next_decision, inline=True)
     _ = em.add_field(name="현재 증거금", value=margin_line, inline=True)
     _ = em.add_field(name="예상 주문금액", value=order_line, inline=True)
     _ = em.add_field(name="운영 주기", value=interval_line, inline=True)
     _ = em.add_field(name="마지막 결과", value=judge_line, inline=False)
-    _ = em.add_field(name="한 번에 보기", value=HELP_SIMPLE if mode == "simple" else HELP_ADVANCED, inline=False)
+    _ = em.add_field(
+        name="한 번에 보기", value=HELP_SIMPLE if mode == "simple" else HELP_ADVANCED, inline=False
+    )
 
     if mode == "advanced":
         adv = _build_advanced_lines(payload)
         if adv:
             _ = em.add_field(name="고급 상태", value="\n".join(adv), inline=False)
-        _ = em.add_field(name="디버그 상태", value=f"```text\n{format_status_payload(payload)}\n```", inline=False)
+        _ = em.add_field(
+            name="디버그 상태",
+            value=f"```text\n{format_status_payload(payload)}\n```",
+            inline=False,
+        )
 
     return em
 
@@ -624,7 +635,9 @@ class RiskBasicModal(discord.ui.Modal, title="리스크 기본"):
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None) -> None:
+    def __init__(
+        self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -677,7 +690,9 @@ class RiskAdvancedModal(discord.ui.Modal, title="리스크 고급"):
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None) -> None:
+    def __init__(
+        self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -731,7 +746,9 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None) -> None:
+    def __init__(
+        self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -743,8 +760,12 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             "1h": d.get("tf_weight_1h", 0.25),
             "4h": d.get("tf_weight_4h", 0.25),
         }
-        self.tf_weights.default = ",".join([f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")])
-        self.score_tf_15m_enabled.default = "예" if bool(d.get("score_tf_15m_enabled", False)) else "아니오"
+        self.tf_weights.default = ",".join(
+            [f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")]
+        )
+        self.score_tf_15m_enabled.default = (
+            "예" if bool(d.get("score_tf_15m_enabled", False)) else "아니오"
+        )
         self.score_conf_threshold.default = str(d.get("score_conf_threshold", "0.60"))
         self.score_gap_threshold.default = str(d.get("score_gap_threshold", "0.15"))
 
@@ -792,13 +813,17 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             gap = _parse_float_range(
                 str(self.score_gap_threshold), field="score_gap_threshold", min_v=0.0, max_v=1.0
             )
-            enabled_15m = _parse_bool_like(str(self.score_tf_15m_enabled), field="score_tf_15m_enabled")
+            enabled_15m = _parse_bool_like(
+                str(self.score_tf_15m_enabled), field="score_tf_15m_enabled"
+            )
         except ValueError as e:
             _ = await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
             return
 
         if weight_10m + weight_15m + weight_30m + weight_1h + weight_4h <= 0:
-            _ = await interaction.response.send_message("입력 오류: 가중치 합계는 0보다 커야 합니다.", ephemeral=True)
+            _ = await interaction.response.send_message(
+                "입력 오류: 가중치 합계는 0보다 커야 합니다.", ephemeral=True
+            )
             return
         if not enabled_15m:
             weight_15m = 0.0
@@ -900,7 +925,9 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
         placeholder="PCT: 0.8 / ATR: 1h,2.0,0.6,1.8",
     )
 
-    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None) -> None:
+    def __init__(
+        self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -933,7 +960,9 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             mode = mode_alias.get(mode_raw, mode_raw)
             if mode not in {"PCT", "ATR"}:
                 raise ValueError("트레일링 모드는 PCT 또는 ATR만 가능합니다.")
-            arm = _parse_float_range(str(self.trail_arm_pnl_pct), field="trail_arm_pnl_pct", min_v=0.0, max_v=100.0)
+            arm = _parse_float_range(
+                str(self.trail_arm_pnl_pct), field="trail_arm_pnl_pct", min_v=0.0, max_v=100.0
+            )
             grace = _parse_int_range(
                 str(self.trail_grace_minutes), field="trail_grace_minutes", min_v=0, max_v=1440
             )
@@ -948,7 +977,9 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
             params = str(self.mode_params or "").strip()
             if mode == "PCT":
                 raw_dist = params or "0.8"
-                dist = _parse_float_range(raw_dist, field="trail_distance_pnl_pct", min_v=0.0, max_v=100.0)
+                dist = _parse_float_range(
+                    raw_dist, field="trail_distance_pnl_pct", min_v=0.0, max_v=100.0
+                )
                 payload["trail_distance_pnl_pct"] = dist
             else:
                 parts = [p.strip() for p in params.split(",") if p.strip()]
@@ -1029,13 +1060,17 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
         try:
             lev = _parse_float_range(str(self.leverage), field="leverage", min_v=0.0, max_v=50.0)
             if max_leverage is not None and max_leverage > 0 and lev > max_leverage:
-                raise ValueError(f"symbol_leverage_exceeds_max_leverage (현재 max_leverage={max_leverage:g})")
+                raise ValueError(
+                    f"symbol_leverage_exceeds_max_leverage (현재 max_leverage={max_leverage:g})"
+                )
         except ValueError as e:
             msg = str(e)
             if msg.startswith("symbol_leverage_exceeds_max_leverage"):
                 _ = await interaction.response.send_message(
                     f"입력 제한: {symbol} 개별 레버리지는 max_leverage 이하로만 설정 가능합니다."
-                    + (f" (현재 max_leverage={max_leverage:g})" if max_leverage is not None else ""),
+                    + (
+                        f" (현재 max_leverage={max_leverage:g})" if max_leverage is not None else ""
+                    ),
                     ephemeral=True,
                 )
             else:
@@ -1047,9 +1082,13 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
             _ = await self._api.set_symbol_leverage(symbol=symbol, leverage=lev)
             await self._view.refresh_message(interaction)
             if lev <= 0:
-                await interaction.followup.send(f"{symbol} 개별 레버리지를 해제했습니다.", ephemeral=True)
+                await interaction.followup.send(
+                    f"{symbol} 개별 레버리지를 해제했습니다.", ephemeral=True
+                )
             else:
-                await interaction.followup.send(f"{symbol} 개별 레버리지를 {lev} 배로 설정했습니다.", ephemeral=True)
+                await interaction.followup.send(
+                    f"{symbol} 개별 레버리지를 {lev} 배로 설정했습니다.", ephemeral=True
+                )
         except APIError as e:
             await interaction.followup.send(
                 _format_symbol_leverage_error(error=e, symbol=symbol, max_leverage=max_leverage),
@@ -1099,7 +1138,9 @@ class UniverseSymbolsModal(discord.ui.Modal, title="운영 심볼 설정"):
         try:
             _ = await self._api.set_value("universe_symbols", ",".join(symbols))
             await self._view.refresh_message(interaction)
-            await interaction.followup.send(f"운영 심볼을 {len(symbols)}개로 설정했습니다.", ephemeral=True)
+            await interaction.followup.send(
+                f"운영 심볼을 {len(symbols)}개로 설정했습니다.", ephemeral=True
+            )
         except APIError as e:
             await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
 
@@ -1147,17 +1188,23 @@ class UniverseSymbolRemoveModal(discord.ui.Modal, title="운영 심볼 해제"):
         current_set = [str(x).strip().upper() for x in current if str(x).strip()]
         filtered = [x for x in current_set if x != symbol]
         if not filtered:
-            _ = await interaction.response.send_message("해제 후 남은 심볼이 0개가 될 수 없습니다.", ephemeral=True)
+            _ = await interaction.response.send_message(
+                "해제 후 남은 심볼이 0개가 될 수 없습니다.", ephemeral=True
+            )
             return
         if symbol not in current_set:
-            _ = await interaction.response.send_message(f"{symbol}는 현재 운영 심볼 목록에 없습니다.", ephemeral=True)
+            _ = await interaction.response.send_message(
+                f"{symbol}는 현재 운영 심볼 목록에 없습니다.", ephemeral=True
+            )
             return
 
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             _ = await self._api.set_value("universe_symbols", ",".join(filtered))
             await self._view.refresh_message(interaction)
-            await interaction.followup.send(f"{symbol}를 운영 심볼에서 해제했습니다.", ephemeral=True)
+            await interaction.followup.send(
+                f"{symbol}를 운영 심볼에서 해제했습니다.", ephemeral=True
+            )
         except APIError as e:
             await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
 
@@ -1169,7 +1216,9 @@ class NotifyIntervalModal(discord.ui.Modal, title="상태 알림 주기 설정")
         required=True,
     )
 
-    def __init__(self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None) -> None:
+    def __init__(
+        self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
+    ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
@@ -1208,7 +1257,9 @@ class NotifyIntervalModal(discord.ui.Modal, title="상태 알림 주기 설정")
             sec = None
 
         if sec is None or sec < 1:
-            _ = await interaction.response.send_message("알림 주기를 초 단위 정수 또는 분(m)로 입력해주세요.", ephemeral=True)
+            _ = await interaction.response.send_message(
+                "알림 주기를 초 단위 정수 또는 분(m)로 입력해주세요.", ephemeral=True
+            )
             return
 
         sec_i = int(sec)
@@ -1217,9 +1268,13 @@ class NotifyIntervalModal(discord.ui.Modal, title="상태 알림 주기 설정")
             _ = await self._api.set_value("notify_interval_sec", str(sec_i))
             await self._view.refresh_message(interaction)
             if sec_i % 60 == 0 and sec_i >= 60:
-                await interaction.followup.send(f"상태 알림 주기를 {sec_i // 60}분으로 변경했습니다.", ephemeral=True)
+                await interaction.followup.send(
+                    f"상태 알림 주기를 {sec_i // 60}분으로 변경했습니다.", ephemeral=True
+                )
             else:
-                await interaction.followup.send(f"상태 알림 주기를 {sec_i}초로 변경했습니다.", ephemeral=True)
+                await interaction.followup.send(
+                    f"상태 알림 주기를 {sec_i}초로 변경했습니다.", ephemeral=True
+                )
         except APIError as e:
             await interaction.followup.send(f"상태 알림 주기 설정 실패: {e}", ephemeral=True)
 
@@ -1313,7 +1368,9 @@ class SimplePanelView(PanelViewBase):
         return "simple"
 
     @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
-    async def start_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def start_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1322,7 +1379,9 @@ class SimplePanelView(PanelViewBase):
         await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
 
     @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
-    async def stop_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def stop_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1331,7 +1390,9 @@ class SimplePanelView(PanelViewBase):
         await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
 
     @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
-    async def panic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def panic_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1340,10 +1401,13 @@ class SimplePanelView(PanelViewBase):
         await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
 
     @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
-    async def tick_once_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def tick_once_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await _safe_defer(interaction):
+            return
         try:
             tick = await self.api.tick_scheduler_now()
         except (APIError, RuntimeError) as e:
@@ -1351,6 +1415,13 @@ class SimplePanelView(PanelViewBase):
                 await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
             else:
                 await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_tick_once_failed")
+            await interaction.followup.send(
+                "즉시 판단 실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                ephemeral=True,
+            )
             return
 
         try:
@@ -1369,10 +1440,15 @@ class SimplePanelView(PanelViewBase):
         balance_line = _build_live_balance_line(status_payload)
         if balance_line:
             msg = f"{msg}\n{balance_line}"
-        await interaction.followup.send(msg, ephemeral=True)
+        try:
+            await interaction.followup.send(msg, ephemeral=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_tick_once_followup_send_failed")
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
-    async def margin_budget_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def margin_budget_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
 
@@ -1395,11 +1471,15 @@ class SimplePanelView(PanelViewBase):
         )
 
     @discord.ui.button(label=ADVANCED_TOGGLE_LABEL, style=discord.ButtonStyle.primary)
-    async def advanced_toggle_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def advanced_toggle_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
 
-        await self._swap_view(interaction, AdvancedPanelView(api=self.api, message_id=self.message_id))
+        await self._swap_view(
+            interaction, AdvancedPanelView(api=self.api, message_id=self.message_id)
+        )
 
 
 class AdvancedPanelView(PanelViewBase):
@@ -1408,7 +1488,9 @@ class AdvancedPanelView(PanelViewBase):
         return "advanced"
 
     @discord.ui.button(label=START_BUTTON_LABEL, style=discord.ButtonStyle.success)
-    async def start_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def start_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1417,7 +1499,9 @@ class AdvancedPanelView(PanelViewBase):
         await interaction.followup.send("엔진을 시작했습니다.", ephemeral=True)
 
     @discord.ui.button(label=STOP_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
-    async def stop_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def stop_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1426,7 +1510,9 @@ class AdvancedPanelView(PanelViewBase):
         await interaction.followup.send("엔진을 중지했습니다.", ephemeral=True)
 
     @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)
-    async def panic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def panic_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1435,10 +1521,13 @@ class AdvancedPanelView(PanelViewBase):
         await interaction.followup.send("패닉 명령을 전송했습니다.", ephemeral=True)
 
     @discord.ui.button(label=TICK_ONCE_BUTTON_LABEL, style=discord.ButtonStyle.primary)
-    async def tick_once_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def tick_once_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await _safe_defer(interaction):
+            return
         try:
             tick = await self.api.tick_scheduler_now()
         except (APIError, RuntimeError) as e:
@@ -1446,6 +1535,13 @@ class AdvancedPanelView(PanelViewBase):
                 await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
             else:
                 await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_tick_once_failed")
+            await interaction.followup.send(
+                "즉시 판단 실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                ephemeral=True,
+            )
             return
 
         try:
@@ -1464,10 +1560,15 @@ class AdvancedPanelView(PanelViewBase):
         balance_line = _build_live_balance_line(status_payload)
         if balance_line:
             msg = f"{msg}\n{balance_line}"
-        await interaction.followup.send(msg, ephemeral=True)
+        try:
+            await interaction.followup.send(msg, ephemeral=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("panel_tick_once_followup_send_failed")
 
     @discord.ui.button(label=MARGIN_BUDGET_BUTTON_LABEL, style=discord.ButtonStyle.secondary)
-    async def margin_budget_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def margin_budget_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
 
@@ -1490,40 +1591,64 @@ class AdvancedPanelView(PanelViewBase):
         )
 
     @discord.ui.button(label=SIMPLE_TOGGLE_LABEL, style=discord.ButtonStyle.primary, row=1)
-    async def simple_toggle_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def simple_toggle_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
-        await self._swap_view(interaction, SimplePanelView(api=self.api, message_id=self.message_id))
+        await self._swap_view(
+            interaction, SimplePanelView(api=self.api, message_id=self.message_id)
+        )
 
     @discord.ui.button(label=RISK_BASIC_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
-    async def risk_basic_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def risk_basic_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults: JSONPayload = await self._get_risk_config()
-        _ = await interaction.response.send_modal(RiskBasicModal(api=self.api, view=self, defaults=defaults))
+        _ = await interaction.response.send_modal(
+            RiskBasicModal(api=self.api, view=self, defaults=defaults)
+        )
 
     @discord.ui.button(label=RISK_ADVANCED_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
-    async def risk_adv_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def risk_adv_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults: JSONPayload = await self._get_risk_config()
-        _ = await interaction.response.send_modal(RiskAdvancedModal(api=self.api, view=self, defaults=defaults))
+        _ = await interaction.response.send_modal(
+            RiskAdvancedModal(api=self.api, view=self, defaults=defaults)
+        )
 
     @discord.ui.button(label=TRAILING_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
-    async def trailing_config_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def trailing_config_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults: JSONPayload = await self._get_risk_config()
-        _ = await interaction.response.send_modal(TrailingConfigModal(api=self.api, view=self, defaults=defaults))
+        _ = await interaction.response.send_modal(
+            TrailingConfigModal(api=self.api, view=self, defaults=defaults)
+        )
 
-    @discord.ui.button(label=SYMBOL_LEVERAGE_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1)
-    async def symbol_leverage_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    @discord.ui.button(
+        label=SYMBOL_LEVERAGE_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=1
+    )
+    async def symbol_leverage_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         _ = await interaction.response.send_modal(SymbolLeverageModal(api=self.api, view=self))
 
-    @discord.ui.button(label=UNIVERSE_SYMBOLS_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
-    async def universe_symbols_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    @discord.ui.button(
+        label=UNIVERSE_SYMBOLS_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2
+    )
+    async def universe_symbols_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults: JSONPayload = await self._get_risk_config()
@@ -1535,8 +1660,12 @@ class AdvancedPanelView(PanelViewBase):
             )
         )
 
-    @discord.ui.button(label=UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
-    async def universe_remove_symbol_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    @discord.ui.button(
+        label=UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2
+    )
+    async def universe_remove_symbol_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults: JSONPayload = await self._get_risk_config()
@@ -1549,7 +1678,9 @@ class AdvancedPanelView(PanelViewBase):
         )
 
     @discord.ui.button(label=SCORING_SETUP_BUTTON_LABEL, style=discord.ButtonStyle.secondary, row=2)
-    async def scoring_setup_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def scoring_setup_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults = await self._get_scoring_setup_defaults()
@@ -1570,7 +1701,9 @@ class AdvancedPanelView(PanelViewBase):
         ],
         row=3,
     )
-    async def exec_mode_select(self, interaction: discord.Interaction, select: discord.ui.Select[discord.ui.View]) -> None:
+    async def exec_mode_select(
+        self, interaction: discord.Interaction, select: discord.ui.Select[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         val = str(select.values[0]).upper()
@@ -1590,7 +1723,9 @@ class AdvancedPanelView(PanelViewBase):
         ],
         row=4,
     )
-    async def scheduler_interval_select(self, interaction: discord.Interaction, select: discord.ui.Select[discord.ui.View]) -> None:
+    async def scheduler_interval_select(
+        self, interaction: discord.Interaction, select: discord.ui.Select[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         try:
@@ -1611,11 +1746,15 @@ class AdvancedPanelView(PanelViewBase):
             await interaction.followup.send(f"스캔 간격 변경 실패: {e}", ephemeral=True)
 
     @discord.ui.button(label="상태 알림 주기 설정", style=discord.ButtonStyle.secondary, row=2)
-    async def notify_interval_btn(self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]) -> None:
+    async def notify_interval_btn(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[discord.ui.View]
+    ) -> None:
         if not await self._guard(interaction):
             return
         defaults = await self._get_risk_config()
-        _ = await interaction.response.send_modal(NotifyIntervalModal(api=self.api, view=self, defaults={"risk_config": defaults}))
+        _ = await interaction.response.send_modal(
+            NotifyIntervalModal(api=self.api, view=self, defaults={"risk_config": defaults})
+        )
 
 
 PanelView = SimplePanelView

@@ -77,7 +77,6 @@ class _FakeInteraction:
         self.channel = None
 
 
-
 def _find_button(view: discord.ui.View, label: str) -> discord.ui.Button:
     for item in view.children:
         if isinstance(item, discord.ui.Button) and str(item.label) == label:
@@ -103,7 +102,9 @@ async def test_simple_panel_shows_core_buttons_only(monkeypatch: pytest.MonkeyPa
 
     assert set(buttons) == set(SIMPLE_PANEL_BUTTON_LABELS)
     assert not any(
-        str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER for item in view.children if isinstance(item, discord.ui.Select)
+        str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER
+        for item in view.children
+        if isinstance(item, discord.ui.Select)
     )
 
 
@@ -114,7 +115,9 @@ async def test_simple_buttons_call_api_and_toggle(monkeypatch: pytest.MonkeyPatc
         start=AsyncMock(),
         stop=AsyncMock(),
         panic=AsyncMock(),
-        tick_scheduler_now=AsyncMock(return_value={"snapshot": {"last_action": "hold", "last_error": None}}),
+        tick_scheduler_now=AsyncMock(
+            return_value={"snapshot": {"last_action": "hold", "last_error": None}}
+        ),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
     )
     view = PanelView(api=api)  # type: ignore[arg-type]
@@ -148,8 +151,14 @@ async def test_simple_embed_description_is_korean() -> None:
     for label in SIMPLE_PANEL_BUTTON_LABELS[:3]:
         assert label in str(em.description)
     assert any("엔진 상태" in str(field.name) for field in em.fields)
-    assert any("현재 증거금" in str(field.value) or "운영 주기" in str(field.value) for field in em.fields)
-    assert any(str(field.name) == "마지막 결과" and str(field.value).startswith("마지막 판단:") for field in em.fields)
+    assert any(
+        "현재 증거금" in str(field.value) or "운영 주기" in str(field.value) for field in em.fields
+    )
+    assert any(
+        str(field.name) == "마지막 결과" and str(field.value).startswith("마지막 판단:")
+        for field in em.fields
+    )
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -171,12 +180,16 @@ async def test_simple_margin_modal_and_submit(monkeypatch: pytest.MonkeyPatch) -
 
     submit_it = _FakeInteraction()
     await modal.on_submit(submit_it)  # type: ignore[arg-type]
-    api.set_config.assert_awaited_once_with({"capital_mode": "MARGIN_BUDGET_USDT", "margin_budget_usdt": 100.0})
+    api.set_config.assert_awaited_once_with(
+        {"capital_mode": "MARGIN_BUDGET_USDT", "margin_budget_usdt": 100.0}
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_advanced_panel_has_risk_and_trailing_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_advanced_panel_has_risk_and_trailing_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     api = SimpleNamespace(
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
         set_value=AsyncMock(),
@@ -187,8 +200,16 @@ async def test_advanced_panel_has_risk_and_trailing_controls(monkeypatch: pytest
 
     assert set(ADVANCED_PANEL_BUTTON_LABELS) <= set(buttons)
     assert SIMPLE_TOGGLE_LABEL not in SIMPLE_PANEL_BUTTON_LABELS and SIMPLE_TOGGLE_LABEL in buttons
-    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER for item in view.children)
-    assert any(isinstance(item, discord.ui.Select) and str(item.placeholder) == SCHEDULER_INTERVAL_SELECT_PLACEHOLDER for item in view.children)
+    assert any(
+        isinstance(item, discord.ui.Select)
+        and str(item.placeholder) == EXEC_MODE_SELECT_PLACEHOLDER
+        for item in view.children
+    )
+    assert any(
+        isinstance(item, discord.ui.Select)
+        and str(item.placeholder) == SCHEDULER_INTERVAL_SELECT_PLACEHOLDER
+        for item in view.children
+    )
 
     monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
     it = _FakeInteraction()
@@ -207,7 +228,9 @@ async def test_advanced_panel_has_risk_and_trailing_controls(monkeypatch: pytest
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_scheduler_interval_options_include_5_10_15_and_60_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_scheduler_interval_options_include_5_10_15_and_60_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     api = SimpleNamespace(
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
         set_scheduler_interval=AsyncMock(),
@@ -274,6 +297,7 @@ async def test_build_embed_shows_failure_reason() -> None:
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
     assert "BLOCKED - 사유:" in text
     assert "현재 증거금 32.0000 USDT" in text
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -346,8 +370,43 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
 
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
-    assert any("결과: 대기 - 사유:" in m and "현재 진입 후보가 없습니다." in m for m in it.followup.messages)
+    assert any(
+        "결과: 대기 - 사유:" in m and "현재 진입 후보가 없습니다." in m
+        for m in it.followup.messages
+    )
     assert any("실시간 잔고:" in m and "123.4500" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_shows_live_balance_fetch_failure_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "no_candidate",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {
+                    "usdt_balance": {"available": 100.0, "wallet": 100.0, "source": "fallback"}
+                },
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("바이낸스 실시간 조회 실패" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit
