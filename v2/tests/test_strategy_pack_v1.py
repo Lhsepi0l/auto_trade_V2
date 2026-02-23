@@ -107,6 +107,48 @@ def test_sideways_without_mean_reversion_blocks_entry(monkeypatch) -> None:  # t
     assert "sideways_mr_disabled" in decision["blocks"]
 
 
+def test_sideways_with_mean_reversion_allows_entry(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    strategy = StrategyPackV1(params={"mean_reversion_enabled": True})
+
+    monkeypatch.setattr(
+        strategy,
+        "_regime",
+        lambda _candles_4h, _debug: ("SIDEWAYS", True),
+    )
+    monkeypatch.setattr(
+        strategy,
+        "_entry_signal_1h",
+        lambda _candles_1h, _mode, _allowed_side, _debug: {
+            "long": False,
+            "short": False,
+            "mode": "pullback",
+            "mean_reversion": False,
+        },
+    )
+
+    def _mr_signal(_candles_1h, _allowed_side, _debug):  # type: ignore[no-untyped-def]
+        assert _allowed_side == "BOTH"
+        return (
+            {
+                "long": True,
+                "short": False,
+                "mode": "pullback",
+                "mean_reversion": True,
+            },
+            True,
+        )
+
+    monkeypatch.setattr(strategy, "_mean_reversion_signal_1h", _mr_signal)
+    monkeypatch.setattr(strategy, "_eval_overheat_blocks", lambda _side, _symbol: [])
+
+    decision = strategy.decide(_snapshot_with_series(100.0))
+
+    assert decision["intent"] == "LONG"
+    assert decision["side"] == "BUY"
+    assert decision["regime"] == "SIDEWAYS"
+    assert decision["allowed_side"] == "BOTH"
+
+
 def test_overheat_block_blocks_all_entries(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     strategy = StrategyPackV1(params={})
 

@@ -614,14 +614,14 @@ class StrategyPackV1(StrategyPlugin):
 
         regime, is_sideways = self._regime(candles_4h, debug)
         allowed_side = self._allowed_side(regime)
+        if is_sideways and self._mean_reversion_enabled:
+            allowed_side = "BOTH"
         debug.regime = regime
         debug.allowed_side = allowed_side
 
         blocks = list[str]()
-        if regime == "SIDEWAYS":
+        if regime == "SIDEWAYS" and not self._mean_reversion_enabled:
             blocks.append("sideways_regime")
-
-        if is_sideways and not self._mean_reversion_enabled:
             blocks.append("sideways_mr_disabled")
 
         overheat_blocks = self._eval_overheat_blocks(allowed_side, symbol)
