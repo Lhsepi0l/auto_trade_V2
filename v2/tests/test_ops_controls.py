@@ -26,7 +26,9 @@ class _FakeExchange:
 
     async def cancel_all_open_orders(self, *, symbol: str) -> dict[str, Any]:
         self.calls.append(f"cancel_regular:{symbol}")
-        self._open_orders = [row for row in self._open_orders if str(row.get("symbol") or "") != symbol]
+        self._open_orders = [
+            row for row in self._open_orders if str(row.get("symbol") or "") != symbol
+        ]
         return {"msg": "ok"}
 
     async def get_open_orders(self) -> list[dict[str, Any]]:
@@ -59,7 +61,9 @@ class _FakeExchange:
         _ = position_side
         self.calls.append(f"close_position:{symbol}:{side}:{quantity}")
         self._positions = [
-            {"symbol": row["symbol"], "positionAmt": "0"} if str(row.get("symbol") or "") == symbol else row
+            {"symbol": row["symbol"], "positionAmt": "0"}
+            if str(row.get("symbol") or "") == symbol
+            else row
             for row in self._positions
         ]
         return {"status": "FILLED"}
@@ -100,6 +104,16 @@ def test_pause_safe_resume_persist_across_restart(tmp_path: Path) -> None:
     restarted3 = _state_store(tmp_path)
     assert restarted3.get().operational.paused is False
     assert restarted3.get().operational.safe_mode is False
+
+    ops4 = OpsController(state_store=restarted3, exchange=None)
+    ops4.pause()
+    assert restarted3.get().operational.paused is True
+
+    ops5 = OpsController(state_store=restarted3, exchange=None)
+    ops5.resume()
+    restarted4 = _state_store(tmp_path)
+    assert restarted4.get().operational.paused is False
+    assert restarted4.get().operational.safe_mode is False
 
 
 @pytest.mark.asyncio

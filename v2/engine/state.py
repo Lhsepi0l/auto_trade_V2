@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from v2.engine.journal import JournalWriter
 from v2.exchange.types import ResyncSnapshot
@@ -547,9 +548,7 @@ class EngineStateStore:
             "paused": current.paused if paused is None else bool(paused),
             "safe_mode": current.safe_mode if safe_mode is None else bool(safe_mode),
         }
-        effective_event_id = event_id or self._event_hash(
-            event_type="ops.UPDATE", payload=payload, reason=reason
-        )
+        effective_event_id = event_id or f"ops-{uuid4().hex}"
         inserted = self._journal.write(
             event_type="ops.UPDATE",
             payload=payload,
