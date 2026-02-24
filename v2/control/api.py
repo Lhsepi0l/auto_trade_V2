@@ -197,7 +197,7 @@ class RuntimeController:
             1,
             int(
                 _to_float(
-                    self._risk.get("notify_interval_sec"),
+                    self._risk.get("scheduler_tick_sec"),
                     default=float(self.scheduler.tick_seconds),
                 )
             ),
@@ -286,6 +286,7 @@ class RuntimeController:
             "exec_mode_default": "MARKET",
             "exec_limit_timeout_sec": 3.0,
             "exec_limit_retries": 2,
+            "scheduler_tick_sec": sched_sec,
             "notify_interval_sec": sched_sec,
             "spread_max_pct": 0.5,
             "allow_market_when_wide_spread": False,
@@ -1193,13 +1194,19 @@ class RuntimeController:
                 parsed = [str(item).strip().upper() for item in parsed if str(item).strip()]
             else:
                 parsed = [self.cfg.behavior.exchange.default_symbol]
+        if key in {"notify_interval_sec", "scheduler_tick_sec"}:
+            parsed = max(1, int(_to_float(parsed, default=1.0)))
+
         self._risk[key] = parsed
         self._sync_kernel_runtime_overrides()
-        self._persist_risk_config()
-        if key == "notify_interval_sec":
+
+        if key == "scheduler_tick_sec":
             self.scheduler.tick_seconds = int(
                 _to_float(parsed, default=float(self.scheduler.tick_seconds))
             )
+
+        self._persist_risk_config()
+        if key == "notify_interval_sec":
             self._emit_status_update(force=True)
         return {
             "key": key,
@@ -1233,7 +1240,7 @@ class RuntimeController:
     def set_scheduler_interval(self, tick_sec: float) -> dict[str, Any]:
         sec = max(1, int(tick_sec))
         self.scheduler.tick_seconds = sec
-        self._risk["notify_interval_sec"] = sec
+        self._risk["scheduler_tick_sec"] = sec
         self._persist_risk_config()
         return {
             "tick_sec": float(self.scheduler.tick_seconds),
