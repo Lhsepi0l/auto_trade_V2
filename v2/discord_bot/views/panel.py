@@ -146,6 +146,13 @@ REASON_PREFIX_HINTS = {
     "cycle_failed:": "즉시 판단 실행 중 내부 오류가 발생했습니다",
     "bracket_failed:": "진입 후 TP/SL 브래킷 주문 생성에 실패했습니다",
     "no_candidate_multi:": "심볼별 후보 부재 사유",
+    "no_entry:": "진입 조건 미충족",
+}
+
+NO_ENTRY_DETAIL_HINTS: dict[str, str] = {
+    "donchian": "돈치안 진입 조건 미충족",
+    "pullback": "풀백 진입 조건 미충족",
+    "mean_reversion": "평균회귀 진입 조건 미충족",
 }
 
 BALANCE_ERROR_HINT_MAP: dict[str, str] = {
@@ -290,6 +297,10 @@ def _reason_to_human_readable(raw_reason: str) -> str:
     for prefix, msg in REASON_PREFIX_HINTS.items():
         if reason.startswith(prefix):
             detail = reason[len(prefix) :].strip()
+            if prefix == "no_entry:" and detail:
+                mapped = NO_ENTRY_DETAIL_HINTS.get(detail)
+                if mapped is not None:
+                    return mapped
             if detail:
                 return f"{msg}: {detail}"
             return msg

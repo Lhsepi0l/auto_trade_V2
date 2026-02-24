@@ -422,6 +422,34 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_humanizes_no_entry_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "no_entry:donchian",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {"usdt_balance": {"available": 10.0, "wallet": 10.0}},
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("돈치안 진입 조건 미충족" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tick_once_shows_live_position_and_unrealized_pnl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
