@@ -246,7 +246,9 @@ def _translate_rejection_map(reasons: JSONPayload) -> dict[str, str]:
         elif key.startswith("tf_no_candles_"):
             translated[f"{key.replace('tf_no_candles_', '').upper()}_봉부족"] = f"{_fmt_int(v)}"
         elif key.startswith("tf_insufficient_bars_"):
-            translated[f"{key.replace('tf_insufficient_bars_', '').upper()}_바수부족"] = f"{_fmt_int(v)}"
+            translated[f"{key.replace('tf_insufficient_bars_', '').upper()}_바수부족"] = (
+                f"{_fmt_int(v)}"
+            )
         elif key.startswith("tf_not_configured_"):
             translated[f"{key.replace('tf_not_configured_', '').upper()}_미사용"] = f"{_fmt_int(v)}"
         else:
@@ -336,7 +338,12 @@ def _first_position(positions: JSONValue) -> tuple[str, str, float, str]:
             continue
         if abs(amt) > 1e-12:
             unrealized = _coerce_float(row.get("unrealized_pnl"), default=0.0)
-            return str(sym), _fmt_money(abs(amt)), unrealized, _position_side(amt, row.get("position_side"))
+            return (
+                str(sym),
+                _fmt_money(abs(amt)),
+                unrealized,
+                _position_side(amt, row.get("position_side")),
+            )
 
     if fallback_symbol == "-":
         return "-", "-", 0.0, "-"
@@ -389,28 +396,39 @@ def format_status_payload(payload: JSONPayload) -> str:
 
     cand = _as_dict(sched.get("candidate") or sched.get("last_candidate"))
     candidate_symbol = str(cand.get("symbol") or "-")
-    regime_raw = sched.get("regime_4h") or cand.get("regime_4h") or sched.get("last_regime")
+    regime_raw = (
+        sched.get("regime_4h")
+        or cand.get("regime_4h")
+        or cand.get("regime_hint")
+        or sched.get("last_regime")
+    )
     regime_kor, regime_code = _regime_to_kor(regime_raw)
     scoring_weights = _as_dict(sched.get("scoring_weights") or summary.get("scoring_weights") or {})
     candidate_score_by_timeframe = _as_dict(
-        sched.get("candidate_score_by_timeframe") or summary.get("candidate_score_by_timeframe") or {}
+        sched.get("candidate_score_by_timeframe")
+        or summary.get("candidate_score_by_timeframe")
+        or {}
     )
     active_scoring_tfs: list[str] = []
-    raw_active_scoring_tfs = sched.get("active_scoring_timeframes") or summary.get("active_scoring_timeframes") or []
+    raw_active_scoring_tfs = (
+        sched.get("active_scoring_timeframes") or summary.get("active_scoring_timeframes") or []
+    )
     if isinstance(raw_active_scoring_tfs, (list, tuple)):
         active_scoring_tfs = [str(tf) for tf in raw_active_scoring_tfs]
-    scoring_scan_stats = _as_dict(sched.get("scoring_scan_stats") or summary.get("scoring_scan_stats") or {})
+    scoring_scan_stats = _as_dict(
+        sched.get("scoring_scan_stats") or summary.get("scoring_scan_stats") or {}
+    )
     scoring_rejection_reasons = _as_dict(
         sched.get("scoring_rejection_reasons") or summary.get("scoring_rejection_reasons") or {}
     )
     candidate_selection_reasons = _as_dict(
         sched.get("candidate_selection_reasons") or summary.get("candidate_selection_reasons") or {}
     )
-    scoring_drift_detected = bool(sched.get("scoring_drift_detected") or summary.get("scoring_drift_detected"))
+    scoring_drift_detected = bool(
+        sched.get("scoring_drift_detected") or summary.get("scoring_drift_detected")
+    )
     raw_scoring_drift_details = (
-        sched.get("scoring_drift_details")
-        or summary.get("scoring_drift_details")
-        or []
+        sched.get("scoring_drift_details") or summary.get("scoring_drift_details") or []
     )
     scoring_drift_details: list[JSONValue] = []
     if isinstance(raw_scoring_drift_details, (list, tuple)):
@@ -422,10 +440,16 @@ def format_status_payload(payload: JSONPayload) -> str:
         sched.get("candidate_reject_stage") or summary.get("candidate_reject_stage") or ""
     )
     candidate_rejection_hotspot = str(
-        sched.get("candidate_rejection_hotspot") or summary.get("candidate_rejection_hotspot") or "-"
+        sched.get("candidate_rejection_hotspot")
+        or summary.get("candidate_rejection_hotspot")
+        or "-"
     )
-    scoring_setup_signature = _as_dict(sched.get("scoring_setup_signature") or summary.get("scoring_setup_signature") or {})
-    last_scoring_validation_ts = sched.get("last_scoring_validation_ts") or summary.get("last_scoring_validation_ts")
+    scoring_setup_signature = _as_dict(
+        sched.get("scoring_setup_signature") or summary.get("scoring_setup_signature") or {}
+    )
+    last_scoring_validation_ts = sched.get("last_scoring_validation_ts") or summary.get(
+        "last_scoring_validation_ts"
+    )
 
     if not active_scoring_tfs and scoring_weights:
         active_scoring_tfs = [tf for tf in _SCORING_TIMEFRAME_ORDER if tf in scoring_weights]
@@ -478,11 +502,7 @@ def format_status_payload(payload: JSONPayload) -> str:
         lines.append(f"기준봉 가중치: {weight_line}")
 
     if scoring_drift_detected:
-        drift_list = [
-            str(x)
-            for x in scoring_drift_details
-            if x is not None and str(x).strip()
-        ]
+        drift_list = [str(x) for x in scoring_drift_details if x is not None and str(x).strip()]
         if drift_list:
             lines.append(f"스코어링 설정 검증: ⚠ {', '.join(drift_list)}")
         else:
@@ -528,7 +548,9 @@ def format_status_payload(payload: JSONPayload) -> str:
         lines.append(f"선택 탈락 히트맵: {selection_text}")
 
     if candidate_reject_stage:
-        lines.append(f"탈락 단계: {_candidate_reject_stage_to_kor(candidate_reject_stage)} ({candidate_reject_stage})")
+        lines.append(
+            f"탈락 단계: {_candidate_reject_stage_to_kor(candidate_reject_stage)} ({candidate_reject_stage})"
+        )
     if scoring_rejection_hotspot != "-":
         lines.append(f"심볼 탈락 상위 원인: {scoring_rejection_hotspot}")
     if candidate_rejection_hotspot != "-":
@@ -611,7 +633,14 @@ def format_report_payload(payload: JSONPayload) -> str:
     lines.append(f"디스코드 전송: {'성공' if sent else '실패'}")
     if not sent and notifier_error:
         lines.append(f"전송 오류: {notifier_error}")
-    if entries == "0" and closes == "0" and errors == "0" and canceled == "0" and blocks == "0" and total_records == "0":
+    if (
+        entries == "0"
+        and closes == "0"
+        and errors == "0"
+        and canceled == "0"
+        and blocks == "0"
+        and total_records == "0"
+    ):
         lines.append("결과: 집계 대상 데이터가 없습니다.")
 
     return _truncate("\n".join(lines))
