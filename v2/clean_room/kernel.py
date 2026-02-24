@@ -38,6 +38,11 @@ class UniverseSymbolsMutableSelector(Protocol):
 
 
 @runtime_checkable
+class NoCandidateReasonAwareSelector(Protocol):
+    def get_last_no_candidate_reason(self) -> str | None: ...
+
+
+@runtime_checkable
 class LeverageConfigMutableSizer(Protocol):
     def set_leverage_config(
         self,
@@ -176,7 +181,12 @@ class TradeKernel:
         context = self._build_context()
         candidate = self._selector.select(context=context)
         if candidate is None:
-            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+            reason = "no_candidate"
+            if isinstance(self._selector, NoCandidateReasonAwareSelector):
+                observed = self._selector.get_last_no_candidate_reason()
+                if observed:
+                    reason = observed
+            return KernelCycleResult(state="no_candidate", reason=reason, candidate=None)
 
         blocked = self._ops_blocked(candidate=candidate)
         if blocked is not None:

@@ -771,6 +771,10 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
         self._symbols = normalized or ["BTCUSDT"]
         self._snapshot_provider = snapshot_provider
         self._journal_logger = journal_logger
+        self._last_no_candidate_reason: str | None = None
+
+    def get_last_no_candidate_reason(self) -> str | None:
+        return self._last_no_candidate_reason
 
     def set_symbols(self, symbols: list[str]) -> None:
         normalized = [str(sym).strip().upper() for sym in symbols if str(sym).strip()]
@@ -779,6 +783,7 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
 
     def select(self, *, context: KernelContext) -> Candidate | None:
         _ = context
+        self._last_no_candidate_reason = None
         primary_symbol = self._symbols[0]
         snapshot: dict[str, Any] = {"symbol": primary_symbol}
 
@@ -789,6 +794,7 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
 
         symbols_market = snapshot.get("symbols")
         candidates: list[Candidate] = []
+        skipped_reasons: dict[str, str] = {}
 
         for symbol in self._symbols:
             symbol_snapshot = dict(snapshot)
@@ -803,6 +809,7 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
                 self._journal_logger(decision)
 
             if decision.get("intent") not in {"LONG", "SHORT"}:
+                skipped_reasons[symbol] = str(decision.get("reason") or "no_entry")
                 continue
 
             side = str(decision.get("side") or "NONE")
@@ -811,16 +818,20 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
             elif side == "SELL":
                 trade_side = "SELL"
             else:
+                skipped_reasons[symbol] = "invalid_side"
                 continue
 
             intent = str(decision.get("intent") or "NONE")
             if intent == "LONG" and side != "BUY":
+                skipped_reasons[symbol] = "intent_side_mismatch"
                 continue
             if intent == "SHORT" and side != "SELL":
+                skipped_reasons[symbol] = "intent_side_mismatch"
                 continue
 
             score = float(decision.get("score", 0.0) or 0.0)
             if score <= 0:
+                skipped_reasons[symbol] = str(decision.get("reason") or "score_not_positive")
                 continue
 
             entry_price = _to_float(decision.get("entry_price"))
@@ -844,5 +855,18 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
             )
 
         if not candidates:
+            if skipped_reasons:
+                ordered = sorted(skipped_reasons.items())
+                unique_reasons: list[str] = []
+                for _symbol, reason in ordered:
+                    if reason not in unique_reasons:
+                        unique_reasons.append(reason)
+                if len(unique_reasons) == 1:
+                    self._last_no_candidate_reason = unique_reasons[0]
+                else:
+                    summary = ";".join(f"{sym}:{reason}" for sym, reason in ordered[:3])
+                    self._last_no_candidate_reason = f"no_candidate_multi:{summary}"
+            else:
+                self._last_no_candidate_reason = "no_candidate"
             return None
         return max(candidates, key=lambda c: float(c.score))

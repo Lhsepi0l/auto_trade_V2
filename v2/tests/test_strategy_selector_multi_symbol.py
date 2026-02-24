@@ -73,3 +73,53 @@ def test_selector_respects_updated_universe_symbols() -> None:
     )
     assert candidate is not None
     assert candidate.symbol == "BTCUSDT"
+
+
+def test_selector_exposes_no_candidate_reason_from_strategy() -> None:
+    strategy = _FakeStrategy(
+        decisions={
+            "BTCUSDT": {"intent": "NONE", "reason": "insufficient_4h_data"},
+            "ETHUSDT": {"intent": "NONE", "reason": "insufficient_4h_data"},
+        }
+    )
+    selector = StrategyPackV1CandidateSelector(
+        strategy=strategy,  # type: ignore[arg-type]
+        symbols=["BTCUSDT", "ETHUSDT"],
+        snapshot_provider=lambda: {},
+    )
+
+    candidate = selector.select(
+        context=KernelContext(
+            mode="live", profile="normal", symbol="BTCUSDT", tick=1, dry_run=False
+        )
+    )
+
+    assert candidate is None
+    assert selector.get_last_no_candidate_reason() == "insufficient_4h_data"
+
+
+def test_selector_exposes_multi_symbol_no_candidate_summary() -> None:
+    strategy = _FakeStrategy(
+        decisions={
+            "BTCUSDT": {"intent": "NONE", "reason": "sideways_regime"},
+            "ETHUSDT": {"intent": "NONE", "reason": "insufficient_4h_data"},
+        }
+    )
+    selector = StrategyPackV1CandidateSelector(
+        strategy=strategy,  # type: ignore[arg-type]
+        symbols=["BTCUSDT", "ETHUSDT"],
+        snapshot_provider=lambda: {},
+    )
+
+    candidate = selector.select(
+        context=KernelContext(
+            mode="live", profile="normal", symbol="BTCUSDT", tick=1, dry_run=False
+        )
+    )
+
+    assert candidate is None
+    reason = selector.get_last_no_candidate_reason()
+    assert isinstance(reason, str)
+    assert reason.startswith("no_candidate_multi:")
+    assert "BTCUSDT:sideways_regime" in reason
+    assert "ETHUSDT:insufficient_4h_data" in reason
