@@ -149,6 +149,45 @@ def test_sideways_with_mean_reversion_allows_entry(monkeypatch) -> None:  # type
     assert decision["allowed_side"] == "BOTH"
 
 
+def test_sideways_with_mr_enabled_keeps_pullback_signal(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    strategy = StrategyPackV1(params={"mean_reversion_enabled": True})
+
+    monkeypatch.setattr(
+        strategy,
+        "_regime",
+        lambda _candles_4h, _debug: ("SIDEWAYS", True),
+    )
+    monkeypatch.setattr(
+        strategy,
+        "_entry_signal_1h",
+        lambda _candles_1h, _mode, _allowed_side, _debug: {
+            "long": True,
+            "short": False,
+            "mode": "pullback",
+            "mean_reversion": False,
+        },
+    )
+    monkeypatch.setattr(
+        strategy,
+        "_mean_reversion_signal_1h",
+        lambda _candles_1h, _allowed_side, _debug: (
+            {
+                "long": False,
+                "short": False,
+                "mode": "pullback",
+                "mean_reversion": True,
+            },
+            False,
+        ),
+    )
+    monkeypatch.setattr(strategy, "_eval_overheat_blocks", lambda _side, _symbol: [])
+
+    decision = strategy.decide(_snapshot_with_series(100.0))
+
+    assert decision["intent"] == "LONG"
+    assert decision["side"] == "BUY"
+
+
 def test_donchian_mode_can_emit_long_entry(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     strategy = StrategyPackV1(
         params={
@@ -208,6 +247,45 @@ def test_pullback_mode_can_emit_long_entry(monkeypatch) -> None:  # type: ignore
     assert decision["intent"] == "LONG"
     assert decision["side"] == "BUY"
     assert decision["reason"] == "entry_pullback_long"
+
+
+def test_overheat_cache_is_scoped_per_symbol() -> None:
+    calls: dict[str, int] = {}
+
+    def _fetch(symbol: str):
+        calls[symbol] = calls.get(symbol, 0) + 1
+        if symbol == "BTCUSDT":
+            return (0.0010, 1.60)
+        return (0.0, 1.0)
+
+    strategy = StrategyPackV1(params={"overheat_cache_ttl": 60}, overheat_fetcher=_fetch)
+
+    btc = strategy._fetch_overheat("BTCUSDT")
+    eth = strategy._fetch_overheat("ETHUSDT")
+    btc_again = strategy._fetch_overheat("BTCUSDT")
+
+    assert btc == (0.0010, 1.60)
+    assert eth == (0.0, 1.0)
+    assert btc_again == btc
+    assert calls["BTCUSDT"] == 1
+    assert calls["ETHUSDT"] == 1
+
+
+def test_decide_ignores_malformed_short_ohlc_rows() -> None:
+    strategy = StrategyPackV1(params={})
+    snapshot: dict[str, Any] = {
+        "symbol": "BTCUSDT",
+        "market": {
+            "4h": [[0, 1.0, 2.0, 0.5] for _ in range(60)],
+            "1h": [[0, 1.0, 2.0, 0.5] for _ in range(60)],
+            "15m": [[0, 1.0, 2.0, 0.5] for _ in range(60)],
+        },
+    }
+
+    decision = strategy.decide(snapshot)
+
+    assert decision["intent"] == "NONE"
+    assert "insufficient_4h_data" in decision.get("blocks", [])
 
 
 def test_overheat_block_blocks_all_entries(monkeypatch) -> None:  # type: ignore[no-untyped-def]

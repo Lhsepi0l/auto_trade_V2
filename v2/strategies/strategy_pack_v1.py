@@ -60,7 +60,7 @@ def _to_candles(raw: list[Any]) -> list[_Candle]:
             h = _to_float(row.get("high"))
             low = _to_float(row.get("low"))
             c = _to_float(row.get("close"))
-        elif isinstance(row, (list, tuple)) and len(row) >= 4:
+        elif isinstance(row, (list, tuple)) and len(row) >= 5:
             o = _to_float(row[1])
             h = _to_float(row[2])
             low = _to_float(row[3])
@@ -334,7 +334,7 @@ class StrategyPackV1(StrategyPlugin):
         )
 
         self._overheat_fetcher = overheat_fetcher
-        self._overheat_state: _OverheatState | None = None
+        self._overheat_state_by_symbol: dict[str, _OverheatState] = {}
 
     def _collect_market(self, market_snapshot: dict[str, Any]) -> dict[str, list[_Candle]]:
         raw_market = market_snapshot.get("market", {})
@@ -364,14 +364,18 @@ class StrategyPackV1(StrategyPlugin):
         if self._overheat_fetcher is None:
             return None
 
+        symbol_key = str(symbol).upper().strip()
+        if not symbol_key:
+            return None
+
         now = datetime.now(timezone.utc)
-        cached = self._overheat_state
+        cached = self._overheat_state_by_symbol.get(symbol_key)
         if cached is not None:
             ttl = timedelta(seconds=max(self._overheat_cfg.ttl_seconds, 1))
             if now <= cached.updated_at + ttl:
                 return cached.funding_rate, cached.ratio
 
-        payload = self._overheat_fetcher(symbol)
+        payload = self._overheat_fetcher(symbol_key)
         if isinstance(payload, tuple) and len(payload) == 2:
             funding = _to_float(payload[0])
             ratio = _to_float(payload[1])
@@ -384,7 +388,11 @@ class StrategyPackV1(StrategyPlugin):
         if funding is None or ratio is None:
             return None
 
-        self._overheat_state = _OverheatState(updated_at=now, funding_rate=funding, ratio=ratio)
+        self._overheat_state_by_symbol[symbol_key] = _OverheatState(
+            updated_at=now,
+            funding_rate=funding,
+            ratio=ratio,
+        )
         return funding, ratio
 
     def _eval_overheat_blocks(self, allowed_side: str, symbol: str) -> list[str]:
@@ -642,10 +650,10 @@ class StrategyPackV1(StrategyPlugin):
             mr_signal, mr_ok = self._mean_reversion_signal_1h(candles_1h, allowed_side, debug)
             debug.signals["mean_reversion_enabled"] = True
             if mr_ok:
-                signal = mr_signal
-            else:
-                signal["long"] = False
-                signal["short"] = False
+                signal["long"] = bool(signal.get("long")) or bool(mr_signal.get("long"))
+                signal["short"] = bool(signal.get("short")) or bool(mr_signal.get("short"))
+                if mr_signal.get("mean_reversion"):
+                    signal["mean_reversion"] = True
 
         debug.filters["is_sideways"] = is_sideways
         debug.filters["entry_mode"] = self._entry_mode
