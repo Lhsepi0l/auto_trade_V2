@@ -245,7 +245,7 @@ async def test_scheduler_interval_options_include_5_10_15_and_60_minutes(
     interval_select._values = ["300"]  # type: ignore[attr-defined]
     await interval_select.callback(it)  # type: ignore[arg-type]
     assert api.set_scheduler_interval.await_count == 1
-    assert any("판단 주기를" in m and "상태 알림도 같은 주기로" in m for m in it.followup.messages)
+    assert any("판단 주기를" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -191,6 +192,57 @@ def test_control_api_set_notify_interval_emits_immediate_status(tmp_path) -> Non
     assert notifier.send.call_count >= 1
 
 
+def test_status_loop_emits_while_running_without_cycle(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_loop_running.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+
+    controller._risk["notify_interval_sec"] = 1
+    controller._status_thread_stop.set()
+    if controller._status_thread is not None:
+        controller._status_thread.join(timeout=1.0)
+    controller._status_thread_stop.clear()
+    controller._start_status_loop()
+    controller._running = True
+    controller._last_status_notify_at = datetime.now(timezone.utc)
+    notifier.send.reset_mock()
+
+    time.sleep(1.2)
+    assert notifier.send.call_count >= 1
+
+    controller._running = False
+    controller._status_thread_stop.set()
+    if controller._status_thread is not None:
+        controller._status_thread.join(timeout=1.0)
+
+
 def test_scheduler_interval_does_not_override_notify_interval(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_scheduler_notify_split.sqlite3")
@@ -366,6 +418,61 @@ def test_status_summary_includes_signed_pnl(tmp_path) -> None:  # type: ignore[n
     assert "미실현PnL=+3.0000 USDT" in summary
     assert "BTCUSDT:+5.0000" in summary
     assert "ETHUSDT:-2.0000" in summary
+
+
+def test_status_summary_prefers_live_positions_and_side_labels(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_live_positions.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    class _LivePosREST:
+        async def get_positions(self):  # type: ignore[no-untyped-def]
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.010",
+                    "entryPrice": "100000",
+                    "markPrice": "101000",
+                    "unRealizedProfit": "1.50",
+                },
+                {
+                    "symbol": "ETHUSDT",
+                    "positionAmt": "-0.100",
+                    "entryPrice": "3000",
+                    "markPrice": "2995",
+                    "unRealizedProfit": "-0.50",
+                },
+            ]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_LivePosREST(),
+    )
+    controller._last_cycle["last_action"] = "no_candidate"
+    controller._last_cycle["last_decision_reason"] = "no_candidate"
+
+    summary = controller._status_summary()
+    assert "포지션=BTCUSDT[롱], ETHUSDT[숏]" in summary
+    assert "미실현PnL=+1.0000 USDT" in summary
 
 
 def test_control_api_tick_handles_kernel_exception(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -1392,6 +1499,8 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
             self.symbols: list[str] = []
             self.mapping: dict[str, float] = {}
             self.max_leverage: float = 1.0
+            self.fallback_notional: float = 0.0
+            self.max_notional: float | None = None
 
         def set_universe_symbols(self, symbols: list[str]) -> None:
             self.symbols = list(symbols)
@@ -1401,6 +1510,15 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
         ) -> None:
             self.mapping = dict(mapping)
             self.max_leverage = float(max_leverage)
+
+        def set_notional_config(
+            self,
+            *,
+            fallback_notional: float,
+            max_notional: float | None,
+        ) -> None:
+            self.fallback_notional = float(fallback_notional)
+            self.max_notional = max_notional
 
         def run_once(self):  # type: ignore[no-untyped-def]
             from v2.clean_room.contracts import KernelCycleResult
@@ -1424,6 +1542,14 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
     set_uni = client.post("/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"})
     assert set_uni.status_code == 200
     assert kernel.symbols == ["BTCUSDT", "ETHUSDT"]
+
+    set_budget = client.post("/set", json={"key": "margin_budget_usdt", "value": "35"})
+    assert set_budget.status_code == 200
+    assert kernel.fallback_notional == 35.0
+
+    set_cap = client.post("/set", json={"key": "max_position_notional_usdt", "value": "120"})
+    assert set_cap.status_code == 200
+    assert kernel.max_notional == 120.0
 
     _ = client.post("/set", json={"key": "max_leverage", "value": "20"})
     lev = client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7})

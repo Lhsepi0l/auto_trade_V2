@@ -1799,7 +1799,7 @@ class AdvancedPanelView(PanelViewBase):
         await self._run_action(
             interaction,
             action=lambda: self.api.set_scheduler_interval(tick_sec),
-            success_message=f"판단 주기를 {minutes}분으로 변경했습니다. 상태 알림도 같은 주기로 변경됩니다.",
+            success_message=f"판단 주기를 {minutes}분으로 변경했습니다.",
         )
 
     @discord.ui.button(label="상태 알림 주기 설정", style=discord.ButtonStyle.secondary, row=2)

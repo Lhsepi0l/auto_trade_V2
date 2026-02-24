@@ -248,6 +248,27 @@ class RuntimeController:
             symbols = [self.cfg.behavior.exchange.default_symbol]
 
         max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
+
+        capital_mode = str(self._risk.get("capital_mode") or "").upper()
+        margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
+        margin_budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
+        fixed_budget = _to_float(self._risk.get("capital_usdt"), default=100.0)
+        if capital_mode == "FIXED_USDT":
+            base_notional = fixed_budget
+        else:
+            base_notional = margin_budget
+
+        fallback_notional = float(base_notional) * float(margin_use_pct)
+        if fallback_notional <= 0:
+            fallback_notional = 10.0
+
+        max_position_notional = _to_float(
+            self._risk.get("max_position_notional_usdt"),
+            default=0.0,
+        )
+        capped_notional: float | None = (
+            float(max_position_notional) if max_position_notional > 0 else None
+        )
         mapping_raw = self._risk.get("symbol_leverage_map")
         mapping: dict[str, float] = {}
         if isinstance(mapping_raw, dict):
@@ -265,6 +286,11 @@ class RuntimeController:
             self.kernel.set_symbol_leverage_map(  # type: ignore[attr-defined]
                 mapping,
                 max_leverage=max_leverage,
+            )
+        if hasattr(self.kernel, "set_notional_config"):
+            self.kernel.set_notional_config(  # type: ignore[attr-defined]
+                fallback_notional=fallback_notional,
+                max_notional=capped_notional,
             )
 
     def _initial_risk_config(self) -> dict[str, Any]:
@@ -1039,21 +1065,64 @@ class RuntimeController:
         reason = self._translate_status_token(
             str(self._last_cycle.get("last_decision_reason") or "-"), _REASON_LABELS_KO
         )
-        pnl_summary = self._status_pnl_summary()
-        return f"상태 알림: 엔진={state_ko}, 마지막판단={last_action}, 사유={reason}, {pnl_summary}"
+        position_summary, pnl_summary = self._status_pnl_summary()
+        return (
+            "상태 알림: "
+            f"엔진={state_ko}, 마지막판단={last_action}, 사유={reason}, "
+            f"포지션={position_summary}, {pnl_summary}"
+        )
 
     @staticmethod
     def _fmt_signed(value: float) -> str:
         return f"{float(value):+.4f}"
 
-    def _status_pnl_summary(self) -> str:
+    @staticmethod
+    def _position_side_label(position_amt: float) -> str:
+        return "롱" if position_amt > 0 else "숏"
+
+    def _status_positions_source(self) -> list[tuple[str, float, float]]:
+        live_positions, live_rows, live_ok = self._fetch_live_positions()
+        if live_ok and live_rows:
+            out_live: list[tuple[str, float, float]] = []
+            for symbol, row in sorted(live_rows.items()):
+                if not isinstance(row, dict):
+                    continue
+                position_amt = _to_float(row.get("positionAmt"), default=0.0)
+                if abs(position_amt) <= 0.0:
+                    continue
+                unrealized = _to_float(
+                    row.get("unRealizedProfit") or row.get("unrealizedProfit"),
+                    default=0.0,
+                )
+                out_live.append((symbol, position_amt, unrealized))
+            if out_live:
+                return out_live
+            if any(abs(_to_float(v, default=0.0)) > 0.0 for v in live_positions.values()):
+                return [
+                    (symbol, _to_float(amount, default=0.0), 0.0)
+                    for symbol, amount in sorted(live_positions.items())
+                    if abs(_to_float(amount, default=0.0)) > 0.0
+                ]
+
         state = self.state_store.get()
+        out_state: list[tuple[str, float, float]] = []
+        for symbol, row in sorted(state.current_position.items()):
+            position_amt = _to_float(row.position_amt, default=0.0)
+            if abs(position_amt) <= 0.0:
+                continue
+            pnl = _to_float(row.unrealized_pnl, default=0.0)
+            out_state.append((symbol, position_amt, pnl))
+        return out_state
+
+    def _status_pnl_summary(self) -> tuple[str, str]:
+        positions = self._status_positions_source()
         total_unrealized = 0.0
         per_symbol: list[str] = []
-        for symbol, row in sorted(state.current_position.items()):
-            pnl = _to_float(row.unrealized_pnl, default=0.0)
+        position_labels: list[str] = []
+        for symbol, position_amt, pnl in positions:
             total_unrealized += pnl
             per_symbol.append(f"{symbol}:{self._fmt_signed(pnl)}")
+            position_labels.append(f"{symbol}[{self._position_side_label(position_amt)}]")
 
         parts = [f"미실현PnL={self._fmt_signed(total_unrealized)} USDT"]
         if per_symbol:
@@ -1063,7 +1132,7 @@ class RuntimeController:
             parts.append(f"포지션별={preview}")
 
         latest_realized: float | None = None
-        for fill in state.last_fills:
+        for fill in self.state_store.get().last_fills:
             if fill.realized_pnl is None:
                 continue
             latest_realized = _to_float(fill.realized_pnl, default=0.0)
@@ -1071,7 +1140,11 @@ class RuntimeController:
         if latest_realized is not None:
             parts.append(f"최근실현PnL={self._fmt_signed(latest_realized)} USDT")
 
-        return ", ".join(parts)
+        position_summary = ", ".join(position_labels[:3]) if position_labels else "없음"
+        if len(position_labels) > 3:
+            position_summary = f"{position_summary}, ..."
+
+        return position_summary, ", ".join(parts)
 
     @staticmethod
     def _translate_status_token(raw: str, labels: dict[str, str]) -> str:
@@ -1119,9 +1192,7 @@ class RuntimeController:
                 )
                 if self._status_thread_stop.wait(timeout=float(interval)):
                     break
-                if self._running:
-                    continue
-                self._emit_status_update(force=True)
+                self._emit_status_update(force=False)
 
         self._status_thread = threading.Thread(target=_worker, daemon=True)
         self._status_thread.start()

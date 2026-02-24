@@ -47,6 +47,16 @@ class LeverageConfigMutableSizer(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class NotionalConfigMutableSizer(Protocol):
+    def set_notional_config(
+        self,
+        *,
+        fallback_notional: float,
+        max_notional: float | None,
+    ) -> None: ...
+
+
 @dataclass(frozen=True)
 class TradeKernelConfig:
     mode: str
@@ -191,6 +201,18 @@ class TradeKernel:
             self._sizer.set_leverage_config(
                 symbol_leverage_map=mapping,
                 max_leverage=max_leverage,
+            )
+
+    def set_notional_config(
+        self,
+        *,
+        fallback_notional: float,
+        max_notional: float | None,
+    ) -> None:
+        if isinstance(self._sizer, NotionalConfigMutableSizer):
+            self._sizer.set_notional_config(
+                fallback_notional=fallback_notional,
+                max_notional=max_notional,
             )
 
 

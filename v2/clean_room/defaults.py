@@ -107,6 +107,18 @@ class DynamicNotionalSizer:
         }
         self._max_leverage = max(1.0, float(max_leverage))
 
+    def set_notional_config(self, *, fallback_notional: float, max_notional: float | None) -> None:
+        fallback = float(fallback_notional)
+        if fallback > 0:
+            self._fallback_notional = fallback
+
+        if max_notional is None:
+            self._max_notional = None
+            return
+
+        max_value = float(max_notional)
+        self._max_notional = max_value if max_value > 0 else None
+
     def _resolve_leverage(self, symbol: str) -> float:
         symbol_u = str(symbol).upper()
         selected = self._symbol_leverage_map.get(symbol_u, self._default_leverage)
