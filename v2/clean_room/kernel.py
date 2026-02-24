@@ -292,24 +292,27 @@ def _build_overheat_fetcher(
     if rest_client is None:
         return None
 
-    cache: dict[str, float] = {}
-    cache_updated_at: datetime | None = None
+    cache_by_symbol: dict[str, tuple[datetime, float, float]] = {}
+    fallback_symbol = str(symbol).upper().strip()
 
-    def _fetch(_) -> tuple[float, float] | None:
-        _ = _
-        nonlocal cache, cache_updated_at
+    def _fetch(requested_symbol: str) -> tuple[float, float] | None:
+        nonlocal cache_by_symbol
+
+        target_symbol = str(requested_symbol).upper().strip() or fallback_symbol
+        if not target_symbol:
+            return None
 
         now = datetime.now(timezone.utc)
-        if cache_updated_at is not None and (now - cache_updated_at).total_seconds() < 30:
-            if "funding" in cache and "ratio" in cache:
-                return cache["funding"], cache["ratio"]
+        cached = cache_by_symbol.get(target_symbol)
+        if cached is not None and (now - cached[0]).total_seconds() < 30:
+            return cached[1], cached[2]
 
         try:
             payload_funding = _run_async_blocking(
                 lambda: rest_client.public_request(
                     "GET",
                     "/fapi/v1/premiumIndex",
-                    params={"symbol": symbol},
+                    params={"symbol": target_symbol},
                 )
             )
             if not isinstance(payload_funding, dict):
@@ -319,7 +322,7 @@ def _build_overheat_fetcher(
                 lambda: rest_client.public_request(
                     "GET",
                     "/fapi/v1/globalLongShortAccountRatio",
-                    params={"symbol": symbol, "period": "5m", "limit": 1},
+                    params={"symbol": target_symbol, "period": "5m", "limit": 1},
                 )
             )
             if isinstance(payload_ratio, list):
@@ -338,11 +341,10 @@ def _build_overheat_fetcher(
             if funding is None or ratio is None:
                 return None
 
-            cache = {"funding": funding, "ratio": ratio}
-            cache_updated_at = now
+            cache_by_symbol[target_symbol] = (now, funding, ratio)
             return funding, ratio
         except Exception:  # noqa: BLE001
-            logger.exception("overheat_fetch_failed symbol=%s", symbol)
+            logger.exception("overheat_fetch_failed symbol=%s", target_symbol)
             return None
 
     return _fetch

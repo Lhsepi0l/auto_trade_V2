@@ -14,6 +14,7 @@ from v2.clean_room import (
     TradeKernelConfig,
     build_default_kernel,
 )
+from v2.clean_room.kernel import _build_overheat_fetcher
 from v2.config.loader import load_effective_config
 from v2.engine import EngineStateStore
 from v2.storage import RuntimeStorage
@@ -42,7 +43,9 @@ class ExecutionCounting:
     def __init__(self) -> None:
         self.calls = 0
 
-    def execute(self, *, candidate: Candidate, size: object, context: KernelContext) -> ExecutionResult:
+    def execute(
+        self, *, candidate: Candidate, size: object, context: KernelContext
+    ) -> ExecutionResult:
         _ = context
         _ = candidate
         _ = size
@@ -64,7 +67,9 @@ def test_no_candidate_returns_no_candidate(tmp_path) -> None:  # type: ignore[no
         risk_gate=AlwaysAllowedRiskGate(),
         sizer=FixedNotionalSizer(),
         executor=ExecutionCounting(),
-        config=TradeKernelConfig(mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True),
+        config=TradeKernelConfig(
+            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+        ),
     )
 
     result = kernel.run_once()
@@ -90,7 +95,9 @@ def test_ops_paused_blocks_execution(tmp_path) -> None:  # type: ignore[no-untyp
         risk_gate=AlwaysAllowedRiskGate(),
         sizer=FixedNotionalSizer(),
         executor=executor,
-        config=TradeKernelConfig(mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True),
+        config=TradeKernelConfig(
+            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+        ),
     )
 
     result = kernel.run_once()
@@ -116,7 +123,9 @@ def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-unty
         risk_gate=RejectingRiskGate(reason="policy"),
         sizer=FixedNotionalSizer(),
         executor=executor,
-        config=TradeKernelConfig(mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True),
+        config=TradeKernelConfig(
+            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+        ),
     )
 
     result = kernel.run_once()
@@ -155,3 +164,34 @@ def test_default_kernel_uses_strategy_pack_v1_selector(tmp_path) -> None:
     )
 
     assert kernel._selector.__class__.__name__ == "StrategyPackV1CandidateSelector"
+
+
+def test_overheat_fetcher_uses_requested_symbol_and_symbol_cache() -> None:
+    class FakeRestClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def public_request(self, method: str, path: str, params: dict[str, object]):
+            _ = method
+            symbol = str(params.get("symbol") or "")
+            self.calls.append(f"{path}:{symbol}")
+            if path.endswith("/premiumIndex"):
+                return {"lastFundingRate": "0.001" if symbol == "BTCUSDT" else "0.0"}
+            return [{"longShortRatio": "1.6" if symbol == "BTCUSDT" else "1.0"}]
+
+    rest = FakeRestClient()
+    fetcher = _build_overheat_fetcher(rest_client=rest, symbol="BTCUSDT")
+    assert fetcher is not None
+
+    first = fetcher("BTCUSDT")
+    second = fetcher("ETHUSDT")
+    third = fetcher("BTCUSDT")
+
+    assert first == (0.001, 1.6)
+    assert second == (0.0, 1.0)
+    assert third == first
+
+    btc_premium_calls = rest.calls.count("/fapi/v1/premiumIndex:BTCUSDT")
+    eth_premium_calls = rest.calls.count("/fapi/v1/premiumIndex:ETHUSDT")
+    assert btc_premium_calls == 1
+    assert eth_premium_calls == 1
