@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import uuid
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -133,6 +134,90 @@ class BracketService:
         self._storage = storage
         self._rest = rest_client
         self._mode = mode
+        self._symbol_rule_cache: dict[str, tuple[float, float, float]] = {}
+
+    @staticmethod
+    def _floor_to_step(value: float, step: float) -> float:
+        if step <= 0:
+            return float(value)
+        units = math.floor((float(value) / step) + 1e-12)
+        return float(units * step)
+
+    @staticmethod
+    def _round_to_step(value: float, step: float) -> float:
+        if step <= 0:
+            return float(value)
+        units = float(value) / step
+        rounded = Decimal(str(units)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return float(Decimal(str(step)) * rounded)
+
+    @staticmethod
+    def _decimal_string(value: float, ndigits: int = 8) -> str:
+        text = f"{float(value):.{ndigits}f}".rstrip("0").rstrip(".")
+        return text or "0"
+
+    async def _resolve_symbol_rules(self, symbol: str) -> tuple[float, float, float]:
+        symbol_u = symbol.upper()
+        cached = self._symbol_rule_cache.get(symbol_u)
+        if cached is not None:
+            return cached
+
+        rules: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        if self._mode != "live" or self._rest is None or not hasattr(self._rest, "public_request"):
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        rest_any = cast(Any, self._rest)
+        try:
+            payload = await rest_any.public_request(
+                "GET", "/fapi/v1/exchangeInfo", params={"symbol": symbol_u}
+            )
+        except Exception:  # noqa: BLE001
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        if not isinstance(payload, dict):
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        symbols_raw = payload.get("symbols")
+        if not isinstance(symbols_raw, list):
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        symbol_row = next(
+            (
+                row
+                for row in symbols_raw
+                if isinstance(row, dict) and str(row.get("symbol") or "").upper() == symbol_u
+            ),
+            None,
+        )
+        if not isinstance(symbol_row, dict):
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        filters_raw = symbol_row.get("filters")
+        if not isinstance(filters_raw, list):
+            self._symbol_rule_cache[symbol_u] = rules
+            return rules
+
+        step_size = 0.0
+        tick_size = 0.0
+        min_qty = 0.0
+        for row in filters_raw:
+            if not isinstance(row, dict):
+                continue
+            ftype = str(row.get("filterType") or "").upper()
+            if ftype == "LOT_SIZE":
+                step_size = float(row.get("stepSize") or 0.0)
+                min_qty = float(row.get("minQty") or 0.0)
+            elif ftype == "PRICE_FILTER":
+                tick_size = float(row.get("tickSize") or 0.0)
+
+        rules = (step_size, tick_size, min_qty)
+        self._symbol_rule_cache[symbol_u] = rules
+        return rules
 
     def _print_shadow_payloads(
         self,
@@ -156,8 +241,12 @@ class BracketService:
                 continue
             return BracketRuntime(
                 symbol=symbol_u,
-                tp_order_client_id=str(row.get("tp_order_client_id")) if row.get("tp_order_client_id") is not None else None,
-                sl_order_client_id=str(row.get("sl_order_client_id")) if row.get("sl_order_client_id") is not None else None,
+                tp_order_client_id=str(row.get("tp_order_client_id"))
+                if row.get("tp_order_client_id") is not None
+                else None,
+                sl_order_client_id=str(row.get("sl_order_client_id"))
+                if row.get("sl_order_client_id") is not None
+                else None,
                 state=_as_bracket_state(str(row.get("state") or "CREATED")),
             )
         return None
@@ -175,7 +264,9 @@ class BracketService:
         if current is None:
             raise ValueError(f"bracket missing for symbol={symbol}")
         if to_state != current.state and to_state not in self._ALLOWED[current.state]:
-            raise ValueError(f"invalid bracket transition {current.state}->{to_state} for symbol={symbol}")
+            raise ValueError(
+                f"invalid bracket transition {current.state}->{to_state} for symbol={symbol}"
+            )
         current.state = to_state
         self._persist(runtime=current)
         return current
@@ -237,14 +328,29 @@ class BracketService:
         )
 
         exit_side: EntrySide = "SELL" if planned.entry_side == "BUY" else "BUY"
+        step_size, tick_size, min_qty = await self._resolve_symbol_rules(planned.symbol)
+        qty = float(planned.quantity)
+        if step_size > 0:
+            qty = self._floor_to_step(qty, step_size)
+        if min_qty > 0 and qty < min_qty:
+            qty = min_qty
+            if step_size > 0:
+                qty = self._round_to_step(qty, step_size)
+
+        tp_trigger = float(planned.take_profit_price)
+        sl_trigger = float(planned.stop_loss_price)
+        if tick_size > 0:
+            tp_trigger = self._round_to_step(tp_trigger, tick_size)
+            sl_trigger = self._round_to_step(sl_trigger, tick_size)
+
         tp_payload = {
             "algoType": "CONDITIONAL",
             "symbol": planned.symbol,
             "side": exit_side,
             "type": "TAKE_PROFIT_MARKET",
             "positionSide": planned.position_side,
-            "quantity": str(planned.quantity),
-            "triggerPrice": str(planned.take_profit_price),
+            "quantity": self._decimal_string(qty),
+            "triggerPrice": self._decimal_string(tp_trigger),
             "workingType": self._planner.cfg.working_type,
             "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
             "reduceOnly": "true",
@@ -256,8 +362,8 @@ class BracketService:
             "side": exit_side,
             "type": "STOP_MARKET",
             "positionSide": planned.position_side,
-            "quantity": str(planned.quantity),
-            "triggerPrice": str(planned.stop_loss_price),
+            "quantity": self._decimal_string(qty),
+            "triggerPrice": self._decimal_string(sl_trigger),
             "workingType": self._planner.cfg.working_type,
             "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
             "reduceOnly": "true",
@@ -307,9 +413,13 @@ class BracketService:
             return runtime
 
         if self._mode == "live" and self._rest is not None and counterpart:
-            await self._rest.cancel_algo_order(params={"symbol": symbol.upper(), "clientAlgoId": counterpart})
+            await self._rest.cancel_algo_order(
+                params={"symbol": symbol.upper(), "clientAlgoId": counterpart}
+            )
 
-        cleaned = BracketRuntime(symbol=symbol.upper(), tp_order_client_id=None, sl_order_client_id=None, state="CLEANED")
+        cleaned = BracketRuntime(
+            symbol=symbol.upper(), tp_order_client_id=None, sl_order_client_id=None, state="CLEANED"
+        )
         self._persist(runtime=cleaned)
         return cleaned
 
@@ -335,7 +445,9 @@ class BracketService:
             for cid in sorted(cancel_targets):
                 await self._rest.cancel_algo_order(params={"symbol": symbol_u, "clientAlgoId": cid})
 
-        cleaned = BracketRuntime(symbol=symbol.upper(), tp_order_client_id=None, sl_order_client_id=None, state="CLEANED")
+        cleaned = BracketRuntime(
+            symbol=symbol.upper(), tp_order_client_id=None, sl_order_client_id=None, state="CLEANED"
+        )
         self._persist(runtime=cleaned)
         return cleaned
 
@@ -349,14 +461,20 @@ class BracketService:
             return [
                 BracketRuntime(
                     symbol=str(row.get("symbol") or "").upper(),
-                    tp_order_client_id=str(row.get("tp_order_client_id")) if row.get("tp_order_client_id") is not None else None,
-                    sl_order_client_id=str(row.get("sl_order_client_id")) if row.get("sl_order_client_id") is not None else None,
+                    tp_order_client_id=str(row.get("tp_order_client_id"))
+                    if row.get("tp_order_client_id") is not None
+                    else None,
+                    sl_order_client_id=str(row.get("sl_order_client_id"))
+                    if row.get("sl_order_client_id") is not None
+                    else None,
                     state=_as_bracket_state(str(row.get("state") or "CREATED")),
                 )
                 for row in rows
             ]
 
-        open_orders = await self._rest.get_open_algo_orders(symbol=symbol.upper() if symbol else None)
+        open_orders = await self._rest.get_open_algo_orders(
+            symbol=symbol.upper() if symbol else None
+        )
         open_ids: set[str] = set()
         for row in open_orders:
             cid = _extract_client_algo_id(row)
@@ -367,13 +485,23 @@ class BracketService:
         for row in rows:
             runtime = BracketRuntime(
                 symbol=str(row.get("symbol") or "").upper(),
-                tp_order_client_id=str(row.get("tp_order_client_id")) if row.get("tp_order_client_id") is not None else None,
-                sl_order_client_id=str(row.get("sl_order_client_id")) if row.get("sl_order_client_id") is not None else None,
+                tp_order_client_id=str(row.get("tp_order_client_id"))
+                if row.get("tp_order_client_id") is not None
+                else None,
+                sl_order_client_id=str(row.get("sl_order_client_id"))
+                if row.get("sl_order_client_id") is not None
+                else None,
                 state=_as_bracket_state(str(row.get("state") or "CREATED")),
             )
             if runtime.state != "CLEANED":
-                tp_open = runtime.tp_order_client_id is not None and runtime.tp_order_client_id in open_ids
-                sl_open = runtime.sl_order_client_id is not None and runtime.sl_order_client_id in open_ids
+                tp_open = (
+                    runtime.tp_order_client_id is not None
+                    and runtime.tp_order_client_id in open_ids
+                )
+                sl_open = (
+                    runtime.sl_order_client_id is not None
+                    and runtime.sl_order_client_id in open_ids
+                )
                 if tp_open or sl_open:
                     runtime.state = "ACTIVE"
                     self._persist(runtime=runtime)
@@ -385,7 +513,9 @@ class BracketService:
             recovered.append(runtime)
         return recovered
 
-    async def reconcile_open_algo_orders(self, *, symbol: str | None = None) -> list[BracketRuntime]:
+    async def reconcile_open_algo_orders(
+        self, *, symbol: str | None = None
+    ) -> list[BracketRuntime]:
         return await self.recover(symbol=symbol)
 
 

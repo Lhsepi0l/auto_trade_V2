@@ -35,6 +35,28 @@ class _FakeAlgoREST:
         _ = symbol
         return list(self.open_orders)
 
+    async def public_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        _ = method
+        _ = path
+        symbol = str((params or {}).get("symbol") or "BTCUSDT")
+        return {
+            "symbols": [
+                {
+                    "symbol": symbol,
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                    ],
+                }
+            ]
+        }
+
 
 def _storage(tmp_path: Path) -> RuntimeStorage:
     store = RuntimeStorage(sqlite_path=str(tmp_path / "runtime.sqlite3"))
@@ -43,7 +65,9 @@ def _storage(tmp_path: Path) -> RuntimeStorage:
 
 
 def test_bracket_planner_percent_and_atr() -> None:
-    percent = BracketPlanner(cfg=BracketConfig(method="percent", take_profit_pct=0.02, stop_loss_pct=0.01))
+    percent = BracketPlanner(
+        cfg=BracketConfig(method="percent", take_profit_pct=0.02, stop_loss_pct=0.01)
+    )
     levels_long = percent.levels(entry_price=100.0, side="LONG")
     levels_short = percent.levels(entry_price=100.0, side="SHORT")
     assert levels_long["take_profit"] == 102.0
@@ -85,7 +109,9 @@ async def test_create_and_place_shadow_persists_active_without_rest(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_shadow_mode_prints_payloads(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+async def test_shadow_mode_prints_payloads(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     store = _storage(tmp_path)
     service = BracketService(
         planner=BracketPlanner(cfg=BracketConfig()),
@@ -249,3 +275,30 @@ async def test_reconcile_poller_run_once(tmp_path: Path) -> None:
 
     assert len(out) == 1
     assert out[0].state == "CLEANED"
+
+
+@pytest.mark.asyncio
+async def test_live_bracket_quantizes_quantity_and_trigger_price(tmp_path: Path) -> None:
+    store = _storage(tmp_path)
+    rest = _FakeAlgoREST()
+    service = BracketService(
+        planner=BracketPlanner(cfg=BracketConfig()),
+        storage=store,
+        rest_client=rest,
+        mode="live",
+    )
+
+    await service.create_and_place(
+        symbol="BTCUSDT",
+        entry_side="BUY",
+        position_side="BOTH",
+        entry_price=100.123456789,
+        quantity=0.123456789,
+    )
+
+    assert len(rest.place_calls) == 2
+    for payload in rest.place_calls:
+        assert payload["quantity"] == "0.123"
+    by_type = {str(row.get("type") or ""): row for row in rest.place_calls}
+    assert by_type["TAKE_PROFIT_MARKET"]["triggerPrice"] == "102.1"
+    assert by_type["STOP_MARKET"]["triggerPrice"] == "99.1"
