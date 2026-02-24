@@ -45,6 +45,9 @@ class _FakeREST:
         self.leverage_calls.append({"symbol": symbol, "leverage": leverage})
         return {"symbol": symbol, "leverage": leverage}
 
+    async def get_balances(self) -> list[dict[str, Any]]:
+        return [{"asset": "USDT", "availableBalance": "1000"}]
+
     async def place_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(dict(params))
         return {"orderId": 12345, "status": "NEW"}
@@ -172,3 +175,24 @@ def test_live_execution_includes_binance_error_code() -> None:
 
     assert out.ok is False
     assert out.reason == "live_order_failed:BinanceRESTError:-1111"
+
+
+def test_live_execution_rejects_when_available_margin_insufficient() -> None:
+    @dataclass
+    class _LowBalanceREST(_FakeREST):
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "0.20"}]
+
+    rest = _LowBalanceREST(calls=[], leverage_calls=[])
+    svc = BinanceLiveExecutionService(rest_client=rest)
+    out = svc.execute(
+        candidate=Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0),
+        size=SizePlan(symbol="BTCUSDT", qty=0.05, leverage=1.0, notional=5.0),
+        context=KernelContext(
+            mode="live", profile="normal", symbol="BTCUSDT", tick=1, dry_run=False
+        ),
+    )
+
+    assert out.ok is False
+    assert str(out.reason).startswith("insufficient_available_margin:")
+    assert len(rest.calls) == 0

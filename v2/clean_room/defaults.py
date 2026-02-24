@@ -249,6 +249,33 @@ class BinanceLiveExecutionService:
         self._symbol_rule_cache[symbol] = rules
         return rules
 
+    def _fetch_available_usdt(self) -> float | None:
+        payload = self._run(lambda: self._rest.get_balances())
+        if not isinstance(payload, list):
+            return None
+
+        target: dict[str, Any] | None = None
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            asset = str(item.get("asset") or item.get("coin") or "").upper()
+            if asset == "USDT":
+                target = item
+                break
+
+        if target is None:
+            return None
+
+        raw = (
+            target.get("availableBalance")
+            or target.get("withdrawAvailable")
+            or target.get("balance")
+        )
+        try:
+            return float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
     def execute(
         self,
         *,
@@ -294,6 +321,21 @@ class BinanceLiveExecutionService:
                 qty = max(qty, required_qty)
             if min_qty > 0 and qty < min_qty:
                 return ExecutionResult(ok=False, reason="quantity_below_min_qty")
+
+            if candidate.entry_price is not None and candidate.entry_price > 0 and leverage_int > 0:
+                est_notional = qty * float(candidate.entry_price)
+                required_margin = est_notional / float(leverage_int)
+                fee_buffer = required_margin * 0.01
+                available_usdt = self._fetch_available_usdt()
+                if available_usdt is not None and (required_margin + fee_buffer) > available_usdt:
+                    return ExecutionResult(
+                        ok=False,
+                        reason=(
+                            "insufficient_available_margin:"
+                            f"required={required_margin + fee_buffer:.6f},"
+                            f"available={available_usdt:.6f}"
+                        ),
+                    )
 
             payload["quantity"] = f"{qty:.8f}"
             _ = self._run(lambda: self._rest.change_leverage(symbol=symbol, leverage=leverage_int))
