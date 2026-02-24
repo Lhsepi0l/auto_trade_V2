@@ -55,6 +55,7 @@ _REASON_LABELS_KO: dict[str, str] = {
     "cycle_failed": "사이클 실행 실패",
     "live_order_failed": "실주문 제출 실패",
     "bracket_failed": "TP/SL 브래킷 주문 실패",
+    "no_entry": "진입 조건 미충족",
     "network_error": "네트워크 오류",
 }
 
