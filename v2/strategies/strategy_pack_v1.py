@@ -479,14 +479,15 @@ class StrategyPackV1(StrategyPlugin):
             "mean_reversion": False,
         }
 
-        if len(candles_1h) < max(self._donchian_period, 2):
+        period = max(self._donchian_period, 2)
+        if len(candles_1h) < max(period + 1, 3):
             return signal
 
         atr = _atr(candles_1h, period=max(self._atr_period, 1))
         atr_value = atr if atr is not None else 0.0
         debug.indicators["atr_1h"] = None if atr is None else round(float(atr), 6)
 
-        donchian = _donchian(candles_1h, period=max(self._donchian_period, 2))
+        donchian = _donchian(candles_1h[:-1], period=period)
         if donchian is None:
             return signal
 
@@ -512,9 +513,9 @@ class StrategyPackV1(StrategyPlugin):
                 signal["short"] = True
             return signal
 
-        if allowed_side in {"LONG", "BOTH"} and prev.close <= lower and last.close > lower:
+        if allowed_side in {"LONG", "BOTH"} and prev.low <= lower and last.close > lower:
             signal["long"] = True
-        if allowed_side in {"SHORT", "BOTH"} and prev.close >= upper and last.close < upper:
+        if allowed_side in {"SHORT", "BOTH"} and prev.high >= upper and last.close < upper:
             signal["short"] = True
 
         return signal

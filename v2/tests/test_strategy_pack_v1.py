@@ -149,6 +149,67 @@ def test_sideways_with_mean_reversion_allows_entry(monkeypatch) -> None:  # type
     assert decision["allowed_side"] == "BOTH"
 
 
+def test_donchian_mode_can_emit_long_entry(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    strategy = StrategyPackV1(
+        params={
+            "entry_mode": "donchian",
+            "donchian_period": 3,
+            "donchian_anti_fake": 0.0,
+        }
+    )
+
+    monkeypatch.setattr(
+        strategy,
+        "_regime",
+        lambda _candles_4h, _debug: ("BULL", False),
+    )
+    monkeypatch.setattr(strategy, "_eval_overheat_blocks", lambda _side, _symbol: [])
+
+    snapshot = _snapshot_with_series(100.0)
+    snapshot["market"]["1h"] = [
+        _kline(100.0),
+        _kline(101.0),
+        _kline(102.0),
+        _kline(104.0),
+    ]
+
+    decision = strategy.decide(snapshot)
+
+    assert decision["intent"] == "LONG"
+    assert decision["side"] == "BUY"
+    assert decision["reason"] == "entry_donchian_long"
+
+
+def test_pullback_mode_can_emit_long_entry(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    strategy = StrategyPackV1(
+        params={
+            "entry_mode": "pullback",
+            "donchian_period": 3,
+        }
+    )
+
+    monkeypatch.setattr(
+        strategy,
+        "_regime",
+        lambda _candles_4h, _debug: ("BULL", False),
+    )
+    monkeypatch.setattr(strategy, "_eval_overheat_blocks", lambda _side, _symbol: [])
+
+    snapshot = _snapshot_with_series(100.0)
+    snapshot["market"]["1h"] = [
+        [0, 100.0, 101.0, 99.0, 100.0],
+        [0, 100.5, 101.0, 99.5, 100.2],
+        [0, 91.0, 92.0, 90.0, 91.0],
+        [0, 95.0, 97.0, 94.0, 95.0],
+    ]
+
+    decision = strategy.decide(snapshot)
+
+    assert decision["intent"] == "LONG"
+    assert decision["side"] == "BUY"
+    assert decision["reason"] == "entry_pullback_long"
+
+
 def test_overheat_block_blocks_all_entries(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     strategy = StrategyPackV1(params={})
 
