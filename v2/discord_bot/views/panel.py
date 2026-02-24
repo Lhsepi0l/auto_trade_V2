@@ -98,6 +98,10 @@ HELP_ADVANCED = (
 
 REASON_HINT_MAP: dict[str, str] = {
     "no_candidate": "현재 진입 후보가 없습니다.",
+    "insufficient_4h_data": "4시간봉 데이터가 아직 충분하지 않아 후보를 만들 수 없습니다.",
+    "regime_block": "현재 레짐 조건에서 진입이 차단되었습니다.",
+    "sideways_regime": "횡보 구간으로 분류되어 신규 진입이 제한됩니다.",
+    "sideways_mr_disabled": "횡보 구간이지만 mean-reversion 진입이 비활성 상태입니다.",
     "vol_shock_no_entry": "변동성 급등 구간이라 신규 진입이 보류됩니다.",
     "confidence_below_threshold": "신뢰도 점수가 기준치보다 낮아 진입하지 않습니다.",
     "short_not_allowed_regime": "현재 구간은 숏 진입이 제한됩니다.",
@@ -141,6 +145,7 @@ REASON_PREFIX_HINTS = {
     "notional_": "주문 기준금액이 제한 조건을 벗어났습니다",
     "cycle_failed:": "즉시 판단 실행 중 내부 오류가 발생했습니다",
     "bracket_failed:": "진입 후 TP/SL 브래킷 주문 생성에 실패했습니다",
+    "no_candidate_multi:": "심볼별 후보 부재 사유",
 }
 
 BALANCE_ERROR_HINT_MAP: dict[str, str] = {
