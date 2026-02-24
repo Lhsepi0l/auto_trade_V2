@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any
 
 from v2.clean_room.contracts import (
@@ -11,6 +12,7 @@ from v2.clean_room.contracts import (
     SizePlan,
 )
 from v2.common.async_bridge import run_async_blocking
+from v2.exchange import BinanceRESTError
 from v2.exchange.client_order_id import generate_client_order_id
 
 
@@ -180,6 +182,72 @@ class ReplaySafeExecutionService:
 class BinanceLiveExecutionService:
     def __init__(self, *, rest_client: Any) -> None:
         self._rest = rest_client
+        self._symbol_rule_cache: dict[str, tuple[float, float, float | None]] = {}
+
+    @staticmethod
+    def _floor_to_step(value: float, step: float) -> float:
+        if step <= 0:
+            return value
+        v = Decimal(str(value))
+        s = Decimal(str(step))
+        return float((v / s).to_integral_value(rounding=ROUND_DOWN) * s)
+
+    @staticmethod
+    def _ceil_to_step(value: float, step: float) -> float:
+        if step <= 0:
+            return value
+        v = Decimal(str(value))
+        s = Decimal(str(step))
+        return float((v / s).to_integral_value(rounding=ROUND_UP) * s)
+
+    def _resolve_symbol_rules(self, symbol: str) -> tuple[float, float, float | None]:
+        cached = self._symbol_rule_cache.get(symbol)
+        if cached is not None:
+            return cached
+
+        payload = self._run(
+            lambda: self._rest.public_request(
+                "GET",
+                "/fapi/v1/exchangeInfo",
+                params={"symbol": symbol},
+            )
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("exchange_info_invalid")
+
+        symbols_raw = payload.get("symbols")
+        if not isinstance(symbols_raw, list) or not symbols_raw:
+            raise RuntimeError("exchange_info_missing_symbol")
+        symbol_row = symbols_raw[0]
+        if not isinstance(symbol_row, dict):
+            raise RuntimeError("exchange_info_symbol_invalid")
+
+        filters_raw = symbol_row.get("filters")
+        if not isinstance(filters_raw, list):
+            raise RuntimeError("exchange_info_filters_missing")
+
+        step_size = 0.0
+        min_qty = 0.0
+        min_notional: float | None = None
+
+        for row in filters_raw:
+            if not isinstance(row, dict):
+                continue
+            ft = str(row.get("filterType") or "").upper()
+            if ft in {"LOT_SIZE", "MARKET_LOT_SIZE"}:
+                step_size = max(step_size, float(row.get("stepSize") or 0.0))
+                min_qty = max(min_qty, float(row.get("minQty") or 0.0))
+            elif ft in {"MIN_NOTIONAL", "NOTIONAL"}:
+                value = row.get("notional")
+                if value is None:
+                    value = row.get("minNotional")
+                if value is not None:
+                    parsed = float(value)
+                    min_notional = parsed if min_notional is None else max(min_notional, parsed)
+
+        rules = (step_size, min_qty, min_notional)
+        self._symbol_rule_cache[symbol] = rules
+        return rules
 
     def execute(
         self,
@@ -214,8 +282,25 @@ class BinanceLiveExecutionService:
 
         try:
             leverage_int = int(max(1, min(125, round(float(size.leverage)))))
+            step_size, min_qty, min_notional = self._resolve_symbol_rules(symbol)
+
+            qty = float(size.qty)
+            if step_size > 0:
+                qty = self._floor_to_step(qty, step_size)
+            if min_notional is not None and candidate.entry_price and candidate.entry_price > 0:
+                required_qty = float(min_notional) / float(candidate.entry_price)
+                if step_size > 0:
+                    required_qty = self._ceil_to_step(required_qty, step_size)
+                qty = max(qty, required_qty)
+            if min_qty > 0 and qty < min_qty:
+                return ExecutionResult(ok=False, reason="quantity_below_min_qty")
+
+            payload["quantity"] = f"{qty:.8f}"
             _ = self._run(lambda: self._rest.change_leverage(symbol=symbol, leverage=leverage_int))
             resp = self._run(lambda: self._rest.place_order(params=payload))
+        except BinanceRESTError as exc:
+            code = exc.code if exc.code is not None else "none"
+            return ExecutionResult(ok=False, reason=f"live_order_failed:BinanceRESTError:{code}")
         except Exception as exc:  # noqa: BLE001
             return ExecutionResult(ok=False, reason=f"live_order_failed:{type(exc).__name__}")
 
