@@ -404,6 +404,45 @@ def _build_live_balance_line(payload: JSONPayload) -> str:
     )
 
 
+def _build_live_position_line(payload: JSONPayload) -> str:
+    data = payload if isinstance(payload, dict) else {}
+    binance = _as_dict(data.get("binance"))
+    positions = _as_dict(binance.get("positions"))
+
+    if not positions:
+        return "실시간 포지션: 없음"
+
+    items: list[str] = []
+    total_unrealized = 0.0
+    for symbol, row in sorted(positions.items()):
+        row_map = _as_dict(row)
+        position_amt = _coerce_float(row_map.get("position_amt"), default=0.0)
+        if math.isclose(position_amt, 0.0, abs_tol=1e-12):
+            continue
+
+        side_hint = str(row_map.get("position_side") or "").strip().upper()
+        if side_hint in {"LONG", "BUY", "롱"}:
+            side = "롱"
+        elif side_hint in {"SHORT", "SELL", "숏"}:
+            side = "숏"
+        else:
+            side = "롱" if position_amt > 0 else "숏"
+
+        unrealized = _coerce_float(row_map.get("unrealized_pnl"), default=0.0)
+        total_unrealized += unrealized
+        items.append(
+            f"{symbol}[{side}] 수량 {_fmt_money(abs(position_amt))} uPnL {unrealized:+.4f}"
+        )
+
+    if not items:
+        return "실시간 포지션: 없음"
+
+    preview = ", ".join(items[:2])
+    if len(items) > 2:
+        preview = f"{preview}, ..."
+    return f"실시간 포지션: {preview} | 합계 uPnL {total_unrealized:+.4f} USDT"
+
+
 def _interval_label(sec: JSONScalar) -> str:
     sec_f = _coerce_float(sec, default=-1.0)
     if sec_f <= 0:
@@ -1432,7 +1471,10 @@ class PanelViewBase(discord.ui.View):
             max_age_sec=20.0,
         )
         msg = _build_tick_once_message(payload)
+        position_line = _build_live_position_line(status_payload)
         balance_line = _build_live_balance_line(status_payload)
+        if position_line:
+            msg = f"{msg}\n{position_line}"
         if balance_line:
             msg = f"{msg}\n{balance_line}"
         try:

@@ -422,6 +422,53 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_shows_live_position_and_unrealized_pnl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "no_candidate",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {
+                    "positions": {
+                        "BTCUSDT": {
+                            "position_amt": 0.001,
+                            "position_side": "LONG",
+                            "unrealized_pnl": 1.25,
+                        },
+                        "ETHUSDT": {
+                            "position_amt": -0.01,
+                            "position_side": "SHORT",
+                            "unrealized_pnl": -0.40,
+                        },
+                    },
+                    "usdt_balance": {"available": 50.0, "wallet": 50.0},
+                },
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any(
+        "실시간 포지션: BTCUSDT[롱]" in m and "ETHUSDT[숏]" in m for m in it.followup.messages
+    )
+    assert any("합계 uPnL +0.8500 USDT" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tick_once_shows_live_balance_fetch_failure_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
