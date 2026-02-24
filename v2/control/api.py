@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -14,6 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from v2.clean_room.contracts import KernelCycleResult
+from v2.common.async_bridge import run_async_blocking
 from v2.config.loader import EffectiveConfig
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
@@ -112,18 +112,7 @@ def _parse_value(raw: str) -> Any:
 def _run_async_blocking(
     thunk: Callable[[], Coroutine[Any, Any, Any]], *, timeout_sec: float | None = None
 ) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        if timeout_sec is None:
-            return asyncio.run(thunk())
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, thunk())
-            return future.result(timeout=timeout_sec)
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, thunk())
-        return future.result(timeout=timeout_sec)
+    return run_async_blocking(thunk, timeout_sec=timeout_sec)
 
 
 class RuntimeController:
