@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +10,7 @@ from v2.clean_room.contracts import (
     RiskDecision,
     SizePlan,
 )
+from v2.common.async_bridge import run_async_blocking
 from v2.exchange.client_order_id import generate_client_order_id
 
 
@@ -228,11 +227,4 @@ class BinanceLiveExecutionService:
 
     @staticmethod
     def _run(thunk):  # type: ignore[no-untyped-def]
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(thunk())
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, thunk())
-            return future.result()
+        return run_async_blocking(thunk)

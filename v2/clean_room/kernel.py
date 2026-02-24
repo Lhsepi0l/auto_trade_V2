@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, cast, runtime_checkable
@@ -26,6 +24,7 @@ from v2.clean_room.defaults import (
     NoopCandidateSelector,
     ReplaySafeExecutionService,
 )
+from v2.common.async_bridge import run_async_blocking
 from v2.config.loader import BehaviorConfig, RiskConfig
 from v2.engine import EngineStateStore
 from v2.strategies.base import StrategyPlugin
@@ -206,14 +205,7 @@ def _build_default_sizer(behavior: BehaviorConfig | None = None) -> Sizer:
 
 
 def _run_async_blocking(thunk: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(cast(Coroutine[Any, Any, Any], thunk()))
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, cast(Coroutine[Any, Any, Any], thunk()))
-        return future.result()
+    return run_async_blocking(lambda: cast(Coroutine[Any, Any, Any], thunk()))
 
 
 def _build_market_snapshot_provider(
