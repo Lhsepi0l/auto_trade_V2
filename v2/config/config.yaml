@@ -93,7 +93,7 @@ profiles:
           supertrend_multiplier: 3.0
           adx_period: 14
           adx_threshold: 10
-          donchian_period: 12
+          donchian_period: 11
           donchian_anti_fake: 0.0
           atr_period: 14
           bb_period: 20
