@@ -371,12 +371,12 @@ class RuntimeController:
     def _status_snapshot(self) -> dict[str, Any]:
         state = self.state_store.get()
         positions_payload: dict[str, dict[str, Any]] = {}
-        for symbol, row in state.current_position.items():
+        for symbol, position_amt, unrealized_pnl, entry_price in self._status_positions_source():
             positions_payload[symbol] = {
-                "position_amt": row.position_amt,
-                "entry_price": row.entry_price,
-                "unrealized_pnl": row.unrealized_pnl,
-                "position_side": "LONG" if row.position_amt > 0 else "SHORT",
+                "position_amt": position_amt,
+                "entry_price": entry_price,
+                "unrealized_pnl": unrealized_pnl,
+                "position_side": "LONG" if position_amt > 0 else "SHORT",
             }
         budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
         live_available_usdt, live_wallet_usdt, live_balance_source = self._fetch_live_usdt_balance()
@@ -1080,38 +1080,40 @@ class RuntimeController:
     def _position_side_label(position_amt: float) -> str:
         return "롱" if position_amt > 0 else "숏"
 
-    def _status_positions_source(self) -> list[tuple[str, float, float]]:
+    def _status_positions_source(self) -> list[tuple[str, float, float, float]]:
         live_positions, live_rows, live_ok = self._fetch_live_positions()
         if live_ok and live_rows:
-            out_live: list[tuple[str, float, float]] = []
+            out_live: list[tuple[str, float, float, float]] = []
             for symbol, row in sorted(live_rows.items()):
                 if not isinstance(row, dict):
                     continue
                 position_amt = _to_float(row.get("positionAmt"), default=0.0)
                 if abs(position_amt) <= 0.0:
                     continue
+                entry_price = _to_float(row.get("entryPrice"), default=0.0)
                 unrealized = _to_float(
                     row.get("unRealizedProfit") or row.get("unrealizedProfit"),
                     default=0.0,
                 )
-                out_live.append((symbol, position_amt, unrealized))
+                out_live.append((symbol, position_amt, unrealized, entry_price))
             if out_live:
                 return out_live
             if any(abs(_to_float(v, default=0.0)) > 0.0 for v in live_positions.values()):
                 return [
-                    (symbol, _to_float(amount, default=0.0), 0.0)
+                    (symbol, _to_float(amount, default=0.0), 0.0, 0.0)
                     for symbol, amount in sorted(live_positions.items())
                     if abs(_to_float(amount, default=0.0)) > 0.0
                 ]
 
         state = self.state_store.get()
-        out_state: list[tuple[str, float, float]] = []
+        out_state: list[tuple[str, float, float, float]] = []
         for symbol, row in sorted(state.current_position.items()):
             position_amt = _to_float(row.position_amt, default=0.0)
             if abs(position_amt) <= 0.0:
                 continue
             pnl = _to_float(row.unrealized_pnl, default=0.0)
-            out_state.append((symbol, position_amt, pnl))
+            entry_price = _to_float(row.entry_price, default=0.0)
+            out_state.append((symbol, position_amt, pnl, entry_price))
         return out_state
 
     def _status_pnl_summary(self) -> tuple[str, str]:
@@ -1119,7 +1121,7 @@ class RuntimeController:
         total_unrealized = 0.0
         per_symbol: list[str] = []
         position_labels: list[str] = []
-        for symbol, position_amt, pnl in positions:
+        for symbol, position_amt, pnl, _entry_price in positions:
             total_unrealized += pnl
             per_symbol.append(f"{symbol}:{self._fmt_signed(pnl)}")
             position_labels.append(f"{symbol}[{self._position_side_label(position_amt)}]")

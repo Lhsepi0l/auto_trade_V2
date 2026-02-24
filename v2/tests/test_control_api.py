@@ -1299,6 +1299,62 @@ def test_control_api_status_uses_live_usdt_balance(tmp_path) -> None:  # type: i
     assert payload["binance"]["private_error"] is None
 
 
+def test_control_api_status_prefers_live_positions_for_snapshot(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(
+        tmp_path / "control_status_live_positions_snapshot.sqlite3"
+    )
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    class _LiveREST:
+        async def get_balances(self):  # type: ignore[no-untyped-def]
+            return [{"asset": "USDT", "availableBalance": "50", "walletBalance": "50"}]
+
+        async def get_positions(self):  # type: ignore[no-untyped-def]
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.002",
+                    "entryPrice": "100000",
+                    "unRealizedProfit": "2.2",
+                }
+            ]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_LiveREST(),
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    row = payload["binance"]["positions"]["BTCUSDT"]
+    assert row["position_amt"] == 0.002
+    assert row["position_side"] == "LONG"
+    assert row["unrealized_pnl"] == 2.2
+
+
 def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_unavailable(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
