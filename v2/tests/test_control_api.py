@@ -1730,3 +1730,103 @@ def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # t
     assert payload["max_leverage"] == 15
     assert payload["universe_symbols"] == ["BTCUSDT", "ETHUSDT"]
     assert payload["symbol_leverage_map"]["ETHUSDT"] == 8.0
+
+
+def test_live_tick_blocks_reentry_when_live_position_exists(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_live_block_reentry.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoCandidate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _LivePosREST:
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    kernel = _KernelNoCandidate()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_LivePosREST(),
+    )
+    controller._running = True
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    assert tick.json()["snapshot"]["last_action"] == "blocked"
+    assert tick.json()["snapshot"]["last_decision_reason"] == "position_open"
+    assert kernel.calls == 0
+
+
+def test_live_tick_allows_reentry_when_flag_enabled(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_live_allow_reentry.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoCandidate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _LivePosREST:
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    kernel = _KernelNoCandidate()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_LivePosREST(),
+    )
+    controller._running = True
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    enable = client.post("/set", json={"key": "allow_reentry", "value": "true"})
+    assert enable.status_code == 200
+
+    tick = client.post("/scheduler/tick")
+    assert tick.status_code == 200
+    assert tick.json()["snapshot"]["last_action"] == "no_candidate"
+    assert kernel.calls == 1

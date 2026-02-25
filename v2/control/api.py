@@ -762,6 +762,25 @@ class RuntimeController:
             rows_by_symbol[symbol] = dict(row)
         return out, rows_by_symbol, True
 
+    def _is_live_reentry_blocked(self) -> bool:
+        allow_reentry = _to_bool(
+            self._risk.get("allow_reentry"),
+            default=bool(self.cfg.behavior.engine.allow_reentry),
+        )
+        if allow_reentry:
+            return False
+        if self.cfg.mode != "live":
+            return False
+        if not self._running:
+            return False
+
+        positions, _rows, ok = self._fetch_live_positions()
+        if not ok:
+            return False
+        return any(
+            abs(_to_float(position_amt, default=0.0)) > 0.0 for position_amt in positions.values()
+        )
+
     @staticmethod
     def _position_pnl_pct(row: dict[str, Any]) -> float | None:
         position_amt = _to_float(row.get("positionAmt"), default=0.0)
@@ -977,7 +996,14 @@ class RuntimeController:
         self._last_cycle["last_error"] = None
         self._last_cycle["bracket"] = None
         try:
-            cycle: KernelCycleResult = self.kernel.run_once()
+            if self._is_live_reentry_blocked():
+                cycle = KernelCycleResult(
+                    state="blocked",
+                    reason="position_open",
+                    candidate=None,
+                )
+            else:
+                cycle = self.kernel.run_once()
             self.scheduler.run_once()
             if self.ops.can_open_new_entries() and self._running and not self._thread_stop.is_set():
                 submit_symbol = (
