@@ -1118,11 +1118,7 @@ class RuntimeController:
                 else None
             )
             self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
-            cycle_error = (
-                cycle.reason
-                if cycle.state in {"blocked", "risk_rejected", "execution_failed"}
-                else None
-            )
+            cycle_error = cycle.reason if cycle.state == "execution_failed" else None
             existing_error = str(self._last_cycle.get("last_error") or "").strip()
             self._last_cycle["last_error"] = existing_error or cycle_error
 

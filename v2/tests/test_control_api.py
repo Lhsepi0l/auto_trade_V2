@@ -1938,6 +1938,8 @@ def test_live_tick_blocks_reentry_when_live_position_exists(tmp_path) -> None:  
     assert tick.status_code == 200
     assert tick.json()["snapshot"]["last_action"] == "blocked"
     assert tick.json()["snapshot"]["last_decision_reason"] == "position_open"
+    assert tick.json()["snapshot"]["last_error"] is None
+    assert tick.json().get("error") is None
     assert kernel.calls == 0
 
 
