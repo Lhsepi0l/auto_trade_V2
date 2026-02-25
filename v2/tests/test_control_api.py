@@ -832,6 +832,166 @@ def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
     assert str(rest.cancel_calls[0].get("clientAlgoId") or "") == "tp-1"
 
 
+def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_tp_alert.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-1",
+        sl_order_client_id="sl-1",
+        state="ACTIVE",
+    )
+    _ = storage.insert_fill(
+        fill_id="fill-tp-1",
+        client_id="tp-1",
+        exchange_id="1",
+        symbol="BTCUSDT",
+        side="SELL",
+        qty=0.01,
+        price=101.0,
+        realized_pnl=5.25,
+        fill_time_ms=int(time.time() * 1000),
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTTakeProfit:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "sl-1"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=_AlgoRESTTakeProfit(),
+    )
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    assert notifier.send.call_count == 1
+    message = str(notifier.send.call_args[0][0])
+    assert "익절 완료!" in message
+    assert "BTCUSDT" in message
+    assert "+5.2500 USDT" in message
+
+
+def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_sl_alert.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-1",
+        sl_order_client_id="sl-1",
+        state="ACTIVE",
+    )
+    _ = storage.insert_fill(
+        fill_id="fill-sl-1",
+        client_id="sl-1",
+        exchange_id="2",
+        symbol="BTCUSDT",
+        side="SELL",
+        qty=0.01,
+        price=99.0,
+        realized_pnl=-1.75,
+        fill_time_ms=int(time.time() * 1000),
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTStopLoss:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=_AlgoRESTStopLoss(),
+    )
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    assert notifier.send.call_count == 1
+    message = str(notifier.send.call_args[0][0])
+    assert "손절 완료!" in message
+    assert "BTCUSDT" in message
+    assert "-1.7500 USDT" in message
+
+
 def test_control_api_bracket_poller_cleans_open_algos_when_position_flat(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]

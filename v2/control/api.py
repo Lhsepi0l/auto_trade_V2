@@ -889,6 +889,92 @@ class RuntimeController:
             tracked.append(row)
         return tracked
 
+    def _latest_symbol_realized_pnl(
+        self, *, symbol: str, lookback_sec: float = 900.0
+    ) -> float | None:
+        symbol_u = symbol.upper()
+        lookback_ms = max(1, int(float(lookback_sec) * 1000.0))
+        now_ms = int(time.time() * 1000)
+        fills = self.state_store.get().last_fills
+        for fill in reversed(fills):
+            if str(fill.symbol or "").strip().upper() != symbol_u:
+                continue
+            if fill.realized_pnl is None:
+                continue
+            fill_ms = fill.fill_time_ms
+            if fill_ms is not None and now_ms - int(fill_ms) > lookback_ms:
+                continue
+            return _to_float(fill.realized_pnl, default=0.0)
+        return None
+
+    def _latest_symbol_realized_pnl_from_income(
+        self, *, symbol: str, lookback_sec: float = 900.0
+    ) -> float | None:
+        rest_client = self.rest_client
+        if (
+            self.cfg.mode != "live"
+            or rest_client is None
+            or not hasattr(rest_client, "signed_request")
+        ):
+            return None
+
+        symbol_u = symbol.upper()
+        rest_client_any: Any = rest_client
+        try:
+            payload = _run_async_blocking(
+                lambda s=symbol_u: rest_client_any.signed_request(
+                    "GET",
+                    "/fapi/v1/income",
+                    params={"symbol": s, "incomeType": "REALIZED_PNL", "limit": 10},
+                ),
+                timeout_sec=8.0,
+            )
+        except FutureTimeoutError:
+            logger.warning("income_history_fetch_timed_out symbol=%s", symbol_u)
+            return None
+        except Exception:  # noqa: BLE001
+            logger.exception("income_history_fetch_failed symbol=%s", symbol_u)
+            return None
+
+        if not isinstance(payload, list):
+            return None
+
+        lookback_ms = max(1, int(float(lookback_sec) * 1000.0))
+        now_ms = int(time.time() * 1000)
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            row_symbol = str(row.get("symbol") or "").strip().upper()
+            if row_symbol and row_symbol != symbol_u:
+                continue
+            income_raw = row.get("income")
+            if income_raw is None:
+                continue
+            when_ms = int(_to_float(row.get("time"), default=0.0))
+            if when_ms > 0 and now_ms - when_ms > lookback_ms:
+                continue
+            return _to_float(income_raw, default=0.0)
+        return None
+
+    def _resolve_symbol_realized_pnl(self, *, symbol: str) -> float | None:
+        realized = self._latest_symbol_realized_pnl(symbol=symbol)
+        if realized is not None:
+            return realized
+        return self._latest_symbol_realized_pnl_from_income(symbol=symbol)
+
+    def _emit_bracket_exit_alert(self, *, symbol: str, outcome: Literal["TP", "SL"]) -> None:
+        realized = self._resolve_symbol_realized_pnl(symbol=symbol)
+        headline = "익절 완료!" if outcome == "TP" else "손절 완료!"
+        if realized is None:
+            message = f"{headline} {symbol} 실현PnL 집계중"
+        else:
+            message = f"{headline} {symbol} {self._fmt_signed(realized)} USDT"
+
+        try:
+            self.notifier.send(message)
+        except Exception:  # noqa: BLE001
+            logger.exception("bracket_exit_notify_failed symbol=%s outcome=%s", symbol, outcome)
+
     def _poll_brackets_once(self) -> None:
         rest_client = self.rest_client
         if self.cfg.mode != "live" or rest_client is None:
@@ -959,7 +1045,8 @@ class RuntimeController:
             if tp_open == sl_open:
                 continue
 
-            filled_id = sl_id if tp_open else tp_id
+            outcome: Literal["TP", "SL"] = "SL" if tp_open else "TP"
+            filled_id = sl_id if outcome == "SL" else tp_id
             try:
                 _ = _run_async_blocking(
                     lambda s=symbol, cid=filled_id: self._bracket_service.on_leg_filled(
@@ -968,6 +1055,7 @@ class RuntimeController:
                     ),
                     timeout_sec=8.0,
                 )
+                self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
             except Exception:  # noqa: BLE001
                 logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
 
