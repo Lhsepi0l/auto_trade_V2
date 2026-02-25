@@ -964,11 +964,23 @@ class RuntimeController:
 
     def _emit_bracket_exit_alert(self, *, symbol: str, outcome: Literal["TP", "SL"]) -> None:
         realized = self._resolve_symbol_realized_pnl(symbol=symbol)
-        headline = "익절 완료!" if outcome == "TP" else "손절 완료!"
-        if realized is None:
-            message = f"{headline} {symbol} 실현PnL 집계중"
+        normalized_realized = realized
+        if realized is not None and abs(realized) < 0.00005:
+            normalized_realized = 0.0
+        if normalized_realized is None:
+            headline = "익절 완료!" if outcome == "TP" else "손절 완료!"
+        elif normalized_realized > 0.0:
+            headline = "익절 완료!"
+        elif normalized_realized < 0.0:
+            headline = "손절 완료!"
         else:
-            message = f"{headline} {symbol} {self._fmt_signed(realized)} USDT"
+            headline = "손익없음 청산!"
+        if normalized_realized is None:
+            message = f"{headline} {symbol} 실현PnL 집계중"
+        elif normalized_realized == 0.0:
+            message = f"{headline} {symbol} 0.0000 USDT"
+        else:
+            message = f"{headline} {symbol} {self._fmt_signed(normalized_realized)} USDT"
 
         try:
             self.notifier.send(message)
