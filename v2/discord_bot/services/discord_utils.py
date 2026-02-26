@@ -15,6 +15,19 @@ import discord
 logger = logging.getLogger(__name__)
 
 
+async def _best_effort_channel_notice(interaction: discord.Interaction, content: str) -> None:
+    try:
+        ch = interaction.channel
+        if isinstance(ch, discord.abc.Messageable):
+            _ = await ch.send(content)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "discord_interaction_notify_failed",
+            extra={"err": type(e).__name__},
+            exc_info=True,
+        )
+
+
 async def safe_defer(interaction: discord.Interaction) -> bool:
     """Safely defer interaction with fallback notification handling.
 
@@ -43,24 +56,20 @@ async def safe_defer(interaction: discord.Interaction) -> bool:
                 exc_info=True,
             )
 
-        try:
-            ch = interaction.channel
-            if isinstance(ch, discord.abc.Messageable):
-                _ = await ch.send(
-                    "명령 처리 중 세션이 만료되었습니다. 이 메시지는 임시 알림입니다."
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "discord_unknown_interaction_notify_failed",
-                extra={"err": type(e).__name__},
-                exc_info=True,
-            )
+        await _best_effort_channel_notice(
+            interaction,
+            "명령 처리 중 세션이 만료되었습니다. 이 메시지는 임시 알림입니다.",
+        )
         return False
     except discord.HTTPException as e:
         logger.warning(
             "discord_interaction_defer_http_failed",
             extra={"err": type(e).__name__},
             exc_info=True,
+        )
+        await _best_effort_channel_notice(
+            interaction,
+            "명령 응답에 실패했습니다(일시적 제한). 잠시 후 다시 시도해주세요.",
         )
         _ = await safe_send_ephemeral(
             interaction,

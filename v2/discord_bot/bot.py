@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import random
 import signal
 from typing import Any
 
@@ -32,6 +33,96 @@ class RemoteBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.api = api
         self.guild_id = guild_id
+        self._commands_synced = False
+        self._sync_lock = asyncio.Lock()
+        self._sync_retry_task: asyncio.Task[None] | None = None
+
+    async def _sync_commands(self, *, trigger: str) -> None:
+        if self._commands_synced:
+            logger.info("discord_command_sync_skipped", extra={"trigger": trigger})
+            return
+
+        async with self._sync_lock:
+            if self._commands_synced:
+                logger.info("discord_command_sync_skipped", extra={"trigger": trigger})
+                return
+
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    if self.guild_id:
+                        guild = discord.Object(id=self.guild_id)
+                        self.tree.copy_global_to(guild=guild)
+                        synced = await self.tree.sync(guild=guild)
+                        logger.info(
+                            "discord_commands_synced_guild",
+                            extra={
+                                "count": len(synced),
+                                "guild_id": self.guild_id,
+                                "trigger": trigger,
+                                "attempt": attempt,
+                            },
+                        )
+                    else:
+                        synced = await self.tree.sync()
+                        logger.info(
+                            "discord_commands_synced_global",
+                            extra={
+                                "count": len(synced),
+                                "trigger": trigger,
+                                "attempt": attempt,
+                            },
+                        )
+
+                    self._commands_synced = True
+                    return
+                except discord.HTTPException as e:
+                    is_rate_limited = int(getattr(e, "status", 0) or 0) == 429
+                    if not is_rate_limited:
+                        logger.exception("discord_command_sync_failed_http", exc_info=e)
+                        return
+
+                    retry_after = float(getattr(e, "retry_after", 0.0) or 0.0)
+                    if retry_after <= 0.0:
+                        retry_after = min(60.0, float(2**attempt)) + random.uniform(0.0, 0.5)
+
+                    logger.warning(
+                        "discord_command_sync_rate_limited",
+                        extra={
+                            "attempt": attempt,
+                            "max_attempts": max_attempts,
+                            "retry_after": retry_after,
+                            "trigger": trigger,
+                            "guild_id": self.guild_id or None,
+                        },
+                    )
+
+                    if attempt < max_attempts:
+                        await asyncio.sleep(retry_after)
+                        continue
+
+                    self._schedule_sync_retry(delay_sec=max(retry_after, 5.0))
+                    return
+                except Exception:
+                    logger.exception("discord_command_sync_failed")
+                    return
+
+    def _schedule_sync_retry(self, *, delay_sec: float) -> None:
+        if self._sync_retry_task is not None and not self._sync_retry_task.done():
+            return
+
+        async def _retry() -> None:
+            try:
+                await asyncio.sleep(max(delay_sec, 1.0))
+                await self._sync_commands(trigger="scheduled_retry")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("discord_command_sync_retry_failed")
+            finally:
+                self._sync_retry_task = None
+
+        self._sync_retry_task = asyncio.create_task(_retry())
 
     async def setup_hook(self) -> None:
         await setup_commands(self, self.api)
@@ -48,21 +139,7 @@ class RemoteBot(commands.Bot):
             )
 
     async def on_ready(self) -> None:
-        # Sync app commands.
-        try:
-            if self.guild_id:
-                guild = discord.Object(id=self.guild_id)
-                self.tree.copy_global_to(guild=guild)
-                synced = await self.tree.sync(guild=guild)
-                logger.info(
-                    "discord_commands_synced_guild",
-                    extra={"count": len(synced), "guild_id": self.guild_id},
-                )
-            else:
-                synced = await self.tree.sync()
-                logger.info("discord_commands_synced_global", extra={"count": len(synced)})
-        except Exception:
-            logger.exception("discord_command_sync_failed")
+        await self._sync_commands(trigger="on_ready")
 
         logger.info("discord_ready", extra={"user": str(self.user) if self.user else "unknown"})
 
@@ -84,6 +161,10 @@ class RemoteBot(commands.Bot):
                 await result
 
     async def close(self) -> None:
+        if self._sync_retry_task is not None and not self._sync_retry_task.done():
+            self._sync_retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sync_retry_task
         try:
             await self.api.aclose()
         except Exception as e:  # noqa: BLE001

@@ -23,6 +23,7 @@ class PanelControl(commands.Cog):
 
     @app_commands.command(name="panel", description="운영 패널 열기 (초보자용)")
     async def panel(self, interaction: discord.Interaction) -> None:
+        logger.info("panel_command_received")
         if not await _safe_defer(interaction):
             _ = await _safe_send_ephemeral(
                 interaction,
@@ -34,7 +35,9 @@ class PanelControl(commands.Cog):
             return
 
         try:
+            logger.info("panel_command_status_fetch_started")
             payload = await self.api.get_status()
+            logger.info("panel_command_status_fetch_completed")
             embed = build_embed(payload)
             view = PanelView(api=self.api, message_id=None, initial_payload=payload)
             await interaction.followup.send(
