@@ -1500,7 +1500,7 @@ class PanelViewBase(discord.ui.View):
 
     async def _open_margin_budget_modal(self, interaction: discord.Interaction) -> None:
         current_budget = None
-        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.5)
+        payload = self._get_cached_status(max_age_sec=3600.0) or {}
         cfg = _as_dict(payload.get("config"))
         cur = cfg.get("margin_budget_usdt")
         if cur is not None:
@@ -1541,15 +1541,15 @@ class PanelViewBase(discord.ui.View):
             pass
         return payload
 
-    async def _get_risk_config(self) -> JSONPayload:
-        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.8)
+    def _get_risk_config_cached(self) -> JSONPayload:
+        payload = self._get_cached_status(max_age_sec=3600.0) or {}
         cfg = _as_dict(payload.get("risk_config"))
         if cfg:
             return cfg
         return {}
 
-    async def _get_scoring_setup_defaults(self) -> JSONPayload:
-        payload = await self._fetch_status_cached(max_age_sec=2.0, timeout_sec=1.8)
+    def _get_scoring_setup_defaults_cached(self) -> JSONPayload:
+        payload = self._get_cached_status(max_age_sec=3600.0) or {}
         cfg = _as_dict(payload.get("config"))
         if cfg:
             return cfg
@@ -1725,7 +1725,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults: JSONPayload = await self._get_risk_config()
+        defaults: JSONPayload = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             RiskBasicModal(api=self.api, view=self, defaults=defaults)
         )
@@ -1736,7 +1736,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults: JSONPayload = await self._get_risk_config()
+        defaults: JSONPayload = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             RiskAdvancedModal(api=self.api, view=self, defaults=defaults)
         )
@@ -1747,7 +1747,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults: JSONPayload = await self._get_risk_config()
+        defaults: JSONPayload = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             TrailingConfigModal(api=self.api, view=self, defaults=defaults)
         )
@@ -1770,7 +1770,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults: JSONPayload = await self._get_risk_config()
+        defaults: JSONPayload = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             UniverseSymbolsModal(
                 api=self.api,
@@ -1787,7 +1787,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults: JSONPayload = await self._get_risk_config()
+        defaults: JSONPayload = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             UniverseSymbolRemoveModal(
                 api=self.api,
@@ -1802,7 +1802,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults = await self._get_scoring_setup_defaults()
+        defaults = self._get_scoring_setup_defaults_cached()
         _ = await interaction.response.send_modal(
             ScoringSetupModal(
                 api=self.api,
@@ -1866,7 +1866,7 @@ class AdvancedPanelView(PanelViewBase):
     ) -> None:
         if not await self._guard(interaction):
             return
-        defaults = await self._get_risk_config()
+        defaults = self._get_risk_config_cached()
         _ = await interaction.response.send_modal(
             NotifyIntervalModal(api=self.api, view=self, defaults={"risk_config": defaults})
         )

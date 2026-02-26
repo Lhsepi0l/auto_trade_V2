@@ -32,20 +32,38 @@ async def safe_defer(interaction: discord.Interaction) -> bool:
         try:
             cmd = getattr(getattr(interaction, "command", None), "name", None)
             created = getattr(interaction, "created_at", None)
-            logger.warning("discord_unknown_interaction", extra={"command": cmd, "created_at": str(created)})
+            logger.warning(
+                "discord_unknown_interaction", extra={"command": cmd, "created_at": str(created)}
+            )
         except Exception as e:  # noqa: BLE001
-            logger.warning("discord_unknown_interaction_log_failed", extra={"err": type(e).__name__}, exc_info=True)
+            logger.warning(
+                "discord_unknown_interaction_log_failed",
+                extra={"err": type(e).__name__},
+                exc_info=True,
+            )
 
         try:
             ch = interaction.channel
             if isinstance(ch, discord.abc.Messageable):
-                _ = await ch.send("명령 처리 중 세션이 만료되었습니다. 이 메시지는 임시 알림입니다.")
+                _ = await ch.send(
+                    "명령 처리 중 세션이 만료되었습니다. 이 메시지는 임시 알림입니다."
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "discord_unknown_interaction_notify_failed",
                 extra={"err": type(e).__name__},
                 exc_info=True,
             )
+        return False
+    except discord.HTTPException as e:
+        logger.warning(
+            "discord_interaction_defer_http_failed",
+            extra={"err": type(e).__name__},
+            exc_info=True,
+        )
+        return False
+    except Exception:  # noqa: BLE001
+        logger.exception("discord_interaction_defer_failed")
         return False
 
 
