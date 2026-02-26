@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 import discord
 
@@ -61,9 +62,40 @@ async def safe_defer(interaction: discord.Interaction) -> bool:
             extra={"err": type(e).__name__},
             exc_info=True,
         )
+        _ = await safe_send_ephemeral(
+            interaction,
+            "명령 응답에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        )
         return False
     except Exception:  # noqa: BLE001
         logger.exception("discord_interaction_defer_failed")
+        _ = await safe_send_ephemeral(
+            interaction,
+            "명령 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        )
+        return False
+
+
+async def safe_send_ephemeral(interaction: object, content: str) -> bool:
+    interaction_any: Any = interaction
+    try:
+        if interaction_any.response.is_done():
+            _ = await interaction_any.followup.send(content, ephemeral=True)
+        else:
+            _ = await interaction_any.response.send_message(content, ephemeral=True)
+        return True
+    except discord.NotFound:
+        logger.warning("discord_interaction_reply_not_found")
+        return False
+    except discord.HTTPException as e:
+        logger.warning(
+            "discord_interaction_reply_http_failed",
+            extra={"err": type(e).__name__},
+            exc_info=True,
+        )
+        return False
+    except Exception:  # noqa: BLE001
+        logger.exception("discord_interaction_reply_failed")
         return False
 
 

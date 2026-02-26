@@ -16,6 +16,7 @@ from v2.discord_bot.services.api_client import APIError
 from v2.discord_bot.services.contracts import TraderAPI
 from v2.discord_bot.services.discord_utils import is_admin as _is_admin
 from v2.discord_bot.services.discord_utils import safe_defer as _safe_defer
+from v2.discord_bot.services.discord_utils import safe_send_ephemeral as _safe_send_ephemeral
 from v2.discord_bot.services.formatting import format_status_payload
 from v2.discord_bot.ui_labels import (
     ADVANCED_TOGGLE_LABEL,
@@ -1134,6 +1135,13 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
             _ = await interaction.response.send_message("심볼을 입력해주세요.", ephemeral=True)
             return
 
+        try:
+            lev = _parse_float_range(str(self.leverage), field="leverage", min_v=0.0, max_v=50.0)
+        except ValueError as e:
+            _ = await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+            return
+
+        _ = await interaction.response.defer(ephemeral=True, thinking=True)
         max_leverage = None
         try:
             status_payload = await self._api.get_status()
@@ -1144,27 +1152,14 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
         except (TypeError, ValueError):
             max_leverage = None
 
-        try:
-            lev = _parse_float_range(str(self.leverage), field="leverage", min_v=0.0, max_v=50.0)
-            if max_leverage is not None and max_leverage > 0 and lev > max_leverage:
-                raise ValueError(
-                    f"symbol_leverage_exceeds_max_leverage (현재 max_leverage={max_leverage:g})"
-                )
-        except ValueError as e:
-            msg = str(e)
-            if msg.startswith("symbol_leverage_exceeds_max_leverage"):
-                _ = await interaction.response.send_message(
-                    f"입력 제한: {symbol} 개별 레버리지는 max_leverage 이하로만 설정 가능합니다."
-                    + (
-                        f" (현재 max_leverage={max_leverage:g})" if max_leverage is not None else ""
-                    ),
-                    ephemeral=True,
-                )
-            else:
-                _ = await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
+        if max_leverage is not None and max_leverage > 0 and lev > max_leverage:
+            await interaction.followup.send(
+                f"입력 제한: {symbol} 개별 레버리지는 max_leverage 이하로만 설정 가능합니다."
+                + f" (현재 max_leverage={max_leverage:g})",
+                ephemeral=True,
+            )
             return
 
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             _ = await self._api.set_symbol_leverage(symbol=symbol, leverage=lev)
             await self._view.refresh_message(interaction)
@@ -1262,6 +1257,8 @@ class UniverseSymbolRemoveModal(discord.ui.Modal, title="운영 심볼 해제"):
             _ = await interaction.response.send_message("심볼을 입력해주세요.", ephemeral=True)
             return
 
+        _ = await interaction.response.defer(ephemeral=True, thinking=True)
+
         current = self._defaults.get("universe_symbols", [])
         if not isinstance(current, list):
             payload = await self._api.get_status()
@@ -1275,17 +1272,16 @@ class UniverseSymbolRemoveModal(discord.ui.Modal, title="운영 심볼 해제"):
         current_set = [str(x).strip().upper() for x in current if str(x).strip()]
         filtered = [x for x in current_set if x != symbol]
         if not filtered:
-            _ = await interaction.response.send_message(
+            await interaction.followup.send(
                 "해제 후 남은 심볼이 0개가 될 수 없습니다.", ephemeral=True
             )
             return
         if symbol not in current_set:
-            _ = await interaction.response.send_message(
+            await interaction.followup.send(
                 f"{symbol}는 현재 운영 심볼 목록에 없습니다.", ephemeral=True
             )
             return
 
-        _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             _ = await self._api.set_value("universe_symbols", ",".join(filtered))
             await self._view.refresh_message(interaction)
@@ -1386,6 +1382,23 @@ class PanelViewBase(discord.ui.View):
     def _mode(self) -> Literal["simple", "advanced"]:
         raise NotImplementedError
 
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item[discord.ui.View],
+        /,
+    ) -> None:
+        logger.exception(
+            "panel_view_callback_failed",
+            extra={"item": type(item).__name__},
+            exc_info=error,
+        )
+        _ = await _safe_send_ephemeral(
+            interaction,
+            "실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        )
+
     async def _guard(self, interaction: discord.Interaction) -> bool:
         if not _is_admin(interaction):
             if interaction.response.is_done():
@@ -1436,6 +1449,10 @@ class PanelViewBase(discord.ui.View):
         success_message: str,
     ) -> None:
         if not await _safe_defer(interaction):
+            _ = await _safe_send_ephemeral(
+                interaction,
+                "실행 실패: Discord 응답에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            )
             return
         try:
             _ = await action()
@@ -1454,6 +1471,10 @@ class PanelViewBase(discord.ui.View):
 
     async def _run_tick_once(self, interaction: discord.Interaction) -> None:
         if not await _safe_defer(interaction):
+            _ = await _safe_send_ephemeral(
+                interaction,
+                "즉시 판단 실행 실패: Discord 응답에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            )
             return
         try:
             tick = await self.api.tick_scheduler_now()

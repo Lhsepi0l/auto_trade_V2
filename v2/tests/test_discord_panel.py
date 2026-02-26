@@ -634,3 +634,19 @@ async def test_start_button_reports_api_error_instead_of_interaction_failure(
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[0]).callback(it)  # type: ignore[arg-type]
     assert any("API 오류:" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_panel_view_on_error_sends_fallback_message() -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    it = _FakeInteraction()
+    item = _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[0])
+
+    await view.on_error(it, RuntimeError("boom"), item)  # type: ignore[arg-type]
+
+    messages = it.response.messages + it.followup.messages
+    assert any("실행 실패: 내부 오류" in m for m in messages)

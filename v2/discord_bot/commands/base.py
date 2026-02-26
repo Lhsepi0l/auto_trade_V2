@@ -9,6 +9,7 @@ from v2.discord_bot.services.contracts import TraderAPI
 from v2.discord_bot.services.discord_utils import fmt_json as _fmt_json
 from v2.discord_bot.services.discord_utils import is_admin as _is_admin
 from v2.discord_bot.services.discord_utils import safe_defer as _safe_defer
+from v2.discord_bot.services.discord_utils import safe_send_ephemeral as _safe_send_ephemeral
 from v2.discord_bot.services.formatting import (
     format_report_payload as _fmt_report_payload,
 )
@@ -196,6 +197,16 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
     return em
 
 
+async def _defer_or_notify(interaction: discord.Interaction) -> bool:
+    if await _safe_defer(interaction):
+        return True
+    _ = await _safe_send_ephemeral(
+        interaction,
+        "명령 응답에 실패했습니다. 잠시 후 다시 시도해주세요.",
+    )
+    return False
+
+
 class RemoteControl(commands.Cog):
     def __init__(self, bot: commands.Bot, api: TraderAPI) -> None:
         self.bot: commands.Bot = bot
@@ -203,7 +214,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="status", description="전체 운영 상태 조회")
     async def status(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.get_status()
@@ -216,7 +227,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="risk", description="현재 리스크 설정 조회")
     async def risk(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.get_risk()
@@ -228,7 +239,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="start", description="봇 시작")
     async def start(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.start()
@@ -240,7 +251,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="stop", description="봇 중지")
     async def stop(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.stop()
@@ -252,7 +263,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="panic", description="긴급 종료 및 비상 정리")
     async def panic(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.panic()
@@ -264,7 +275,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="report", description="일간 리포트 수동 전송")
     async def report(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.send_daily_report()
@@ -277,7 +288,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="help", description="봇 사용 가이드")
     async def help(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             em = _build_help_embed(is_admin=_is_admin(interaction))
@@ -288,7 +299,7 @@ class RemoteControl(commands.Cog):
     @app_commands.command(name="close", description="단일 포지션 종료 (reduceOnly)")
     @app_commands.describe(symbol="심볼: BTCUSDT")
     async def close(self, interaction: discord.Interaction, symbol: str) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.close_position(symbol.strip().upper())
@@ -300,7 +311,7 @@ class RemoteControl(commands.Cog):
 
     @app_commands.command(name="closeall", description="전체 포지션 종료")
     async def closeall(self, interaction: discord.Interaction) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.close_all()
@@ -321,7 +332,7 @@ class RemoteControl(commands.Cog):
         key: str,
         value: str,
     ) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             k = key.strip()
@@ -347,7 +358,7 @@ class RemoteControl(commands.Cog):
         interaction: discord.Interaction,
         name: app_commands.Choice[str],
     ) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = await self.api.preset(name.value)
@@ -369,7 +380,7 @@ class RemoteControl(commands.Cog):
         name: app_commands.Choice[str],
         budget_usdt: float | None = None,
     ) -> None:
-        if not await _safe_defer(interaction):
+        if not await _defer_or_notify(interaction):
             return
         try:
             payload = _profile_payload(name.value, budget_usdt)

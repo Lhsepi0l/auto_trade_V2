@@ -6,6 +6,7 @@ import logging
 import signal
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from v2.common.logging_setup import LoggingConfig, setup_logging
@@ -13,6 +14,7 @@ from v2.discord_bot.commands import setup_commands
 from v2.discord_bot.config import load_settings
 from v2.discord_bot.services.api_client import TraderAPIClient
 from v2.discord_bot.services.contracts import TraderAPI
+from v2.discord_bot.services.discord_utils import safe_send_ephemeral as _safe_send_ephemeral
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,17 @@ class RemoteBot(commands.Bot):
     async def setup_hook(self) -> None:
         await setup_commands(self, self.api)
 
+        @self.tree.error
+        async def _on_tree_error(
+            interaction: discord.Interaction,
+            error: app_commands.AppCommandError,
+        ) -> None:
+            logger.exception("discord_app_command_error", exc_info=error)
+            _ = await _safe_send_ephemeral(
+                interaction,
+                "명령 실행 실패: 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+            )
+
     async def on_ready(self) -> None:
         # Sync app commands.
         try:
@@ -39,7 +52,10 @@ class RemoteBot(commands.Bot):
                 guild = discord.Object(id=self.guild_id)
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
-                logger.info("discord_commands_synced_guild", extra={"count": len(synced), "guild_id": self.guild_id})
+                logger.info(
+                    "discord_commands_synced_guild",
+                    extra={"count": len(synced), "guild_id": self.guild_id},
+                )
             else:
                 synced = await self.tree.sync()
                 logger.info("discord_commands_synced_global", extra={"count": len(synced)})
@@ -52,13 +68,22 @@ class RemoteBot(commands.Bot):
         try:
             await self.api.aclose()
         except Exception as e:  # noqa: BLE001
-            logger.warning("discord_api_close_failed", extra={"err": type(e).__name__}, exc_info=True)
+            logger.warning(
+                "discord_api_close_failed", extra={"err": type(e).__name__}, exc_info=True
+            )
         await super().close()
 
 
 async def run() -> None:
     settings = load_settings()
-    setup_logging(LoggingConfig(level=settings.log_level, log_dir=settings.log_dir, json=settings.log_json, component="bot"))
+    setup_logging(
+        LoggingConfig(
+            level=settings.log_level,
+            log_dir=settings.log_dir,
+            json=settings.log_json,
+            component="bot",
+        )
+    )
 
     if not settings.discord_bot_token:
         raise RuntimeError("DISCORD_BOT_TOKEN is missing in .env")
