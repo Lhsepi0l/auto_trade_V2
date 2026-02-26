@@ -44,7 +44,7 @@ python -m v2.discord_bot.bot
 ### 통합 실행(원커맨드)
 ```bash
 # control API + Discord bot 동시 실행
-bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 0.0.0.0 --port 8101
+bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 ```
 
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
@@ -57,7 +57,7 @@ bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 0.0.0
 bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2
 
 # 실제 설치/기동
-bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --mode live --env prod --env-file .env --host 0.0.0.0 --port 8101
+bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 
 # 상태/로그 확인
 sudo systemctl status v2-stack.service --no-pager

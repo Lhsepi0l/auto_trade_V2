@@ -11,7 +11,7 @@ WORKDIR="$PROJECT_ROOT"
 MODE="live"
 ENVIRONMENT="prod"
 ENV_FILE=".env"
-HOST="0.0.0.0"
+HOST="127.0.0.1"
 PORT="8101"
 DRY_RUN="false"
 
@@ -27,7 +27,7 @@ Options:
   --mode <shadow|live>          (default: live)
   --env <testnet|prod>          (default: prod)
   --env-file <path>             (default: .env)
-  --host <host>                 (default: 0.0.0.0)
+  --host <host>                 (default: 127.0.0.1)
   --port <port>                 (default: 8101)
   --dry-run                     print generated unit then exit
   --help

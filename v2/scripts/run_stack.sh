@@ -9,7 +9,7 @@ PROFILE="normal"
 MODE="live"
 ENVIRONMENT="prod"
 ENV_FILE=".env"
-CONTROL_HOST="0.0.0.0"
+CONTROL_HOST="127.0.0.1"
 CONTROL_PORT="8101"
 CONTROL_HTTP_MODE="control-http"
 
