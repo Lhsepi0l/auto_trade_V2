@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from v2.discord_bot.commands.base import _build_help_embed
+from v2.discord_bot.commands.base import RISK_KEYS, _build_help_embed
 from v2.discord_bot.config import load_settings
 from v2.discord_bot.services.contracts import JSONPayload
 from v2.discord_bot.ui_labels import SIMPLE_PANEL_BUTTON_LABELS
@@ -78,11 +78,18 @@ def test_v2_discord_settings_default_control_api_port(monkeypatch) -> None:  # t
 
 def test_v2_help_embed_contains_core_commands() -> None:
     embed = _build_help_embed(is_admin=True)
-    text = "\n".join([str(embed.title), str(embed.description), "".join(str(f.value) for f in embed.fields)])
+    text = "\n".join(
+        [str(embed.title), str(embed.description), "".join(str(f.value) for f in embed.fields)]
+    )
     assert "초보자용 도움말" in str(embed.title)
     assert "/panel" in text
     assert "/status" in text
     assert "/risk" in text
+
+
+def test_v2_set_risk_keys_include_tpsl_base_fields() -> None:
+    assert "tpsl_base_take_profit_pct" in RISK_KEYS
+    assert "tpsl_base_stop_loss_pct" in RISK_KEYS
 
 
 @pytest.mark.asyncio
