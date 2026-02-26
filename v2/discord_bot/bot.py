@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import signal
+from typing import Any
 
 import discord
 from discord import app_commands
@@ -63,6 +65,23 @@ class RemoteBot(commands.Bot):
             logger.exception("discord_command_sync_failed")
 
         logger.info("discord_ready", extra={"user": str(self.user) if self.user else "unknown"})
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        data = interaction.data if isinstance(interaction.data, dict) else {}
+        interaction_type = getattr(interaction, "type", None)
+        logger.info(
+            "discord_interaction_received",
+            extra={
+                "interaction_type": getattr(interaction_type, "name", str(interaction_type)),
+                "command_name": str(data.get("name") or "") or None,
+            },
+        )
+        super_bot: Any = super()
+        handler = getattr(super_bot, "on_interaction", None)
+        if callable(handler):
+            result = handler(interaction)
+            if inspect.isawaitable(result):
+                await result
 
     async def close(self) -> None:
         try:
@@ -127,12 +146,35 @@ async def run() -> None:
             pass
 
     bot_task = asyncio.create_task(bot.start(settings.discord_bot_token))
-    await stop_event.wait()
+    stop_wait_task = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {bot_task, stop_wait_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-    if not bot_task.done():
-        bot_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await bot_task
+        if bot_task in done and not stop_event.is_set():
+            with contextlib.suppress(Exception):
+                await _shutdown("bot_task_stopped")
+
+            if bot_task.cancelled():
+                raise RuntimeError("discord_bot_task_cancelled_unexpectedly")
+
+            exc = bot_task.exception()
+            if exc is not None:
+                logger.exception("discord_bot_task_failed", exc_info=exc)
+                raise RuntimeError("discord_bot_task_failed") from exc
+            raise RuntimeError("discord_bot_task_exited_unexpectedly")
+    finally:
+        if not stop_wait_task.done():
+            stop_wait_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stop_wait_task
+
+        if not bot_task.done():
+            bot_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await bot_task
 
 
 def main() -> int:
