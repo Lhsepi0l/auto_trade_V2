@@ -50,6 +50,35 @@ def _build_app(tmp_path):  # type: ignore[no-untyped-def]
     return create_control_http_app(controller=controller)
 
 
+def _build_controller(tmp_path):  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_controller.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    return build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+
 def test_control_api_contract(tmp_path) -> None:  # type: ignore[no-untyped-def]
     app = _build_app(tmp_path)
     client = TestClient(app)
@@ -112,6 +141,80 @@ def test_control_api_contract(tmp_path) -> None:  # type: ignore[no-untyped-def]
     stop = client.post("/stop")
     assert stop.status_code == 200
     assert stop.json()["state"] == "PAUSED"
+
+
+def test_set_momentum_values_syncs_kernel_runtime_params(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_params.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    kernel.set_strategy_runtime_params = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    resp = client.post("/set", json={"key": "donchian_fast_ema_period", "value": "9"})
+    assert resp.status_code == 200
+    kernel.set_strategy_runtime_params.assert_called()
+    kwargs = kernel.set_strategy_runtime_params.call_args.kwargs
+    assert kwargs["donchian_momentum_filter"] is True
+    assert kwargs["donchian_fast_ema_period"] == 9
+    assert kwargs["donchian_slow_ema_period"] == 21
+    assert kwargs["score_conf_threshold"] == 0.6
+    assert kwargs["score_gap_threshold"] == 0.15
+    assert kwargs["score_tf_15m_enabled"] is False
+    assert kwargs["tf_weight_10m"] == 0.25
+    assert kwargs["tf_weight_15m"] == 0.0
+    assert kwargs["tf_weight_30m"] == 0.25
+    assert kwargs["tf_weight_1h"] == 0.25
+    assert kwargs["tf_weight_4h"] == 0.25
+
+
+def test_set_value_waits_for_controller_lock(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+
+    entered = threading.Event()
+    finished = threading.Event()
+
+    def _worker() -> None:
+        entered.set()
+        controller.set_value(key="donchian_fast_ema_period", value="11")
+        finished.set()
+
+    controller._lock.acquire()
+    t = threading.Thread(target=_worker)
+    try:
+        t.start()
+        assert entered.wait(timeout=1.0)
+        assert not finished.wait(timeout=0.1)
+    finally:
+        controller._lock.release()
+
+    t.join(timeout=1.0)
+    assert finished.is_set()
+    assert controller.get_risk().get("donchian_fast_ema_period") == 11
 
 
 def test_control_api_tick_emits_status_notification(tmp_path) -> None:  # type: ignore[no-untyped-def]

@@ -23,6 +23,7 @@ from v2.discord_bot.views.panel import (
     PanelView,
     RiskAdvancedModal,
     RiskBasicModal,
+    ScoringSetupModal,
     _build_embed,
 )
 
@@ -274,6 +275,51 @@ async def test_risk_modals_submit_values(monkeypatch: pytest.MonkeyPatch) -> Non
     await adv.on_submit(it)  # type: ignore[arg-type]
 
     assert api.set_value.await_count >= 8
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_scoring_setup_modal_includes_momentum_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(set_value=AsyncMock())
+    view = SimpleNamespace(refresh_message=AsyncMock())
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = ScoringSetupModal(
+        api=api,
+        view=view,  # type: ignore[arg-type]
+        defaults={
+            "score_tf_15m_enabled": "false",
+            "score_conf_threshold": 0.6,
+            "score_gap_threshold": 0.15,
+            "donchian_momentum_filter": "false",
+            "donchian_fast_ema_period": "8",
+            "donchian_slow_ema_period": "21",
+        },
+    )
+
+    assert str(modal.score_tf_15m_enabled.default) == "아니오"
+    assert str(modal.donchian_momentum_filter.default) == "아니오"
+    assert str(modal.donchian_momentum_ema.default) == "8,21"
+
+    modal.tf_weights._value = "10m=0.25,15m=0.0,30m=0.25,1h=0.25,4h=0.25"  # type: ignore[attr-defined]
+    modal.score_tf_15m_enabled._value = "예"  # type: ignore[attr-defined]
+    modal.score_conf_threshold._value = "0.61"  # type: ignore[attr-defined]
+    modal.score_gap_threshold._value = "0.14"  # type: ignore[attr-defined]
+    modal.donchian_momentum_filter._value = "예"  # type: ignore[attr-defined]
+    modal.donchian_momentum_ema._value = "8,21"  # type: ignore[attr-defined]
+
+    it = _FakeInteraction()
+    await modal.on_submit(it)  # type: ignore[arg-type]
+
+    submitted_pairs = {
+        (str(call.args[0]), str(call.args[1])) for call in api.set_value.await_args_list
+    }
+    assert ("donchian_momentum_filter", "True") in submitted_pairs
+    assert ("donchian_fast_ema_period", "8") in submitted_pairs
+    assert ("donchian_slow_ema_period", "21") in submitted_pairs
+    assert any("판단식 설정 완료!" in msg for msg in it.followup.messages)
 
 
 @pytest.mark.unit
