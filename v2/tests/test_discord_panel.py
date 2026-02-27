@@ -197,7 +197,10 @@ async def test_advanced_panel_has_risk_and_trailing_controls(
         set_value=AsyncMock(),
         set_scheduler_interval=AsyncMock(),
     )
-    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    view = AdvancedPanelView(  # type: ignore[arg-type]
+        api=api,
+        initial_payload={"risk_config": {"exec_mode_default": "MARKET", "scheduler_tick_sec": 600}},
+    )
     buttons = [str(item.label) for item in view.children if isinstance(item, discord.ui.Button)]
 
     assert set(ADVANCED_PANEL_BUTTON_LABELS) <= set(buttons)
@@ -216,6 +219,8 @@ async def test_advanced_panel_has_risk_and_trailing_controls(
     monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
     it = _FakeInteraction()
     exec_select = _find_select(view, EXEC_MODE_SELECT_PLACEHOLDER)
+    defaults = {str(option.value): bool(option.default) for option in exec_select.options}
+    assert defaults == {"LIMIT": False, "MARKET": True, "SPLIT": False}
     exec_select._values = ["MARKET"]  # type: ignore[attr-defined]
     await exec_select.callback(it)  # type: ignore[arg-type]
     api.set_value.assert_awaited_once_with("exec_mode_default", "MARKET")
@@ -290,7 +295,6 @@ async def test_scoring_setup_modal_includes_momentum_fields(
         api=api,
         view=view,  # type: ignore[arg-type]
         defaults={
-            "score_tf_15m_enabled": "false",
             "score_conf_threshold": 0.6,
             "score_gap_threshold": 0.15,
             "donchian_momentum_filter": "false",
@@ -299,12 +303,11 @@ async def test_scoring_setup_modal_includes_momentum_fields(
         },
     )
 
-    assert str(modal.score_tf_15m_enabled.default) == "아니오"
     assert str(modal.donchian_momentum_filter.default) == "아니오"
     assert str(modal.donchian_momentum_ema.default) == "8,21"
+    assert len(modal.children) <= 5
 
-    modal.tf_weights._value = "10m=0.25,15m=0.0,30m=0.25,1h=0.25,4h=0.25"  # type: ignore[attr-defined]
-    modal.score_tf_15m_enabled._value = "예"  # type: ignore[attr-defined]
+    modal.tf_weights._value = "10m=0.25,15m=0.10,30m=0.25,1h=0.25,4h=0.15"  # type: ignore[attr-defined]
     modal.score_conf_threshold._value = "0.61"  # type: ignore[attr-defined]
     modal.score_gap_threshold._value = "0.14"  # type: ignore[attr-defined]
     modal.donchian_momentum_filter._value = "예"  # type: ignore[attr-defined]
@@ -316,6 +319,7 @@ async def test_scoring_setup_modal_includes_momentum_fields(
     submitted_pairs = {
         (str(call.args[0]), str(call.args[1])) for call in api.set_value.await_args_list
     }
+    assert ("score_tf_15m_enabled", "True") in submitted_pairs
     assert ("donchian_momentum_filter", "True") in submitted_pairs
     assert ("donchian_fast_ema_period", "8") in submitted_pairs
     assert ("donchian_slow_ema_period", "21") in submitted_pairs

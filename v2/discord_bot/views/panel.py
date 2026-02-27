@@ -826,11 +826,6 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         required=True,
         max_length=140,
     )
-    score_tf_15m_enabled = discord.ui.TextInput(
-        label="15m 사용 (예/아니오)",
-        placeholder="예: 예",
-        required=True,
-    )
     score_conf_threshold = discord.ui.TextInput(
         label="신뢰도 임계값(0~1)",
         placeholder="예: 0.60",
@@ -870,12 +865,6 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         self.tf_weights.default = ",".join(
             [f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")]
         )
-        enabled_15m_raw = d.get("score_tf_15m_enabled", False)
-        if isinstance(enabled_15m_raw, str):
-            enabled_15m = enabled_15m_raw.strip().lower() in {"true", "1", "yes", "y", "on", "예"}
-        else:
-            enabled_15m = bool(enabled_15m_raw)
-        self.score_tf_15m_enabled.default = "예" if enabled_15m else "아니오"
         self.score_conf_threshold.default = str(d.get("score_conf_threshold", "0.60"))
         self.score_gap_threshold.default = str(d.get("score_gap_threshold", "0.15"))
         momentum_raw = d.get("donchian_momentum_filter", True)
@@ -949,9 +938,6 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
                 str(self.donchian_momentum_filter), field="donchian_momentum_filter"
             )
             momentum_fast, momentum_slow = self._parse_momentum_ema(str(self.donchian_momentum_ema))
-            enabled_15m = _parse_bool_like(
-                str(self.score_tf_15m_enabled), field="score_tf_15m_enabled"
-            )
         except ValueError as e:
             _ = await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
             return
@@ -961,8 +947,7 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
                 "입력 오류: 가중치 합계는 0보다 커야 합니다.", ephemeral=True
             )
             return
-        if not enabled_15m:
-            weight_15m = 0.0
+        enabled_15m = weight_15m > 0.0
 
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         pairs = {
@@ -985,6 +970,7 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             await interaction.followup.send(
                 "판단식 설정 완료!\n"
                 f"- 가짜 돌파 필터: {'켜짐' if momentum_enabled else '꺼짐'}\n"
+                f"- 15m 사용: {'켜짐' if enabled_15m else '꺼짐'} (15m 가중치 기반 자동)\n"
                 f"- 모멘텀 속도: 빠름 {momentum_fast}, 느림 {momentum_slow}\n"
                 "(숫자가 너무 크면 진입이 줄어들 수 있어요. 보통 8,21이 무난해요)",
                 ephemeral=True,
@@ -1460,6 +1446,7 @@ class PanelViewBase(discord.ui.View):
             initial_payload if isinstance(initial_payload, dict) else {}
         )
         self._status_cache_at: float = time.monotonic() if self._status_cache else 0.0
+        self._sync_select_defaults_from_status_cache()
 
     @property
     def _mode(self) -> Literal["simple", "advanced"]:
@@ -1494,7 +1481,38 @@ class PanelViewBase(discord.ui.View):
     def _update_status_cache(self, payload: JSONPayload) -> JSONPayload:
         self._status_cache = payload if isinstance(payload, dict) else {}
         self._status_cache_at = time.monotonic() if self._status_cache else 0.0
+        self._sync_select_defaults_from_status_cache()
         return self._status_cache
+
+    def _sync_select_defaults_from_status_cache(self) -> None:
+        payload = self._status_cache if isinstance(self._status_cache, dict) else {}
+        cfg = _as_dict(payload.get("risk_config"))
+        if not cfg:
+            cfg = _as_dict(payload.get("config"))
+
+        exec_mode = str(cfg.get("exec_mode_default") or "MARKET").strip().upper()
+        if exec_mode not in {"LIMIT", "MARKET", "SPLIT"}:
+            exec_mode = "MARKET"
+
+        tick_raw = cfg.get("scheduler_tick_sec")
+        if tick_raw is None:
+            sched = _as_dict(payload.get("scheduler"))
+            tick_raw = sched.get("tick_sec")
+        tick_sec = max(1, int(_coerce_float(tick_raw, default=1800.0)))
+        tick_value = str(tick_sec)
+        if tick_value not in {"300", "600", "900", "1800", "3600"}:
+            tick_value = "1800"
+
+        for item in self.children:
+            if not isinstance(item, discord.ui.Select):
+                continue
+            placeholder = str(item.placeholder or "")
+            if placeholder == EXEC_MODE_SELECT_PLACEHOLDER:
+                for opt in item.options:
+                    opt.default = str(opt.value).upper() == exec_mode
+            if placeholder == SCHEDULER_INTERVAL_SELECT_PLACEHOLDER:
+                for opt in item.options:
+                    opt.default = str(opt.value) == tick_value
 
     def _get_cached_status(self, *, max_age_sec: float) -> JSONPayload | None:
         if not self._status_cache:
