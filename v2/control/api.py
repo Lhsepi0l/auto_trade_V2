@@ -305,6 +305,57 @@ class RuntimeController:
                 fallback_notional=fallback_notional,
                 max_notional=capped_notional,
             )
+        if hasattr(self.kernel, "set_strategy_runtime_params"):
+            momentum_enabled = _to_bool(
+                self._risk.get("donchian_momentum_filter"),
+                default=True,
+            )
+            fast_period = max(
+                2,
+                int(_to_float(self._risk.get("donchian_fast_ema_period"), default=8.0)),
+            )
+            slow_period = max(
+                fast_period + 1,
+                int(_to_float(self._risk.get("donchian_slow_ema_period"), default=21.0)),
+            )
+            score_conf_threshold = _clamp(
+                _to_float(self._risk.get("score_conf_threshold"), default=0.6),
+                0.0,
+                1.0,
+            )
+            score_gap_threshold = _clamp(
+                _to_float(self._risk.get("score_gap_threshold"), default=0.15),
+                0.0,
+                1.0,
+            )
+            score_tf_15m_enabled = _to_bool(
+                self._risk.get("score_tf_15m_enabled"),
+                default=False,
+            )
+            tf_weight_10m = _clamp(
+                _to_float(self._risk.get("tf_weight_10m"), default=0.25), 0.0, 1.0
+            )
+            tf_weight_15m = _clamp(
+                _to_float(self._risk.get("tf_weight_15m"), default=0.0), 0.0, 1.0
+            )
+            tf_weight_30m = _clamp(
+                _to_float(self._risk.get("tf_weight_30m"), default=0.25), 0.0, 1.0
+            )
+            tf_weight_1h = _clamp(_to_float(self._risk.get("tf_weight_1h"), default=0.25), 0.0, 1.0)
+            tf_weight_4h = _clamp(_to_float(self._risk.get("tf_weight_4h"), default=0.25), 0.0, 1.0)
+            self.kernel.set_strategy_runtime_params(  # type: ignore[attr-defined]
+                donchian_momentum_filter=momentum_enabled,
+                donchian_fast_ema_period=fast_period,
+                donchian_slow_ema_period=slow_period,
+                score_conf_threshold=score_conf_threshold,
+                score_gap_threshold=score_gap_threshold,
+                score_tf_15m_enabled=score_tf_15m_enabled,
+                tf_weight_10m=tf_weight_10m,
+                tf_weight_15m=tf_weight_15m,
+                tf_weight_30m=tf_weight_30m,
+                tf_weight_1h=tf_weight_1h,
+                tf_weight_4h=tf_weight_4h,
+            )
 
     def _effective_budget_leverage(
         self,
@@ -343,6 +394,9 @@ class RuntimeController:
             "min_hold_minutes": 0,
             "score_conf_threshold": 0.6,
             "score_gap_threshold": 0.15,
+            "donchian_momentum_filter": True,
+            "donchian_fast_ema_period": 8,
+            "donchian_slow_ema_period": 21,
             "exec_mode_default": "MARKET",
             "exec_limit_timeout_sec": 3.0,
             "exec_limit_retries": 2,
@@ -1498,49 +1552,51 @@ class RuntimeController:
         return dict(self._risk)
 
     def set_value(self, *, key: str, value: str) -> dict[str, Any]:
-        parsed = _parse_value(value)
-        if key == "universe_symbols":
-            if isinstance(parsed, str):
-                parsed = [item.strip().upper() for item in parsed.split(",") if item.strip()]
-            elif isinstance(parsed, list):
-                parsed = [str(item).strip().upper() for item in parsed if str(item).strip()]
-            else:
-                parsed = [self.cfg.behavior.exchange.default_symbol]
-        if key in {"notify_interval_sec", "scheduler_tick_sec"}:
-            parsed = max(1, int(_to_float(parsed, default=1.0)))
+        with self._lock:
+            parsed = _parse_value(value)
+            if key == "universe_symbols":
+                if isinstance(parsed, str):
+                    parsed = [item.strip().upper() for item in parsed.split(",") if item.strip()]
+                elif isinstance(parsed, list):
+                    parsed = [str(item).strip().upper() for item in parsed if str(item).strip()]
+                else:
+                    parsed = [self.cfg.behavior.exchange.default_symbol]
+            if key in {"notify_interval_sec", "scheduler_tick_sec"}:
+                parsed = max(1, int(_to_float(parsed, default=1.0)))
 
-        self._risk[key] = parsed
-        self._sync_kernel_runtime_overrides()
+            self._risk[key] = parsed
+            self._sync_kernel_runtime_overrides()
 
-        if key == "scheduler_tick_sec":
-            self.scheduler.tick_seconds = int(
-                _to_float(parsed, default=float(self.scheduler.tick_seconds))
-            )
+            if key == "scheduler_tick_sec":
+                self.scheduler.tick_seconds = int(
+                    _to_float(parsed, default=float(self.scheduler.tick_seconds))
+                )
 
-        self._persist_risk_config()
-        if key == "notify_interval_sec":
-            self._emit_status_update(force=True)
-        return {
-            "key": key,
-            "requested_value": value,
-            "applied_value": self._risk.get(key),
-            "summary": f"Applied {key}={self._risk.get(key)}",
-            "risk_config": dict(self._risk),
-        }
+            self._persist_risk_config()
+            if key == "notify_interval_sec":
+                self._emit_status_update(force=True)
+            return {
+                "key": key,
+                "requested_value": value,
+                "applied_value": self._risk.get(key),
+                "summary": f"Applied {key}={self._risk.get(key)}",
+                "risk_config": dict(self._risk),
+            }
 
     def set_symbol_leverage(self, *, symbol: str, leverage: float) -> dict[str, Any]:
-        symbol_u = symbol.strip().upper()
-        mapping = self._risk.get("symbol_leverage_map")
-        if not isinstance(mapping, dict):
-            mapping = {}
-        if leverage <= 0:
-            mapping.pop(symbol_u, None)
-        else:
-            mapping[symbol_u] = float(leverage)
-        self._risk["symbol_leverage_map"] = mapping
-        self._sync_kernel_runtime_overrides()
-        self._persist_risk_config()
-        return dict(self._risk)
+        with self._lock:
+            symbol_u = symbol.strip().upper()
+            mapping = self._risk.get("symbol_leverage_map")
+            if not isinstance(mapping, dict):
+                mapping = {}
+            if leverage <= 0:
+                mapping.pop(symbol_u, None)
+            else:
+                mapping[symbol_u] = float(leverage)
+            self._risk["symbol_leverage_map"] = mapping
+            self._sync_kernel_runtime_overrides()
+            self._persist_risk_config()
+            return dict(self._risk)
 
     def get_scheduler(self) -> dict[str, Any]:
         return {
@@ -1550,15 +1606,16 @@ class RuntimeController:
         }
 
     def set_scheduler_interval(self, tick_sec: float) -> dict[str, Any]:
-        sec = max(1, int(tick_sec))
-        self.scheduler.tick_seconds = sec
-        self._risk["scheduler_tick_sec"] = sec
-        self._persist_risk_config()
-        return {
-            "tick_sec": float(self.scheduler.tick_seconds),
-            "running": bool(self._running),
-            "min_tick_sec": 1.0,
-        }
+        with self._lock:
+            sec = max(1, int(tick_sec))
+            self.scheduler.tick_seconds = sec
+            self._risk["scheduler_tick_sec"] = sec
+            self._persist_risk_config()
+            return {
+                "tick_sec": float(self.scheduler.tick_seconds),
+                "running": bool(self._running),
+                "min_tick_sec": 1.0,
+            }
 
     def tick_scheduler_now(self) -> dict[str, Any]:
         if self._lock.acquire(blocking=False):
@@ -1659,19 +1716,20 @@ class RuntimeController:
         return payload
 
     def preset(self, name: str) -> dict[str, Any]:
-        profile = str(name).strip().lower()
-        if profile == "conservative":
-            self._risk["max_leverage"] = 5.0
-            self._risk["per_trade_risk_pct"] = 5.0
-        elif profile == "normal":
-            self._risk["max_leverage"] = 10.0
-            self._risk["per_trade_risk_pct"] = 10.0
-        elif profile == "aggressive":
-            self._risk["max_leverage"] = 20.0
-            self._risk["per_trade_risk_pct"] = 20.0
-        self._sync_kernel_runtime_overrides()
-        self._persist_risk_config()
-        return dict(self._risk)
+        with self._lock:
+            profile = str(name).strip().lower()
+            if profile == "conservative":
+                self._risk["max_leverage"] = 5.0
+                self._risk["per_trade_risk_pct"] = 5.0
+            elif profile == "normal":
+                self._risk["max_leverage"] = 10.0
+                self._risk["per_trade_risk_pct"] = 10.0
+            elif profile == "aggressive":
+                self._risk["max_leverage"] = 20.0
+                self._risk["per_trade_risk_pct"] = 20.0
+            self._sync_kernel_runtime_overrides()
+            self._persist_risk_config()
+            return dict(self._risk)
 
     async def close_position(self, *, symbol: str) -> dict[str, Any]:
         result = await self.ops.flatten(symbol=symbol)

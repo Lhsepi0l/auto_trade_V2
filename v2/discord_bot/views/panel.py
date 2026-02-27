@@ -95,6 +95,7 @@ HELP_ADVANCED = (
     )
     + " 와 실행모드/판단 주기 선택이 같이 표시됩니다."
     + " 상태알림 주기도 같이 설정 가능합니다."
+    + " 판단식 설정에서 가짜 돌파 필터(모멘텀)도 바로 조절할 수 있습니다."
 )
 
 REASON_HINT_MAP: dict[str, str] = {
@@ -840,6 +841,17 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         placeholder="예: 0.15",
         required=True,
     )
+    donchian_momentum_filter = discord.ui.TextInput(
+        label="가짜 돌파 필터 사용 (예/아니오)",
+        placeholder="예: 예",
+        required=True,
+    )
+    donchian_momentum_ema = discord.ui.TextInput(
+        label="모멘텀 속도(빠름,느림)",
+        placeholder="예: 8,21",
+        required=True,
+        max_length=32,
+    )
 
     def __init__(
         self, *, api: TraderAPI, view: "PanelViewBase", defaults: JSONPayload | None = None
@@ -858,11 +870,25 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         self.tf_weights.default = ",".join(
             [f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")]
         )
-        self.score_tf_15m_enabled.default = (
-            "예" if bool(d.get("score_tf_15m_enabled", False)) else "아니오"
-        )
+        enabled_15m_raw = d.get("score_tf_15m_enabled", False)
+        if isinstance(enabled_15m_raw, str):
+            enabled_15m = enabled_15m_raw.strip().lower() in {"true", "1", "yes", "y", "on", "예"}
+        else:
+            enabled_15m = bool(enabled_15m_raw)
+        self.score_tf_15m_enabled.default = "예" if enabled_15m else "아니오"
         self.score_conf_threshold.default = str(d.get("score_conf_threshold", "0.60"))
         self.score_gap_threshold.default = str(d.get("score_gap_threshold", "0.15"))
+        momentum_raw = d.get("donchian_momentum_filter", True)
+        if isinstance(momentum_raw, str):
+            momentum_default = momentum_raw.strip().lower() in {"true", "1", "yes", "y", "on", "예"}
+        else:
+            momentum_default = bool(momentum_raw)
+        self.donchian_momentum_filter.default = "예" if momentum_default else "아니오"
+        fast = int(_coerce_float(d.get("donchian_fast_ema_period"), default=8.0))
+        slow = int(_coerce_float(d.get("donchian_slow_ema_period"), default=21.0))
+        if slow <= fast:
+            slow = fast + 1
+        self.donchian_momentum_ema.default = f"{fast},{slow}"
 
     @staticmethod
     def _parse_weight_text(raw: str) -> dict[str, float]:
@@ -890,6 +916,17 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             parsed[key] = _parse_float_range(val, field=f"tf_weight_{key}", min_v=0.0, max_v=1.0)
         return parsed
 
+    @staticmethod
+    def _parse_momentum_ema(raw: str) -> tuple[int, int]:
+        parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+        if len(parts) != 2:
+            raise ValueError("모멘텀 속도는 '빠름,느림' 형식(예: 8,21)으로 입력해주세요.")
+        fast = _parse_int_range(parts[0], field="donchian_fast_ema_period", min_v=2, max_v=30)
+        slow = _parse_int_range(parts[1], field="donchian_slow_ema_period", min_v=3, max_v=80)
+        if slow <= fast:
+            slow = fast + 1
+        return fast, slow
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):
             _ = await interaction.response.send_message(ADMIN_ONLY_MSG, ephemeral=True)
@@ -908,6 +945,10 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             gap = _parse_float_range(
                 str(self.score_gap_threshold), field="score_gap_threshold", min_v=0.0, max_v=1.0
             )
+            momentum_enabled = _parse_bool_like(
+                str(self.donchian_momentum_filter), field="donchian_momentum_filter"
+            )
+            momentum_fast, momentum_slow = self._parse_momentum_ema(str(self.donchian_momentum_ema))
             enabled_15m = _parse_bool_like(
                 str(self.score_tf_15m_enabled), field="score_tf_15m_enabled"
             )
@@ -933,13 +974,19 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
             "score_tf_15m_enabled": str(enabled_15m),
             "score_conf_threshold": str(conf),
             "score_gap_threshold": str(gap),
+            "donchian_momentum_filter": str(momentum_enabled),
+            "donchian_fast_ema_period": str(momentum_fast),
+            "donchian_slow_ema_period": str(momentum_slow),
         }
         try:
             for k, v in pairs.items():
                 _ = await self._api.set_value(k, v)
             await self._view.refresh_message(interaction)
             await interaction.followup.send(
-                "판단식(시간봉/가중치/임계값) 설정을 업데이트했습니다.",
+                "판단식 설정 완료!\n"
+                f"- 가짜 돌파 필터: {'켜짐' if momentum_enabled else '꺼짐'}\n"
+                f"- 모멘텀 속도: 빠름 {momentum_fast}, 느림 {momentum_slow}\n"
+                "(숫자가 너무 크면 진입이 줄어들 수 있어요. 보통 8,21이 무난해요)",
                 ephemeral=True,
             )
         except APIError as e:

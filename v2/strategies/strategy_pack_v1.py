@@ -52,6 +52,14 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
 def _to_candles(raw: list[Any]) -> list[_Candle]:
     out: list[_Candle] = []
     for row in raw:
@@ -320,6 +328,25 @@ class StrategyPackV1(StrategyPlugin):
         self._adx_threshold = float(p.get("adx_threshold", 18.0))
         self._donchian_period = int(p.get("donchian_period", 20))
         self._donchian_anti_fake = float(p.get("donchian_anti_fake", 0.2))
+        self._donchian_momentum_filter = bool(p.get("donchian_momentum_filter", True))
+        self._donchian_fast_ema_period = int(p.get("donchian_fast_ema_period", 13))
+        self._donchian_slow_ema_period = int(p.get("donchian_slow_ema_period", 34))
+        self._score_conf_threshold = _clamp(
+            float(p.get("score_conf_threshold", 0.6)),
+            0.0,
+            1.0,
+        )
+        self._score_gap_threshold = _clamp(
+            float(p.get("score_gap_threshold", 0.15)),
+            0.0,
+            1.0,
+        )
+        self._score_tf_15m_enabled = bool(p.get("score_tf_15m_enabled", False))
+        self._tf_weight_10m = _clamp(float(p.get("tf_weight_10m", 0.25)), 0.0, 1.0)
+        self._tf_weight_15m = _clamp(float(p.get("tf_weight_15m", 0.0)), 0.0, 1.0)
+        self._tf_weight_30m = _clamp(float(p.get("tf_weight_30m", 0.25)), 0.0, 1.0)
+        self._tf_weight_1h = _clamp(float(p.get("tf_weight_1h", 0.25)), 0.0, 1.0)
+        self._tf_weight_4h = _clamp(float(p.get("tf_weight_4h", 0.25)), 0.0, 1.0)
         self._atr_period = int(p.get("atr_period", 14))
         self._bb_period = int(p.get("bb_period", 20))
         self._bb_std = float(p.get("bb_std", 2.0))
@@ -336,13 +363,160 @@ class StrategyPackV1(StrategyPlugin):
         self._overheat_fetcher = overheat_fetcher
         self._overheat_state_by_symbol: dict[str, _OverheatState] = {}
 
+    def set_runtime_params(
+        self,
+        *,
+        donchian_momentum_filter: bool | None = None,
+        donchian_fast_ema_period: int | None = None,
+        donchian_slow_ema_period: int | None = None,
+        score_conf_threshold: float | None = None,
+        score_gap_threshold: float | None = None,
+        score_tf_15m_enabled: bool | None = None,
+        tf_weight_10m: float | None = None,
+        tf_weight_15m: float | None = None,
+        tf_weight_30m: float | None = None,
+        tf_weight_1h: float | None = None,
+        tf_weight_4h: float | None = None,
+    ) -> None:
+        if donchian_momentum_filter is not None:
+            self._donchian_momentum_filter = bool(donchian_momentum_filter)
+
+        if donchian_fast_ema_period is not None:
+            self._donchian_fast_ema_period = max(2, int(donchian_fast_ema_period))
+
+        if donchian_slow_ema_period is not None:
+            self._donchian_slow_ema_period = max(3, int(donchian_slow_ema_period))
+
+        if self._donchian_slow_ema_period <= self._donchian_fast_ema_period:
+            self._donchian_slow_ema_period = self._donchian_fast_ema_period + 1
+
+        if score_conf_threshold is not None:
+            self._score_conf_threshold = _clamp(float(score_conf_threshold), 0.0, 1.0)
+
+        if score_gap_threshold is not None:
+            self._score_gap_threshold = _clamp(float(score_gap_threshold), 0.0, 1.0)
+
+        if score_tf_15m_enabled is not None:
+            self._score_tf_15m_enabled = bool(score_tf_15m_enabled)
+
+        if tf_weight_10m is not None:
+            self._tf_weight_10m = _clamp(float(tf_weight_10m), 0.0, 1.0)
+        if tf_weight_15m is not None:
+            self._tf_weight_15m = _clamp(float(tf_weight_15m), 0.0, 1.0)
+        if tf_weight_30m is not None:
+            self._tf_weight_30m = _clamp(float(tf_weight_30m), 0.0, 1.0)
+        if tf_weight_1h is not None:
+            self._tf_weight_1h = _clamp(float(tf_weight_1h), 0.0, 1.0)
+        if tf_weight_4h is not None:
+            self._tf_weight_4h = _clamp(float(tf_weight_4h), 0.0, 1.0)
+
     def _collect_market(self, market_snapshot: dict[str, Any]) -> dict[str, list[_Candle]]:
         raw_market = market_snapshot.get("market", {})
         out: dict[str, list[_Candle]] = {}
-        for timeframe in ("4h", "1h", "15m"):
+        for timeframe in ("4h", "1h", "30m", "15m", "10m"):
             raw_rows = raw_market.get(timeframe)
             out[timeframe] = _to_candles(raw_rows) if isinstance(raw_rows, list) else []
         return out
+
+    @staticmethod
+    def _timeframe_momentum(candles: list[_Candle]) -> tuple[str, float] | None:
+        closes = [row.close for row in candles]
+        if len(closes) < 6:
+            return None
+
+        fast_period = min(8, max(2, len(closes) // 4))
+        slow_period = min(21, max(fast_period + 1, len(closes) // 2))
+        ema_fast = _ema(closes, period=fast_period)
+        ema_slow = _ema(closes, period=slow_period)
+        if ema_fast is None or ema_slow is None:
+            return None
+
+        last = closes[-1]
+        prev = closes[-2]
+        long_votes = 0
+        short_votes = 0
+        if last > ema_fast:
+            long_votes += 1
+        else:
+            short_votes += 1
+        if ema_fast > ema_slow:
+            long_votes += 1
+        elif ema_fast < ema_slow:
+            short_votes += 1
+        if last > prev:
+            long_votes += 1
+        elif last < prev:
+            short_votes += 1
+
+        long_conf = long_votes / 3.0
+        short_conf = short_votes / 3.0
+        if long_conf >= short_conf:
+            return "LONG", float(long_conf)
+        return "SHORT", float(short_conf)
+
+    def _score_gate(
+        self,
+        *,
+        intent: str,
+        markets: dict[str, list[_Candle]],
+        debug: _DecisionDebug,
+    ) -> tuple[bool, str | None]:
+        if intent not in {"LONG", "SHORT"}:
+            return True, None
+
+        weights = {
+            "10m": float(self._tf_weight_10m),
+            "15m": 0.0 if not self._score_tf_15m_enabled else float(self._tf_weight_15m),
+            "30m": float(self._tf_weight_30m),
+            "1h": float(self._tf_weight_1h),
+            "4h": float(self._tf_weight_4h),
+        }
+
+        aligned = 0.0
+        opposite = 0.0
+        total_weight = 0.0
+        used_tfs: list[str] = []
+        for tf, weight in weights.items():
+            if weight <= 0:
+                continue
+            candles = markets.get(tf) or []
+            tf_signal = self._timeframe_momentum(candles)
+            if tf_signal is None:
+                continue
+
+            side, conf = tf_signal
+            total_weight += weight
+            used_tfs.append(tf)
+            debug.indicators[f"score_{tf}_side"] = side
+            debug.indicators[f"score_{tf}_conf"] = round(float(conf), 4)
+            if side == intent:
+                aligned += weight * conf
+            else:
+                opposite += weight * conf
+
+        if total_weight <= 0:
+            debug.filters["score_gate_skipped"] = True
+            return True, None
+
+        if len(used_tfs) < 3:
+            debug.filters["score_gate_skipped"] = True
+            debug.filters["score_gate_skip_reason"] = "insufficient_score_timeframes"
+            return True, None
+
+        confidence = aligned / total_weight
+        opposite_conf = opposite / total_weight
+        gap = confidence - opposite_conf
+        debug.filters["score_gate_skipped"] = False
+        debug.filters["score_gate_used_timeframes"] = used_tfs
+        debug.indicators["score_confidence"] = round(float(confidence), 4)
+        debug.indicators["score_opposite_confidence"] = round(float(opposite_conf), 4)
+        debug.indicators["score_gap"] = round(float(gap), 4)
+
+        if confidence < float(self._score_conf_threshold):
+            return False, "confidence_below_threshold"
+        if gap < float(self._score_gap_threshold):
+            return False, "gap_below_threshold"
+        return True, None
 
     def _collect_symbol(self, market_snapshot: dict[str, Any], default: str) -> str:
         for key in ("symbol", "default_symbol"):
@@ -507,16 +681,22 @@ class StrategyPackV1(StrategyPlugin):
 
         if mode == "donchian":
             min_distance = self._donchian_anti_fake * max(atr_value, 0.000001)
+            long_momentum_ok, short_momentum_ok = self._donchian_momentum_ok(
+                candles_1h=candles_1h,
+                debug=debug,
+            )
             if (
                 allowed_side in {"LONG", "BOTH"}
                 and last.close > upper
                 and (last.close - upper) >= min_distance
+                and long_momentum_ok
             ):
                 signal["long"] = True
             if (
                 allowed_side in {"SHORT", "BOTH"}
                 and last.close < lower
                 and (lower - last.close) >= min_distance
+                and short_momentum_ok
             ):
                 signal["short"] = True
             return signal
@@ -527,6 +707,40 @@ class StrategyPackV1(StrategyPlugin):
             signal["short"] = True
 
         return signal
+
+    def _donchian_momentum_ok(
+        self,
+        *,
+        candles_1h: list[_Candle],
+        debug: _DecisionDebug,
+    ) -> tuple[bool, bool]:
+        if not self._donchian_momentum_filter:
+            return True, True
+
+        fast_period = max(2, int(self._donchian_fast_ema_period))
+        slow_period = max(fast_period + 1, int(self._donchian_slow_ema_period))
+        closes = [row.close for row in candles_1h]
+        if len(closes) < slow_period + 1:
+            debug.filters["donchian_momentum_ready"] = False
+            return True, True
+
+        ema_fast = _ema(closes, period=fast_period)
+        ema_slow = _ema(closes, period=slow_period)
+        if ema_fast is None or ema_slow is None:
+            debug.filters["donchian_momentum_ready"] = False
+            return True, True
+
+        last_close = closes[-1]
+        prev_close = closes[-2]
+        long_ok = ema_fast > ema_slow and last_close > ema_fast and last_close > prev_close
+        short_ok = ema_fast < ema_slow and last_close < ema_fast and last_close < prev_close
+
+        debug.filters["donchian_momentum_ready"] = True
+        debug.filters["donchian_momentum_long_ok"] = bool(long_ok)
+        debug.filters["donchian_momentum_short_ok"] = bool(short_ok)
+        debug.indicators["donchian_fast_ema_1h"] = round(float(ema_fast), 6)
+        debug.indicators["donchian_slow_ema_1h"] = round(float(ema_slow), 6)
+        return bool(long_ok), bool(short_ok)
 
     def _mean_reversion_signal_1h(
         self,
@@ -694,6 +908,13 @@ class StrategyPackV1(StrategyPlugin):
         elif signal.get("long") or signal.get("short"):
             reason = "regime_block"
 
+        score_pass, score_reason = self._score_gate(intent=raw_intent, markets=markets, debug=debug)
+        if raw_intent in {"LONG", "SHORT"} and not score_pass:
+            raw_intent = "NONE"
+            side = "NONE"
+            score = 0.0
+            reason = str(score_reason or "confidence_below_threshold")
+
         if blocks and raw_intent in {"NONE"}:
             reason = ";".join(blocks)
 
@@ -780,6 +1001,11 @@ class StrategyPackV1CandidateSelector(CandidateSelector):
         normalized = [str(sym).strip().upper() for sym in symbols if str(sym).strip()]
         if normalized:
             self._symbols = normalized
+
+    def set_strategy_runtime_params(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
+        updater = getattr(self._strategy, "set_runtime_params", None)
+        if callable(updater):
+            updater(**kwargs)
 
     def select(self, *, context: KernelContext) -> Candidate | None:
         _ = context

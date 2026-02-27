@@ -62,6 +62,11 @@ class NotionalConfigMutableSizer(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class StrategyRuntimeMutableSelector(Protocol):
+    def set_strategy_runtime_params(self, **kwargs: Any) -> None: ...
+
+
 @dataclass(frozen=True)
 class TradeKernelConfig:
     mode: str
@@ -231,6 +236,10 @@ class TradeKernel:
                 max_notional=max_notional,
             )
 
+    def set_strategy_runtime_params(self, **kwargs: Any) -> None:
+        if isinstance(self._selector, StrategyRuntimeMutableSelector):
+            self._selector.set_strategy_runtime_params(**kwargs)
+
 
 def _build_default_risk_gate(risk_cfg: RiskConfig | None = None) -> RiskGate:
     _ = risk_cfg
@@ -259,7 +268,7 @@ def _build_market_snapshot_provider(
         return None
     primary_symbol = symbol_list[0]
     cache: dict[str, dict[str, list[Any]]] = {
-        sym: {"4h": [], "1h": [], "15m": []} for sym in symbol_list
+        sym: {"4h": [], "1h": [], "30m": [], "15m": [], "10m": []} for sym in symbol_list
     }
     cache_updated_at: datetime | None = None
 
@@ -269,7 +278,7 @@ def _build_market_snapshot_provider(
         now = datetime.now(timezone.utc)
         if cache_updated_at is None or (now - cache_updated_at).total_seconds() >= 10:
             for sym in symbol_list:
-                for interval in ("4h", "1h", "15m"):
+                for interval in ("4h", "1h", "30m", "15m", "10m"):
                     try:
                         payload = _run_async_blocking(
                             lambda sym=sym, interval=interval: rest_client.public_request(
@@ -297,7 +306,9 @@ def _build_market_snapshot_provider(
             sym: {
                 "4h": cache.get(sym, {}).get("4h", []),
                 "1h": cache.get(sym, {}).get("1h", []),
+                "30m": cache.get(sym, {}).get("30m", []),
                 "15m": cache.get(sym, {}).get("15m", []),
+                "10m": cache.get(sym, {}).get("10m", []),
             }
             for sym in symbol_list
         }
@@ -306,7 +317,9 @@ def _build_market_snapshot_provider(
             "market": {
                 "4h": symbols_payload[primary_symbol]["4h"],
                 "1h": symbols_payload[primary_symbol]["1h"],
+                "30m": symbols_payload[primary_symbol]["30m"],
                 "15m": symbols_payload[primary_symbol]["15m"],
+                "10m": symbols_payload[primary_symbol]["10m"],
             },
             "symbols": symbols_payload,
         }
