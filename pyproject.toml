@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.23",
   "ruff>=0.4",
   "asgi-lifespan>=2.1",
 ]
@@ -31,6 +32,13 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["v2/tests"]
+asyncio_mode = "auto"
+markers = [
+  "unit: fast unit test",
+]
+filterwarnings = [
+  "ignore:'audioop' is deprecated and slated for removal in Python 3.13:DeprecationWarning",
+]
 
 [tool.setuptools]
 include-package-data = false
