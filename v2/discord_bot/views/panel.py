@@ -492,19 +492,26 @@ def _budget_display(payload: JSONPayload) -> tuple[str, str]:
 
     budget = cap.get("budget_usdt")
     order_amt = cap.get("notional_usdt")
+    margin_use_pct = max(0.0, _coerce_float(cfg.get("margin_use_pct"), default=1.0))
+    max_leverage = max(1.0, _coerce_float(cfg.get("max_leverage"), default=1.0))
 
     if budget is None:
         mode = str(cfg.get("capital_mode") or "").upper()
+        base_budget: JSONValue = cfg.get("margin_budget_usdt")
         if mode == "MARGIN_BUDGET_USDT":
-            budget = cfg.get("margin_budget_usdt")
+            base_budget = cfg.get("margin_budget_usdt")
         elif mode == "FIXED_USDT":
-            budget = cfg.get("capital_usdt")
+            base_budget = cfg.get("capital_usdt")
         else:
-            budget = cfg.get("capital_pct")
+            base_budget = cfg.get("capital_pct")
+        budget = _coerce_float(base_budget, default=0.0) * margin_use_pct
 
-    if order_amt is None and isinstance(cap, dict) and cap.get("used_margin") is not None:
-        # Fallback if API snapshot is incomplete.
-        order_amt = cap.get("budget_usdt")
+    if order_amt is None:
+        budget_f = _coerce_float(budget, default=0.0)
+        order_amt = budget_f * max_leverage
+        max_position_notional = _coerce_float(cfg.get("max_position_notional_usdt"), default=0.0)
+        if max_position_notional > 0:
+            order_amt = min(float(order_amt), float(max_position_notional))
 
     return _fmt_money(budget), _fmt_money(order_amt)
 
@@ -941,9 +948,14 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
 
 class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
     amount_usdt = discord.ui.TextInput(
-        label="증거금 (USDT, 최소 5)",
+        label="목표 증거금 (USDT, 최소 5)",
         placeholder="예: 100",
         required=True,
+    )
+    leverage = discord.ui.TextInput(
+        label="레버리지(선택, 비우면 기존값 유지)",
+        placeholder="예: 10",
+        required=False,
     )
 
     def __init__(
@@ -952,6 +964,7 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
         api: TraderAPI,
         view: "PanelViewBase",
         current_budget: float | None = None,
+        current_leverage: float | None = None,
     ) -> None:
         super().__init__(timeout=300)
         self._api = api
@@ -960,6 +973,9 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
             pretty = _fmt_money(current_budget, digits=4)
             self.amount_usdt.default = pretty
             self.amount_usdt.placeholder = f"현재값: {pretty} USDT / 예: 100"
+        if current_leverage is not None:
+            lev_text = _fmt_money(current_leverage, digits=2)
+            self.leverage.placeholder = f"현재값: {lev_text} / 예: 10"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):
@@ -968,20 +984,40 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
 
         try:
             amount = _sanitize_usdt_input(str(self.amount_usdt))
+            leverage_raw = str(self.leverage or "").strip()
+            leverage_value: float | None = None
+            if leverage_raw:
+                leverage_value = _parse_float_range(
+                    leverage_raw,
+                    field="max_leverage",
+                    min_v=1.0,
+                    max_v=50.0,
+                )
         except ValueError as e:
             _ = await interaction.response.send_message(f"입력 오류: {e}", ephemeral=True)
             return
 
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            _ = await self._api.set_config(
-                {
-                    "capital_mode": "MARGIN_BUDGET_USDT",
-                    "margin_budget_usdt": amount,
-                }
-            )
+            payload: JSONPayload = {
+                "capital_mode": "MARGIN_BUDGET_USDT",
+                "margin_budget_usdt": amount,
+            }
+            if leverage_value is not None:
+                payload["max_leverage"] = leverage_value
+
+            _ = await self._api.set_config(payload)
             await self._view.refresh_message(interaction)
-            await interaction.followup.send(f"증거금 설정 완료: {amount:.4f} USDT", ephemeral=True)
+            if leverage_value is None:
+                await interaction.followup.send(
+                    f"증거금 설정 완료: {amount:.4f} USDT",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    f"증거금/레버리지 설정 완료: {amount:.4f} USDT, {leverage_value:.2f}x",
+                    ephemeral=True,
+                )
         except APIError as e:
             await interaction.followup.send(f"설정 실패: {e}", ephemeral=True)
 
@@ -1521,14 +1557,23 @@ class PanelViewBase(discord.ui.View):
 
     async def _open_margin_budget_modal(self, interaction: discord.Interaction) -> None:
         current_budget = None
+        current_leverage = None
         payload = self._get_cached_status(max_age_sec=3600.0) or {}
-        cfg = _as_dict(payload.get("config"))
+        cfg = _as_dict(payload.get("risk_config"))
         cur = cfg.get("margin_budget_usdt")
         if cur is not None:
             current_budget = _coerce_float(cur, default=0.0)
+        lev = cfg.get("max_leverage")
+        if lev is not None:
+            current_leverage = _coerce_float(lev, default=0.0)
 
         _ = await interaction.response.send_modal(
-            MarginBudgetModal(api=self.api, view=self, current_budget=current_budget)
+            MarginBudgetModal(
+                api=self.api,
+                view=self,
+                current_budget=current_budget,
+                current_leverage=current_leverage,
+            )
         )
 
     async def refresh_message(

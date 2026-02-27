@@ -106,6 +106,7 @@ class DynamicNotionalSizer:
             if str(sym).strip() and float(lev) > 0
         }
         self._max_leverage = max(1.0, float(max_leverage))
+        self._default_leverage = self._max_leverage
 
     def set_notional_config(self, *, fallback_notional: float, max_notional: float | None) -> None:
         fallback = float(fallback_notional)

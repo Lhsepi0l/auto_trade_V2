@@ -17,6 +17,7 @@ from v2.clean_room import (
 from v2.clean_room.kernel import _build_overheat_fetcher
 from v2.config.loader import load_effective_config
 from v2.engine import EngineStateStore
+from v2.exchange.types import ResyncSnapshot
 from v2.storage import RuntimeStorage
 
 
@@ -103,6 +104,63 @@ def test_ops_paused_blocks_execution(tmp_path) -> None:  # type: ignore[no-untyp
     result = kernel.run_once()
     assert result.state == "blocked"
     assert executor.calls == 0
+
+
+def test_position_open_blocks_same_symbol_when_reentry_disabled(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    store = _state_store(tmp_path)
+    store.startup_reconcile(
+        snapshot=ResyncSnapshot(positions=[{"symbol": "BTCUSDT", "positionAmt": "0.01"}]),
+        reason="same_symbol_block",
+    )
+
+    selector = FixedCandidateSelector(
+        candidate=Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
+    )
+    executor = ExecutionCounting()
+    kernel = TradeKernel(
+        state_store=store,
+        candidate_selector=selector,
+        risk_gate=AlwaysAllowedRiskGate(),
+        sizer=FixedNotionalSizer(),
+        executor=executor,
+        config=TradeKernelConfig(
+            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+        ),
+    )
+
+    result = kernel.run_once()
+    assert result.state == "blocked"
+    assert result.reason == "position_open"
+    assert executor.calls == 0
+
+
+def test_position_open_allows_other_symbol_scan_when_reentry_disabled(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    store = _state_store(tmp_path)
+    store.startup_reconcile(
+        snapshot=ResyncSnapshot(positions=[{"symbol": "BTCUSDT", "positionAmt": "0.01"}]),
+        reason="cross_symbol_allow",
+    )
+
+    selector = FixedCandidateSelector(
+        candidate=Candidate(symbol="ETHUSDT", side="BUY", score=1.0, entry_price=100.0)
+    )
+    executor = ExecutionCounting()
+    kernel = TradeKernel(
+        state_store=store,
+        candidate_selector=selector,
+        risk_gate=AlwaysAllowedRiskGate(),
+        sizer=FixedNotionalSizer(),
+        executor=executor,
+        config=TradeKernelConfig(
+            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+        ),
+    )
+
+    result = kernel.run_once()
+    assert result.state == "dry_run"
+    assert executor.calls == 1
 
 
 def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-untyped-def]

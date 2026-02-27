@@ -115,13 +115,19 @@ class TradeKernel:
                 candidate=candidate,
                 risk=RiskDecision(allow=False, reason="safe_mode"),
             )
-        if (not self._config.allow_reentry) and len(state.current_position) > 0:
-            return KernelCycleResult(
-                state="blocked",
-                reason="position_open",
-                candidate=candidate,
-                risk=RiskDecision(allow=False, reason="position_open"),
+        if not self._config.allow_reentry:
+            candidate_symbol = (
+                str(candidate.symbol if candidate is not None else "").strip().upper()
             )
+            if candidate_symbol and candidate_symbol in {
+                str(sym).strip().upper() for sym in state.current_position.keys()
+            }:
+                return KernelCycleResult(
+                    state="blocked",
+                    reason="position_open",
+                    candidate=candidate,
+                    risk=RiskDecision(allow=False, reason="position_open"),
+                )
         if candidate is None:
             return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
         return None

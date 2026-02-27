@@ -613,6 +613,7 @@ def format_report_payload(payload: JSONPayload) -> str:
     detail = _as_dict(payload.get("detail"))
     kind = str(payload.get("kind") or "DAILY_REPORT")
     sent = bool(payload.get("notifier_sent"))
+    notifier_enabled = bool(payload.get("notifier_enabled", sent))
     notifier_error = payload.get("notifier_error")
 
     entries = _fmt_int(detail.get("entries"))
@@ -630,8 +631,11 @@ def format_report_payload(payload: JSONPayload) -> str:
     lines.append(f"진입/청산: {entries} / {closes}")
     lines.append(f"오류/취소: {errors} / {canceled}")
     lines.append(f"차단/총건수: {blocks} / {total_records}")
-    lines.append(f"디스코드 전송: {'성공' if sent else '실패'}")
-    if not sent and notifier_error:
+    if not notifier_enabled:
+        lines.append("디스코드 전송: 비활성")
+    else:
+        lines.append(f"디스코드 전송: {'성공' if sent else '실패'}")
+    if notifier_enabled and (not sent) and notifier_error:
         lines.append(f"전송 오류: {notifier_error}")
     if (
         entries == "0"

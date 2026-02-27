@@ -89,6 +89,9 @@ def test_control_api_contract(tmp_path) -> None:  # type: ignore[no-untyped-def]
     report = client.post("/report")
     assert report.status_code == 200
     assert report.json()["kind"] == "DAILY_REPORT"
+    assert report.json()["notifier_enabled"] is False
+    assert report.json()["notifier_sent"] is False
+    assert report.json()["notifier_error"] is None
 
     cooldown = client.post("/cooldown/clear")
     assert cooldown.status_code == 200
@@ -150,6 +153,51 @@ def test_control_api_tick_emits_status_notification(tmp_path) -> None:  # type: 
     assert tick.status_code == 200
     assert tick.json()["ok"] is True
     assert notifier.send.call_count >= 1
+
+
+def test_control_api_report_reflects_notifier_send_result(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_report_notify.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    notifier = Notifier(
+        enabled=True, provider="discord", webhook_url="https://discord.test/webhook"
+    )
+    notifier.send_with_result = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=False, error="ConnectError: boom")
+    )
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    report = client.post("/report")
+    assert report.status_code == 200
+    payload = report.json()
+    assert payload["notifier_enabled"] is True
+    assert payload["notifier_sent"] is False
+    assert payload["notifier_error"] == "ConnectError: boom"
 
 
 def test_control_api_set_notify_interval_emits_immediate_status(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -985,11 +1033,82 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
 
     rows = storage.list_bracket_states()
     assert rows[0]["state"] == "CLEANED"
-    assert notifier.send.call_count == 1
-    message = str(notifier.send.call_args[0][0])
-    assert "손절 완료!" in message
-    assert "BTCUSDT" in message
-    assert "-1.7500 USDT" in message
+    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
+    assert any(
+        "손절 완료!" in message and "BTCUSDT" in message and "-1.7500 USDT" in message
+        for message in messages
+    )
+
+
+def test_control_api_sl_symbol_flatten_cooldown_scopes_by_symbol(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="normal",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_sl_flatten_once.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTNoop:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    notifier = Notifier(enabled=True)
+    notifier.send = MagicMock()  # type: ignore[method-assign]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=_AlgoRESTNoop(),
+    )
+    controller._running = True
+    controller._risk["sl_flatten_cooldown_sec"] = 3600
+
+    calls: list[str] = []
+
+    async def _fake_close_position(*, symbol: str) -> dict[str, object]:
+        calls.append(symbol)
+        return {"symbol": symbol, "detail": {}}
+
+    controller.close_position = _fake_close_position  # type: ignore[method-assign]
+
+    controller._maybe_trigger_symbol_sl_flatten(trigger_symbol="BTCUSDT")
+    controller._running = True
+    controller._maybe_trigger_symbol_sl_flatten(trigger_symbol="BTCUSDT")
+    controller._maybe_trigger_symbol_sl_flatten(trigger_symbol="ETHUSDT")
+
+    assert calls == ["BTCUSDT", "ETHUSDT"]
+    assert controller._watchdog_state["last_sl_flatten_symbol"] == "ETHUSDT"
+    assert state_store.get().status == "STOPPED"
 
 
 def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
@@ -1063,10 +1182,8 @@ def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
 
     controller._poll_brackets_once()
 
-    assert notifier.send.call_count == 1
-    message = str(notifier.send.call_args[0][0])
-    assert "익절 완료!" in message
-    assert "+0.5631 USDT" in message
+    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
+    assert any("익절 완료!" in message and "+0.5631 USDT" in message for message in messages)
 
 
 def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pnl(
@@ -1140,10 +1257,8 @@ def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pn
 
     controller._poll_brackets_once()
 
-    assert notifier.send.call_count == 1
-    message = str(notifier.send.call_args[0][0])
-    assert "손익없음 청산!" in message
-    assert "0.0000 USDT" in message
+    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
+    assert any("손익없음 청산!" in message and "0.0000 USDT" in message for message in messages)
 
 
 def test_control_api_bracket_poller_cleans_open_algos_when_position_flat(
@@ -1717,6 +1832,31 @@ def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_una
     assert payload["binance"]["private_error"] == "rest_client_unavailable"
 
 
+def test_control_api_status_notional_tracks_effective_budget_leverage(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = _build_app(tmp_path)
+    client = TestClient(app)
+
+    assert (
+        client.post(
+            "/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"}
+        ).status_code
+        == 200
+    )
+    assert client.post("/set", json={"key": "margin_budget_usdt", "value": "35"}).status_code == 200
+    assert client.post("/set", json={"key": "max_leverage", "value": "20"}).status_code == 200
+    assert (
+        client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7}).status_code
+        == 200
+    )
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["capital_snapshot"]["budget_usdt"] == 35.0
+    assert payload["capital_snapshot"]["leverage"] == 7.0
+    assert payload["capital_snapshot"]["notional_usdt"] == 245.0
+
+
 def test_control_api_status_uses_recent_cached_balance_after_fetch_failure(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1950,15 +2090,17 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
 
     set_budget = client.post("/set", json={"key": "margin_budget_usdt", "value": "35"})
     assert set_budget.status_code == 200
-    assert kernel.fallback_notional == 35.0
+    assert kernel.fallback_notional == 175.0
 
     set_cap = client.post("/set", json={"key": "max_position_notional_usdt", "value": "120"})
     assert set_cap.status_code == 200
     assert kernel.max_notional == 120.0
 
     _ = client.post("/set", json={"key": "max_leverage", "value": "20"})
+    assert kernel.fallback_notional == 700.0
     lev = client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7})
     assert lev.status_code == 200
+    assert kernel.fallback_notional == 245.0
     assert kernel.mapping.get("ETHUSDT") == 7.0
     assert kernel.max_leverage == 20.0
 
@@ -2046,7 +2188,9 @@ def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # t
     assert payload["symbol_leverage_map"]["ETHUSDT"] == 8.0
 
 
-def test_live_tick_blocks_reentry_when_live_position_exists(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_live_tick_does_not_preblock_multi_symbol_scan_when_live_position_exists(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
         profile="normal",
         mode="live",
@@ -2085,16 +2229,17 @@ def test_live_tick_blocks_reentry_when_live_position_exists(tmp_path) -> None:  
         rest_client=_LivePosREST(),
     )
     controller._running = True
+    controller._risk["universe_symbols"] = ["BTCUSDT", "ETHUSDT"]
     app = create_control_http_app(controller=controller)
     client = TestClient(app)
 
     tick = client.post("/scheduler/tick")
     assert tick.status_code == 200
-    assert tick.json()["snapshot"]["last_action"] == "blocked"
-    assert tick.json()["snapshot"]["last_decision_reason"] == "position_open"
+    assert tick.json()["snapshot"]["last_action"] == "no_candidate"
+    assert tick.json()["snapshot"]["last_decision_reason"] == "no_candidate"
     assert tick.json()["snapshot"]["last_error"] is None
     assert tick.json().get("error") is None
-    assert kernel.calls == 0
+    assert kernel.calls == 1
 
 
 def test_live_tick_allows_reentry_when_flag_enabled(tmp_path) -> None:  # type: ignore[no-untyped-def]

@@ -73,15 +73,21 @@ async def test_margin_budget_only_button_in_simple_panel() -> None:
     api = SimpleNamespace(get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}))
     view = PanelView(api=api)  # type: ignore[arg-type]
 
-    assert any(isinstance(item, discord.ui.Button) and str(item.label) == MARGIN_BUDGET_BUTTON_LABEL for item in view.children)
+    assert any(
+        isinstance(item, discord.ui.Button) and str(item.label) == MARGIN_BUDGET_BUTTON_LABEL
+        for item in view.children
+    )
     assert not any(
-        isinstance(item, discord.ui.Select) and str(item.placeholder) == "예산 모드" for item in view.children
+        isinstance(item, discord.ui.Select) and str(item.placeholder) == "예산 모드"
+        for item in view.children
     )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_admin_click_opens_modal_and_submit_calls_set_config(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_admin_click_opens_modal_and_submit_calls_set_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     api = SimpleNamespace(
         set_config=AsyncMock(),
         get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
@@ -101,6 +107,34 @@ async def test_admin_click_opens_modal_and_submit_calls_set_config(monkeypatch: 
     await modal.on_submit(it_submit)  # type: ignore[arg-type]
     api.set_config.assert_awaited_once_with(
         {"capital_mode": "MARGIN_BUDGET_USDT", "margin_budget_usdt": 1000.0}
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_margin_modal_submit_includes_optional_leverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        set_config=AsyncMock(),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = MarginBudgetModal(api=api, view=view)  # type: ignore[arg-type]
+    modal.amount_usdt._value = "120"  # type: ignore[attr-defined]
+    modal.leverage._value = "12"  # type: ignore[attr-defined]
+
+    it_submit = _FakeInteraction()
+    await modal.on_submit(it_submit)  # type: ignore[arg-type]
+
+    api.set_config.assert_awaited_once_with(
+        {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 120.0,
+            "max_leverage": 12.0,
+        }
     )
 
 

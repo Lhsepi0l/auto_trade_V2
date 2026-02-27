@@ -178,6 +178,8 @@ class RuntimeController:
         self._last_balance_available_usdt: float | None = None
         self._last_balance_wallet_usdt: float | None = None
         self._last_balance_fetched_mono: float | None = None
+        self._sl_flatten_inflight_symbols: set[str] = set()
+        self._sl_last_flatten_mono_by_symbol: dict[str, float] = {}
         self._trailing_state: dict[str, dict[str, Any]] = {}
         self._watchdog_state: dict[str, Any] = {}
         self._cycle_seq = 0
@@ -250,26 +252,6 @@ class RuntimeController:
 
         max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
 
-        capital_mode = str(self._risk.get("capital_mode") or "").upper()
-        margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
-        margin_budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
-        fixed_budget = _to_float(self._risk.get("capital_usdt"), default=100.0)
-        if capital_mode == "FIXED_USDT":
-            base_notional = fixed_budget
-        else:
-            base_notional = margin_budget
-
-        fallback_notional = float(base_notional) * float(margin_use_pct)
-        if fallback_notional <= 0:
-            fallback_notional = 10.0
-
-        max_position_notional = _to_float(
-            self._risk.get("max_position_notional_usdt"),
-            default=0.0,
-        )
-        capped_notional: float | None = (
-            float(max_position_notional) if max_position_notional > 0 else None
-        )
         mapping_raw = self._risk.get("symbol_leverage_map")
         mapping: dict[str, float] = {}
         if isinstance(mapping_raw, dict):
@@ -281,6 +263,36 @@ class RuntimeController:
                 if lev_f > 0:
                     mapping[sym_u] = lev_f
 
+        capital_mode = str(self._risk.get("capital_mode") or "").upper()
+        margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
+        margin_budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
+        fixed_budget = _to_float(self._risk.get("capital_usdt"), default=100.0)
+        if capital_mode == "FIXED_USDT":
+            base_margin = fixed_budget
+        else:
+            base_margin = margin_budget
+
+        target_margin = float(base_margin) * float(margin_use_pct)
+        if target_margin <= 0:
+            target_margin = 10.0
+
+        effective_leverage = self._effective_budget_leverage(
+            symbols=symbols,
+            max_leverage=max_leverage,
+            symbol_leverage_map=mapping,
+        )
+
+        fallback_notional = float(target_margin) * float(effective_leverage)
+        if fallback_notional <= 0:
+            fallback_notional = 10.0
+
+        max_position_notional = _to_float(
+            self._risk.get("max_position_notional_usdt"),
+            default=0.0,
+        )
+        capped_notional: float | None = (
+            float(max_position_notional) if max_position_notional > 0 else None
+        )
         if hasattr(self.kernel, "set_universe_symbols"):
             self.kernel.set_universe_symbols(symbols)  # type: ignore[attr-defined]
         if hasattr(self.kernel, "set_symbol_leverage_map"):
@@ -293,6 +305,27 @@ class RuntimeController:
                 fallback_notional=fallback_notional,
                 max_notional=capped_notional,
             )
+
+    def _effective_budget_leverage(
+        self,
+        *,
+        symbols: list[str],
+        max_leverage: float,
+        symbol_leverage_map: dict[str, float],
+    ) -> float:
+        base = max(1.0, float(max_leverage))
+        if not symbols:
+            return base
+
+        resolved: list[float] = []
+        for sym in symbols:
+            candidate = symbol_leverage_map.get(sym, base)
+            lev = max(1.0, _to_float(candidate, default=base))
+            resolved.append(min(lev, base))
+
+        if not resolved:
+            return base
+        return max(1.0, min(resolved))
 
     def _initial_risk_config(self) -> dict[str, Any]:
         risk_cfg = self.cfg.behavior.risk
@@ -379,10 +412,56 @@ class RuntimeController:
                 "unrealized_pnl": unrealized_pnl,
                 "position_side": "LONG" if position_amt > 0 else "SHORT",
             }
-        budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
+        capital_mode = str(self._risk.get("capital_mode") or "").upper()
+        margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
+        margin_budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
+        fixed_budget = _to_float(self._risk.get("capital_usdt"), default=100.0)
+        if capital_mode == "FIXED_USDT":
+            base_margin = fixed_budget
+        else:
+            base_margin = margin_budget
+
+        target_margin = float(base_margin) * float(margin_use_pct)
+        if target_margin <= 0:
+            target_margin = 10.0
+
+        max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
+        symbols_raw = self._risk.get("universe_symbols")
+        if isinstance(symbols_raw, list):
+            symbols = [str(sym).strip().upper() for sym in symbols_raw if str(sym).strip()]
+        else:
+            symbols = [self.cfg.behavior.exchange.default_symbol]
+        if not symbols:
+            symbols = [self.cfg.behavior.exchange.default_symbol]
+
+        mapping_raw = self._risk.get("symbol_leverage_map")
+        mapping: dict[str, float] = {}
+        if isinstance(mapping_raw, dict):
+            for sym, lev in mapping_raw.items():
+                sym_u = str(sym).strip().upper()
+                if not sym_u:
+                    continue
+                lev_f = _to_float(lev, default=0.0)
+                if lev_f > 0:
+                    mapping[sym_u] = lev_f
+
+        leverage = self._effective_budget_leverage(
+            symbols=symbols,
+            max_leverage=max_leverage,
+            symbol_leverage_map=mapping,
+        )
+
+        expected_notional = float(target_margin) * float(leverage)
+        max_position_notional = _to_float(self._risk.get("max_position_notional_usdt"), default=0.0)
+        if max_position_notional > 0:
+            expected_notional = min(expected_notional, float(max_position_notional))
+
+        effective_margin = expected_notional / float(leverage) if leverage > 0 else target_margin
         live_available_usdt, live_wallet_usdt, live_balance_source = self._fetch_live_usdt_balance()
-        available_usdt = live_available_usdt if live_available_usdt is not None else budget
-        wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else budget
+        available_usdt = (
+            live_available_usdt if live_available_usdt is not None else effective_margin
+        )
+        wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else effective_margin
         config = dict(self._risk)
         config_summary = dict(self._risk)
         config_summary["scheduler_tick_sec"] = float(self.scheduler.tick_seconds)
@@ -412,10 +491,10 @@ class RuntimeController:
             "capital_snapshot": {
                 "symbol": self.cfg.behavior.exchange.default_symbol,
                 "available_usdt": available_usdt,
-                "budget_usdt": budget,
+                "budget_usdt": effective_margin,
                 "used_margin": 0.0,
-                "leverage": float(self._risk.get("max_leverage", 1.0)),
-                "notional_usdt": budget,
+                "leverage": leverage,
+                "notional_usdt": expected_notional,
                 "mark_price": 0.0,
                 "est_qty": 0.0,
                 "blocked": not self.ops.can_open_new_entries(),
@@ -774,12 +853,47 @@ class RuntimeController:
         if not self._running:
             return False
 
+        symbols_raw = self._risk.get("universe_symbols")
+        if isinstance(symbols_raw, list):
+            symbols = [str(sym).strip().upper() for sym in symbols_raw if str(sym).strip()]
+        else:
+            symbols = [self.cfg.behavior.exchange.default_symbol]
+        if len(symbols) > 1:
+            return False
+
         positions, _rows, ok = self._fetch_live_positions()
         if not ok:
             return False
         return any(
             abs(_to_float(position_amt, default=0.0)) > 0.0 for position_amt in positions.values()
         )
+
+    def _maybe_trigger_symbol_sl_flatten(self, *, trigger_symbol: str) -> None:
+        symbol = str(trigger_symbol).strip().upper()
+        if not symbol:
+            return
+        if symbol in self._sl_flatten_inflight_symbols:
+            return
+
+        cooldown_sec = max(5.0, _to_float(self._risk.get("sl_flatten_cooldown_sec"), default=60.0))
+        now_mono = time.monotonic()
+        last_mono = float(self._sl_last_flatten_mono_by_symbol.get(symbol) or 0.0)
+        if last_mono > 0.0 and (now_mono - last_mono) < cooldown_sec:
+            return
+
+        self._sl_flatten_inflight_symbols.add(symbol)
+        self._sl_last_flatten_mono_by_symbol[symbol] = now_mono
+        self._watchdog_state["last_sl_flatten_symbol"] = symbol
+        self._watchdog_state["last_sl_flatten_triggered_at"] = _utcnow_iso()
+        try:
+            _ = _run_async_blocking(
+                lambda s=symbol: self.close_position(symbol=s), timeout_sec=30.0
+            )
+            self.notifier.send(f"손절 감지: {symbol} / 해당 심볼 정리 실행")
+        except Exception:  # noqa: BLE001
+            logger.exception("sl_symbol_flatten_failed symbol=%s", symbol)
+        finally:
+            self._sl_flatten_inflight_symbols.discard(symbol)
 
     @staticmethod
     def _position_pnl_pct(row: dict[str, Any]) -> float | None:
@@ -1068,6 +1182,8 @@ class RuntimeController:
                     timeout_sec=8.0,
                 )
                 self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
+                if outcome == "SL":
+                    self._maybe_trigger_symbol_sl_flatten(trigger_symbol=symbol)
             except Exception:  # noqa: BLE001
                 logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
 
@@ -1502,17 +1618,44 @@ class RuntimeController:
             "error": "tick_busy",
         }
 
+    @staticmethod
+    def _format_daily_report_message(payload: dict[str, Any]) -> str:
+        detail_raw = payload.get("detail")
+        detail = detail_raw if isinstance(detail_raw, dict) else {}
+        entries = int(_to_float(detail.get("entries"), default=0.0))
+        closes = int(_to_float(detail.get("closes"), default=0.0))
+        errors = int(_to_float(detail.get("errors"), default=0.0))
+        canceled = int(_to_float(detail.get("canceled"), default=0.0))
+        blocks = int(_to_float(detail.get("blocks"), default=0.0))
+        total_records = int(_to_float(detail.get("total_records"), default=0.0))
+
+        lines = [
+            f"[{str(payload.get('kind') or 'DAILY_REPORT')}]",
+            f"일자: {str(payload.get('day') or '-')}",
+            f"엔진 상태: {str(payload.get('engine_state') or '-')}",
+            f"보고 시각: {str(payload.get('reported_at') or '-')}",
+            f"진입/청산: {entries} / {closes}",
+            f"오류/취소: {errors} / {canceled}",
+            f"차단/총건수: {blocks} / {total_records}",
+        ]
+        return "\n".join(lines)
+
     def send_daily_report(self) -> dict[str, Any]:
         payload = {
             "kind": "DAILY_REPORT",
             "day": datetime.now(timezone.utc).date().isoformat(),
             "engine_state": self.state_store.get().status,
             "detail": dict(self._report_stats),
-            "notifier_sent": bool(self.cfg.behavior.notify.enabled),
+            "notifier_enabled": bool(self.notifier.enabled),
+            "notifier_sent": False,
             "notifier_error": None,
             "reported_at": _utcnow_iso(),
         }
-        self.notifier.send(f"daily report: {payload['detail']}")
+        message = self._format_daily_report_message(payload)
+        result = self.notifier.send_with_result(message)
+        payload["notifier_sent"] = bool(result.sent)
+        if result.error and result.error != "disabled":
+            payload["notifier_error"] = result.error
         return payload
 
     def preset(self, name: str) -> dict[str, Any]:
