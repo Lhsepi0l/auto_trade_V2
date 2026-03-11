@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = REPO_ROOT / "v2" / "scripts" / "install_systemd_stack.sh"
+
+
+def _run_dry_run(*args: str) -> str:
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT_PATH),
+            "--dry-run",
+            "--user",
+            "bot",
+            "--workdir",
+            str(REPO_ROOT),
+            *args,
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout
+
+
+def test_install_systemd_stack_defaults_to_alpha_live_candidate_profile() -> None:
+    stdout = _run_dry_run()
+    assert "--profile ra_2026_alpha_v2_expansion_live_candidate" in stdout
+
+
+def test_install_systemd_stack_forwards_explicit_profile_to_run_stack() -> None:
+    stdout = _run_dry_run("--profile", "ra_2026_alpha_v2_expansion_champion_candidate")
+    assert "ExecStart=/usr/bin/env bash " in stdout
+    assert "--profile ra_2026_alpha_v2_expansion_champion_candidate --mode live --env prod" in stdout

@@ -22,7 +22,7 @@ def test_load_effective_config_reads_env_file(tmp_path: Path) -> None:
     )
 
     cfg = load_effective_config(
-        profile="normal",
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
         mode="live",
         env="prod",
         env_map={},
@@ -46,7 +46,7 @@ def test_env_map_overrides_env_file(tmp_path: Path) -> None:
     )
 
     cfg = load_effective_config(
-        profile="normal",
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
         mode="live",
         env="prod",
         env_map={

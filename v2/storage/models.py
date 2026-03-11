@@ -141,6 +141,29 @@ class RuntimeStorage:
                 """.strip(),
                 ("{}", _utcnow_iso()),
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS submission_intents (
+                    intent_id TEXT PRIMARY KEY,
+                    client_order_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    order_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.strip()
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_markers (
+                    marker_key TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.strip()
+            )
 
     def append_journal_event(
         self,
@@ -437,3 +460,129 @@ class RuntimeStorage:
         except (TypeError, ValueError, json.JSONDecodeError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
+
+    def get_submission_intent(self, *, intent_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT intent_id, client_order_id, symbol, side, status, order_id, created_at, updated_at
+                FROM submission_intents
+                WHERE intent_id=?
+                """.strip(),
+                (intent_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def upsert_submission_intent(
+        self,
+        *,
+        intent_id: str,
+        client_order_id: str,
+        symbol: str,
+        side: str,
+        status: str,
+        order_id: str | None = None,
+    ) -> None:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO submission_intents(
+                    intent_id, client_order_id, symbol, side, status, order_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(intent_id) DO UPDATE SET
+                    client_order_id=excluded.client_order_id,
+                    symbol=excluded.symbol,
+                    side=excluded.side,
+                    status=excluded.status,
+                    order_id=excluded.order_id,
+                    updated_at=excluded.updated_at
+                """.strip(),
+                (
+                    intent_id,
+                    client_order_id,
+                    symbol,
+                    side,
+                    status,
+                    order_id,
+                    now,
+                    now,
+                ),
+            )
+
+    def get_submission_intent_by_client_order_id(self, *, client_order_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT intent_id, client_order_id, symbol, side, status, order_id, created_at, updated_at
+                FROM submission_intents
+                WHERE client_order_id=?
+                """.strip(),
+                (client_order_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_submission_intents(self, *, statuses: list[str] | None = None) -> list[dict[str, Any]]:
+        sql = (
+            "SELECT intent_id, client_order_id, symbol, side, status, order_id, created_at, updated_at "
+            "FROM submission_intents"
+        )
+        params: tuple[Any, ...] = ()
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            sql = f"{sql} WHERE status IN ({placeholders})"
+            params = tuple(str(item) for item in statuses)
+        sql = f"{sql} ORDER BY updated_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_submission_intent_status(
+        self,
+        *,
+        intent_id: str,
+        status: str,
+        order_id: str | None = None,
+    ) -> None:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE submission_intents
+                SET status=?, order_id=COALESCE(?, order_id), updated_at=?
+                WHERE intent_id=?
+                """.strip(),
+                (status, order_id, now, intent_id),
+            )
+
+    def save_runtime_marker(self, *, marker_key: str, payload: dict[str, Any]) -> None:
+        payload_json = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_markers(marker_key, payload_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(marker_key) DO UPDATE SET
+                    payload_json=excluded.payload_json,
+                    updated_at=excluded.updated_at
+                """.strip(),
+                (marker_key, payload_json, _utcnow_iso()),
+            )
+
+    def load_runtime_marker(self, *, marker_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM runtime_markers WHERE marker_key=?",
+                (marker_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        raw = row["payload_json"]
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None

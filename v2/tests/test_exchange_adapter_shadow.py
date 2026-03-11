@@ -6,7 +6,7 @@ from v2.exchange.user_ws import ShadowUserStreamManager
 
 
 def test_shadow_mode_uses_mock_providers_without_keys() -> None:
-    cfg = load_effective_config(profile="normal", mode="shadow", env="testnet", env_map={})
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
     adapter = BinanceAdapter.from_effective_config(cfg)
 
     assert adapter.mode == "shadow"

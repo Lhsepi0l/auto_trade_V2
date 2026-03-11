@@ -1,0 +1,1576 @@
+{
+  "generated_at": "2026-03-11T15:33:30.101293Z",
+  "variant_labels": {
+    "baseline": "baseline",
+    "champion": "EXP-06 @ 0.70",
+    "exp07a": "EXP-07A",
+    "exp07b": "EXP-07B",
+    "exp07c": "EXP-07C"
+  },
+  "overall": {
+    "1y": [
+      {
+        "label": "overall",
+        "variants": {
+          "baseline": {
+            "net_profit": 3.001816,
+            "profit_factor": 2.589266,
+            "max_drawdown_pct": 6.331678,
+            "trades": 154,
+            "fee_to_trade_gross_pct": 60.951249,
+            "win_rate_pct": 11.688312,
+            "expectancy_r": 0.093395,
+            "avg_winner_r": 1.300465,
+            "avg_loser_r": -0.066364
+          },
+          "champion": {
+            "net_profit": 2.619847,
+            "profit_factor": 2.630649,
+            "max_drawdown_pct": 5.746067,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 59.399048,
+            "win_rate_pct": 12.030075,
+            "expectancy_r": 0.091996,
+            "avg_winner_r": 1.231502,
+            "avg_loser_r": -0.063834
+          },
+          "exp07a": {
+            "net_profit": 1.935407,
+            "profit_factor": 2.386443,
+            "max_drawdown_pct": 7.024776,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 66.337683,
+            "win_rate_pct": 11.278195,
+            "expectancy_r": 0.078631,
+            "avg_winner_r": 1.197225,
+            "avg_loser_r": -0.063563
+          },
+          "exp07b": {
+            "net_profit": 2.000323,
+            "profit_factor": 2.409079,
+            "max_drawdown_pct": 7.024776,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 65.607713,
+            "win_rate_pct": 11.278195,
+            "expectancy_r": 0.079918,
+            "avg_winner_r": 1.208635,
+            "avg_loser_r": -0.063563
+          },
+          "exp07c": {
+            "net_profit": 2.440431,
+            "profit_factor": 2.56984,
+            "max_drawdown_pct": 5.746067,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 61.020749,
+            "win_rate_pct": 12.030075,
+            "expectancy_r": 0.08853,
+            "avg_winner_r": 1.202689,
+            "avg_loser_r": -0.063834
+          }
+        }
+      }
+    ],
+    "3y": [
+      {
+        "label": "overall",
+        "variants": {
+          "baseline": {
+            "net_profit": 7.955982,
+            "profit_factor": 2.340435,
+            "max_drawdown_pct": 7.701368,
+            "trades": 546,
+            "fee_to_trade_gross_pct": 68.403811,
+            "win_rate_pct": 9.70696,
+            "expectancy_r": 0.076004,
+            "avg_winner_r": 1.358299,
+            "avg_loser_r": -0.061849
+          },
+          "champion": {
+            "net_profit": 8.978375,
+            "profit_factor": 2.530502,
+            "max_drawdown_pct": 6.69822,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 62.047749,
+            "win_rate_pct": 10.021322,
+            "expectancy_r": 0.085016,
+            "avg_winner_r": 1.387564,
+            "avg_loser_r": -0.060055
+          },
+          "exp07a": {
+            "net_profit": 8.48295,
+            "profit_factor": 2.478334,
+            "max_drawdown_pct": 7.024776,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 63.454356,
+            "win_rate_pct": 9.594883,
+            "expectancy_r": 0.082742,
+            "avg_winner_r": 1.426896,
+            "avg_loser_r": -0.059916
+          },
+          "exp07b": {
+            "net_profit": 8.283661,
+            "profit_factor": 2.463965,
+            "max_drawdown_pct": 7.024776,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 63.733587,
+            "win_rate_pct": 9.381663,
+            "expectancy_r": 0.081872,
+            "avg_winner_r": 1.452091,
+            "avg_loser_r": -0.059986
+          },
+          "exp07c": {
+            "net_profit": 8.935778,
+            "profit_factor": 2.52315,
+            "max_drawdown_pct": 6.674608,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 62.207515,
+            "win_rate_pct": 9.808102,
+            "expectancy_r": 0.08483,
+            "avg_winner_r": 1.41647,
+            "avg_loser_r": -0.059982
+          }
+        }
+      }
+    ]
+  },
+  "annual_slices_3y": [
+    {
+      "label": "Year 1",
+      "range": "2023-03-12 ~ 2024-03-12",
+      "variants": {
+        "baseline": {
+          "trades": 126,
+          "wins": 11,
+          "losses": 115,
+          "net_profit": 3.197802,
+          "profit_factor": 2.243014,
+          "max_drawdown_pct": 1.681845,
+          "fee_to_trade_gross_pct": 74.184682,
+          "win_rate_pct": 8.730159,
+          "expectancy_r": 0.070012,
+          "avg_winner_r": 1.433088,
+          "avg_loser_r": -0.060369
+        },
+        "champion": {
+          "trades": 101,
+          "wins": 11,
+          "losses": 90,
+          "net_profit": 4.169554,
+          "profit_factor": 3.113068,
+          "max_drawdown_pct": 1.157067,
+          "fee_to_trade_gross_pct": 52.108477,
+          "win_rate_pct": 10.891089,
+          "expectancy_r": 0.111219,
+          "avg_winner_r": 1.494883,
+          "avg_loser_r": -0.057895
+        },
+        "exp07a": {
+          "trades": 101,
+          "wins": 10,
+          "losses": 91,
+          "net_profit": 4.420302,
+          "profit_factor": 3.226809,
+          "max_drawdown_pct": 1.157026,
+          "fee_to_trade_gross_pct": 49.902886,
+          "win_rate_pct": 9.90099,
+          "expectancy_r": 0.117605,
+          "avg_winner_r": 1.711804,
+          "avg_loser_r": -0.057582
+        },
+        "exp07b": {
+          "trades": 101,
+          "wins": 9,
+          "losses": 92,
+          "net_profit": 4.019337,
+          "profit_factor": 3.003084,
+          "max_drawdown_pct": 1.156655,
+          "fee_to_trade_gross_pct": 53.311855,
+          "win_rate_pct": 8.910891,
+          "expectancy_r": 0.107791,
+          "avg_winner_r": 1.801812,
+          "avg_loser_r": -0.057929
+        },
+        "exp07c": {
+          "trades": 101,
+          "wins": 10,
+          "losses": 91,
+          "net_profit": 4.305898,
+          "profit_factor": 3.170267,
+          "max_drawdown_pct": 1.157026,
+          "fee_to_trade_gross_pct": 50.872488,
+          "win_rate_pct": 9.90099,
+          "expectancy_r": 0.11471,
+          "avg_winner_r": 1.682562,
+          "avg_loser_r": -0.057582
+        }
+      }
+    },
+    {
+      "label": "Year 2",
+      "range": "2024-03-12 ~ 2025-03-12",
+      "variants": {
+        "baseline": {
+          "trades": 248,
+          "wins": 24,
+          "losses": 224,
+          "net_profit": 7.983504,
+          "profit_factor": 2.57316,
+          "max_drawdown_pct": 2.410802,
+          "fee_to_trade_gross_pct": 63.526413,
+          "win_rate_pct": 9.677419,
+          "expectancy_r": 0.081468,
+          "avg_winner_r": 1.367396,
+          "avg_loser_r": -0.05631
+        },
+        "champion": {
+          "trades": 219,
+          "wins": 20,
+          "losses": 199,
+          "net_profit": 7.480298,
+          "profit_factor": 2.638538,
+          "max_drawdown_pct": 2.775137,
+          "fee_to_trade_gross_pct": 61.356409,
+          "win_rate_pct": 9.13242,
+          "expectancy_r": 0.083038,
+          "avg_winner_r": 1.453388,
+          "avg_loser_r": -0.054686
+        },
+        "exp07a": {
+          "trades": 219,
+          "wins": 20,
+          "losses": 199,
+          "net_profit": 7.567874,
+          "profit_factor": 2.64464,
+          "max_drawdown_pct": 2.715045,
+          "fee_to_trade_gross_pct": 61.198724,
+          "win_rate_pct": 9.13242,
+          "expectancy_r": 0.08334,
+          "avg_winner_r": 1.456696,
+          "avg_loser_r": -0.054686
+        },
+        "exp07b": {
+          "trades": 219,
+          "wins": 20,
+          "losses": 199,
+          "net_profit": 7.629946,
+          "profit_factor": 2.690147,
+          "max_drawdown_pct": 2.741136,
+          "fee_to_trade_gross_pct": 60.054398,
+          "win_rate_pct": 9.13242,
+          "expectancy_r": 0.085222,
+          "avg_winner_r": 1.477309,
+          "avg_loser_r": -0.054686
+        },
+        "exp07c": {
+          "trades": 219,
+          "wins": 20,
+          "losses": 199,
+          "net_profit": 7.521241,
+          "profit_factor": 2.640496,
+          "max_drawdown_pct": 2.760136,
+          "fee_to_trade_gross_pct": 61.305721,
+          "win_rate_pct": 9.13242,
+          "expectancy_r": 0.083135,
+          "avg_winner_r": 1.454449,
+          "avg_loser_r": -0.054686
+        }
+      }
+    },
+    {
+      "label": "Year 3",
+      "range": "2025-03-12 ~ 2026-03-11",
+      "variants": {
+        "baseline": {
+          "trades": 172,
+          "wins": 18,
+          "losses": 154,
+          "net_profit": 5.292493,
+          "profit_factor": 2.140021,
+          "max_drawdown_pct": 4.113808,
+          "fee_to_trade_gross_pct": 71.810709,
+          "win_rate_pct": 10.465116,
+          "expectancy_r": 0.072515,
+          "avg_winner_r": 1.300465,
+          "avg_loser_r": -0.071011
+        },
+        "champion": {
+          "trades": 149,
+          "wins": 16,
+          "losses": 133,
+          "net_profit": 4.592964,
+          "profit_factor": 2.127304,
+          "max_drawdown_pct": 3.85854,
+          "fee_to_trade_gross_pct": 71.135676,
+          "win_rate_pct": 10.738255,
+          "expectancy_r": 0.070161,
+          "avg_winner_r": 1.231502,
+          "avg_loser_r": -0.06955
+        },
+        "exp07a": {
+          "trades": 149,
+          "wins": 15,
+          "losses": 134,
+          "net_profit": 3.780231,
+          "profit_factor": 1.926582,
+          "max_drawdown_pct": 5.437884,
+          "fee_to_trade_gross_pct": 80.376024,
+          "win_rate_pct": 10.067114,
+          "expectancy_r": 0.058231,
+          "avg_winner_r": 1.197225,
+          "avg_loser_r": -0.069269
+        },
+        "exp07b": {
+          "trades": 149,
+          "wins": 15,
+          "losses": 134,
+          "net_profit": 3.833689,
+          "profit_factor": 1.945397,
+          "max_drawdown_pct": 5.399051,
+          "fee_to_trade_gross_pct": 79.391494,
+          "win_rate_pct": 10.067114,
+          "expectancy_r": 0.05938,
+          "avg_winner_r": 1.208635,
+          "avg_loser_r": -0.069269
+        },
+        "exp07c": {
+          "trades": 149,
+          "wins": 16,
+          "losses": 133,
+          "net_profit": 4.387493,
+          "profit_factor": 2.076241,
+          "max_drawdown_pct": 3.878764,
+          "fee_to_trade_gross_pct": 73.300063,
+          "win_rate_pct": 10.738255,
+          "expectancy_r": 0.067067,
+          "avg_winner_r": 1.202689,
+          "avg_loser_r": -0.06955
+        }
+      }
+    }
+  ],
+  "long_short": {
+    "1y": [
+      {
+        "label": "LONG",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 75,
+            "wins": 9,
+            "losses": 66,
+            "net_profit": 2.749041,
+            "profit_factor": 2.832966,
+            "max_drawdown_pct": 1.939686,
+            "fee_to_trade_gross_pct": 59.34184,
+            "win_rate_pct": 12.0,
+            "expectancy_r": 0.100129,
+            "avg_winner_r": 1.285234,
+            "avg_loser_r": -0.061477
+          },
+          "champion": {
+            "trades": 61,
+            "wins": 8,
+            "losses": 53,
+            "net_profit": 2.455426,
+            "profit_factor": 3.197982,
+            "max_drawdown_pct": 1.793533,
+            "fee_to_trade_gross_pct": 52.796573,
+            "win_rate_pct": 13.114754,
+            "expectancy_r": 0.110496,
+            "avg_winner_r": 1.22022,
+            "avg_loser_r": -0.05701
+          },
+          "exp07a": {
+            "trades": 61,
+            "wins": 8,
+            "losses": 53,
+            "net_profit": 2.267159,
+            "profit_factor": 3.051989,
+            "max_drawdown_pct": 1.77404,
+            "fee_to_trade_gross_pct": 55.527158,
+            "win_rate_pct": 13.114754,
+            "expectancy_r": 0.102954,
+            "avg_winner_r": 1.162714,
+            "avg_loser_r": -0.05701
+          },
+          "exp07b": {
+            "trades": 61,
+            "wins": 8,
+            "losses": 53,
+            "net_profit": 2.250456,
+            "profit_factor": 3.034068,
+            "max_drawdown_pct": 1.778645,
+            "fee_to_trade_gross_pct": 55.878105,
+            "win_rate_pct": 13.114754,
+            "expectancy_r": 0.102075,
+            "avg_winner_r": 1.156014,
+            "avg_loser_r": -0.05701
+          },
+          "exp07c": {
+            "trades": 61,
+            "wins": 8,
+            "losses": 53,
+            "net_profit": 2.260722,
+            "profit_factor": 3.032757,
+            "max_drawdown_pct": 1.794449,
+            "fee_to_trade_gross_pct": 55.888987,
+            "win_rate_pct": 13.114754,
+            "expectancy_r": 0.102075,
+            "avg_winner_r": 1.156014,
+            "avg_loser_r": -0.05701
+          }
+        }
+      },
+      {
+        "label": "SHORT",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 79,
+            "wins": 9,
+            "losses": 70,
+            "net_profit": 2.552999,
+            "profit_factor": 2.390237,
+            "max_drawdown_pct": 2.418755,
+            "fee_to_trade_gross_pct": 62.680966,
+            "win_rate_pct": 11.392405,
+            "expectancy_r": 0.087003,
+            "avg_winner_r": 1.315695,
+            "avg_loser_r": -0.070972
+          },
+          "champion": {
+            "trades": 72,
+            "wins": 8,
+            "losses": 64,
+            "net_profit": 2.040689,
+            "profit_factor": 2.244227,
+            "max_drawdown_pct": 2.29487,
+            "fee_to_trade_gross_pct": 66.790679,
+            "win_rate_pct": 11.111111,
+            "expectancy_r": 0.076323,
+            "avg_winner_r": 1.242785,
+            "avg_loser_r": -0.069485
+          },
+          "exp07a": {
+            "trades": 72,
+            "wins": 7,
+            "losses": 65,
+            "net_profit": 1.522297,
+            "profit_factor": 1.934863,
+            "max_drawdown_pct": 3.239117,
+            "fee_to_trade_gross_pct": 80.185907,
+            "win_rate_pct": 9.722222,
+            "expectancy_r": 0.058024,
+            "avg_winner_r": 1.236666,
+            "avg_loser_r": -0.068906
+          },
+          "exp07b": {
+            "trades": 72,
+            "wins": 7,
+            "losses": 65,
+            "net_profit": 1.606425,
+            "profit_factor": 1.985064,
+            "max_drawdown_pct": 3.237,
+            "fee_to_trade_gross_pct": 77.592318,
+            "win_rate_pct": 9.722222,
+            "expectancy_r": 0.061146,
+            "avg_winner_r": 1.268774,
+            "avg_loser_r": -0.068906
+          },
+          "exp07c": {
+            "trades": 72,
+            "wins": 8,
+            "losses": 64,
+            "net_profit": 2.04724,
+            "profit_factor": 2.254391,
+            "max_drawdown_pct": 2.281254,
+            "fee_to_trade_gross_pct": 66.420241,
+            "win_rate_pct": 11.111111,
+            "expectancy_r": 0.077054,
+            "avg_winner_r": 1.249363,
+            "avg_loser_r": -0.069485
+          }
+        }
+      }
+    ],
+    "3y": [
+      {
+        "label": "LONG",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 300,
+            "wins": 33,
+            "losses": 267,
+            "net_profit": 11.571335,
+            "profit_factor": 2.703867,
+            "max_drawdown_pct": 2.446854,
+            "fee_to_trade_gross_pct": 58.688532,
+            "win_rate_pct": 11.0,
+            "expectancy_r": 0.099037,
+            "avg_winner_r": 1.411636,
+            "avg_loser_r": -0.063194
+          },
+          "champion": {
+            "trades": 257,
+            "wins": 31,
+            "losses": 226,
+            "net_profit": 12.231438,
+            "profit_factor": 3.112808,
+            "max_drawdown_pct": 2.532528,
+            "fee_to_trade_gross_pct": 49.918806,
+            "win_rate_pct": 12.062257,
+            "expectancy_r": 0.119884,
+            "avg_winner_r": 1.440668,
+            "avg_loser_r": -0.061286
+          },
+          "exp07a": {
+            "trades": 257,
+            "wins": 31,
+            "losses": 226,
+            "net_profit": 12.39941,
+            "profit_factor": 3.132717,
+            "max_drawdown_pct": 2.530152,
+            "fee_to_trade_gross_pct": 49.551758,
+            "win_rate_pct": 12.062257,
+            "expectancy_r": 0.121454,
+            "avg_winner_r": 1.453683,
+            "avg_loser_r": -0.061286
+          },
+          "exp07b": {
+            "trades": 257,
+            "wins": 30,
+            "losses": 227,
+            "net_profit": 12.02081,
+            "profit_factor": 3.081205,
+            "max_drawdown_pct": 2.529971,
+            "fee_to_trade_gross_pct": 50.247763,
+            "win_rate_pct": 11.673152,
+            "expectancy_r": 0.118824,
+            "avg_winner_r": 1.482593,
+            "avg_loser_r": -0.06141
+          },
+          "exp07c": {
+            "trades": 257,
+            "wins": 31,
+            "losses": 226,
+            "net_profit": 12.231582,
+            "profit_factor": 3.107494,
+            "max_drawdown_pct": 2.529599,
+            "fee_to_trade_gross_pct": 50.00409,
+            "win_rate_pct": 12.062257,
+            "expectancy_r": 0.119932,
+            "avg_winner_r": 1.441072,
+            "avg_loser_r": -0.061286
+          }
+        }
+      },
+      {
+        "label": "SHORT",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 246,
+            "wins": 20,
+            "losses": 226,
+            "net_profit": 4.902464,
+            "profit_factor": 1.891573,
+            "max_drawdown_pct": 3.647678,
+            "fee_to_trade_gross_pct": 86.9594,
+            "win_rate_pct": 8.130081,
+            "expectancy_r": 0.047915,
+            "avg_winner_r": 1.270293,
+            "avg_loser_r": -0.060261
+          },
+          "champion": {
+            "trades": 212,
+            "wins": 16,
+            "losses": 196,
+            "net_profit": 4.011378,
+            "profit_factor": 1.831623,
+            "max_drawdown_pct": 3.988377,
+            "fee_to_trade_gross_pct": 89.653947,
+            "win_rate_pct": 7.54717,
+            "expectancy_r": 0.042746,
+            "avg_winner_r": 1.284675,
+            "avg_loser_r": -0.058635
+          },
+          "exp07a": {
+            "trades": 212,
+            "wins": 14,
+            "losses": 198,
+            "net_profit": 3.368997,
+            "profit_factor": 1.694291,
+            "max_drawdown_pct": 4.02521,
+            "fee_to_trade_gross_pct": 98.577741,
+            "win_rate_pct": 6.603774,
+            "expectancy_r": 0.035813,
+            "avg_winner_r": 1.367582,
+            "avg_loser_r": -0.058352
+          },
+          "exp07b": {
+            "trades": 212,
+            "wins": 14,
+            "losses": 198,
+            "net_profit": 3.462163,
+            "profit_factor": 1.721259,
+            "max_drawdown_pct": 3.989509,
+            "fee_to_trade_gross_pct": 96.624004,
+            "win_rate_pct": 6.603774,
+            "expectancy_r": 0.037078,
+            "avg_winner_r": 1.38673,
+            "avg_loser_r": -0.058352
+          },
+          "exp07c": {
+            "trades": 212,
+            "wins": 15,
+            "losses": 197,
+            "net_profit": 3.98305,
+            "profit_factor": 1.822671,
+            "max_drawdown_pct": 4.011488,
+            "fee_to_trade_gross_pct": 90.089193,
+            "win_rate_pct": 7.075472,
+            "expectancy_r": 0.042276,
+            "avg_winner_r": 1.365626,
+            "avg_loser_r": -0.058487
+          }
+        }
+      }
+    ]
+  },
+  "trend_vs_chop": {
+    "1y": [
+      {
+        "label": "trend",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 34,
+            "wins": 5,
+            "losses": 29,
+            "net_profit": 1.683727,
+            "profit_factor": 3.824171,
+            "max_drawdown_pct": 0.46826,
+            "fee_to_trade_gross_pct": 43.493332,
+            "win_rate_pct": 14.705882,
+            "expectancy_r": 0.137014,
+            "avg_winner_r": 1.253041,
+            "avg_loser_r": -0.055404
+          },
+          "champion": {
+            "trades": 29,
+            "wins": 3,
+            "losses": 26,
+            "net_profit": 0.440633,
+            "profit_factor": 1.879065,
+            "max_drawdown_pct": 0.693965,
+            "fee_to_trade_gross_pct": 91.164482,
+            "win_rate_pct": 10.344828,
+            "expectancy_r": 0.041592,
+            "avg_winner_r": 0.853627,
+            "avg_loser_r": -0.052104
+          },
+          "exp07a": {
+            "trades": 29,
+            "wins": 2,
+            "losses": 27,
+            "net_profit": -0.210076,
+            "profit_factor": 0.586079,
+            "max_drawdown_pct": 0.907586,
+            "fee_to_trade_gross_pct": 470.817129,
+            "win_rate_pct": 6.896552,
+            "expectancy_r": -0.019703,
+            "avg_winner_r": 0.407608,
+            "avg_loser_r": -0.051355
+          },
+          "exp07b": {
+            "trades": 29,
+            "wins": 2,
+            "losses": 27,
+            "net_profit": -0.147709,
+            "profit_factor": 0.709238,
+            "max_drawdown_pct": 0.907531,
+            "fee_to_trade_gross_pct": 335.684695,
+            "win_rate_pct": 6.896552,
+            "expectancy_r": -0.013801,
+            "avg_winner_r": 0.493185,
+            "avg_loser_r": -0.051355
+          },
+          "exp07c": {
+            "trades": 29,
+            "wins": 3,
+            "losses": 26,
+            "net_profit": 0.273389,
+            "profit_factor": 1.54779,
+            "max_drawdown_pct": 0.69396,
+            "fee_to_trade_gross_pct": 114.697938,
+            "win_rate_pct": 10.344828,
+            "expectancy_r": 0.025695,
+            "avg_winner_r": 0.699953,
+            "avg_loser_r": -0.052104
+          }
+        }
+      },
+      {
+        "label": "chop",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 120,
+            "wins": 13,
+            "losses": 107,
+            "net_profit": 3.618313,
+            "profit_factor": 2.320567,
+            "max_drawdown_pct": 4.314598,
+            "fee_to_trade_gross_pct": 67.911516,
+            "win_rate_pct": 10.833333,
+            "expectancy_r": 0.081037,
+            "avg_winner_r": 1.318705,
+            "avg_loser_r": -0.069334
+          },
+          "champion": {
+            "trades": 104,
+            "wins": 13,
+            "losses": 91,
+            "net_profit": 4.055482,
+            "profit_factor": 2.797641,
+            "max_drawdown_pct": 3.997148,
+            "fee_to_trade_gross_pct": 54.730538,
+            "win_rate_pct": 12.5,
+            "expectancy_r": 0.106051,
+            "avg_winner_r": 1.318705,
+            "avg_loser_r": -0.067185
+          },
+          "exp07a": {
+            "trades": 104,
+            "wins": 13,
+            "losses": 91,
+            "net_profit": 3.999533,
+            "profit_factor": 2.796981,
+            "max_drawdown_pct": 3.929839,
+            "fee_to_trade_gross_pct": 54.78961,
+            "win_rate_pct": 12.5,
+            "expectancy_r": 0.106051,
+            "avg_winner_r": 1.318705,
+            "avg_loser_r": -0.067185
+          },
+          "exp07b": {
+            "trades": 104,
+            "wins": 13,
+            "losses": 91,
+            "net_profit": 4.00459,
+            "profit_factor": 2.79646,
+            "max_drawdown_pct": 3.93766,
+            "fee_to_trade_gross_pct": 54.798339,
+            "win_rate_pct": 12.5,
+            "expectancy_r": 0.106051,
+            "avg_winner_r": 1.318705,
+            "avg_loser_r": -0.067185
+          },
+          "exp07c": {
+            "trades": 104,
+            "wins": 13,
+            "losses": 91,
+            "net_profit": 4.034573,
+            "profit_factor": 2.797035,
+            "max_drawdown_pct": 3.976481,
+            "fee_to_trade_gross_pct": 54.745952,
+            "win_rate_pct": 12.5,
+            "expectancy_r": 0.106051,
+            "avg_winner_r": 1.318705,
+            "avg_loser_r": -0.067185
+          }
+        }
+      }
+    ],
+    "3y": [
+      {
+        "label": "trend",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 143,
+            "wins": 14,
+            "losses": 129,
+            "net_profit": 4.744606,
+            "profit_factor": 2.690125,
+            "max_drawdown_pct": 2.251572,
+            "fee_to_trade_gross_pct": 61.278384,
+            "win_rate_pct": 9.79021,
+            "expectancy_r": 0.082045,
+            "avg_winner_r": 1.340891,
+            "avg_loser_r": -0.054574
+          },
+          "champion": {
+            "trades": 123,
+            "wins": 14,
+            "losses": 109,
+            "net_profit": 5.303722,
+            "profit_factor": 3.296556,
+            "max_drawdown_pct": 1.577352,
+            "fee_to_trade_gross_pct": 49.831457,
+            "win_rate_pct": 11.382114,
+            "expectancy_r": 0.107813,
+            "avg_winner_r": 1.344466,
+            "avg_loser_r": -0.051023
+          },
+          "exp07a": {
+            "trades": 123,
+            "wins": 12,
+            "losses": 111,
+            "net_profit": 4.822944,
+            "profit_factor": 3.05847,
+            "max_drawdown_pct": 1.577159,
+            "fee_to_trade_gross_pct": 53.617562,
+            "win_rate_pct": 9.756098,
+            "expectancy_r": 0.099143,
+            "avg_winner_r": 1.484779,
+            "avg_loser_r": -0.050655
+          },
+          "exp07b": {
+            "trades": 123,
+            "wins": 11,
+            "losses": 112,
+            "net_profit": 4.644915,
+            "profit_factor": 2.976571,
+            "max_drawdown_pct": 1.57865,
+            "fee_to_trade_gross_pct": 54.652001,
+            "win_rate_pct": 8.943089,
+            "expectancy_r": 0.095828,
+            "avg_winner_r": 1.590821,
+            "avg_loser_r": -0.051002
+          },
+          "exp07c": {
+            "trades": 123,
+            "wins": 13,
+            "losses": 110,
+            "net_profit": 5.262021,
+            "profit_factor": 3.262558,
+            "max_drawdown_pct": 1.577245,
+            "fee_to_trade_gross_pct": 50.210295,
+            "win_rate_pct": 10.569106,
+            "expectancy_r": 0.107104,
+            "avg_winner_r": 1.443434,
+            "avg_loser_r": -0.050826
+          }
+        }
+      },
+      {
+        "label": "chop",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 403,
+            "wins": 39,
+            "losses": 364,
+            "net_profit": 11.729193,
+            "profit_factor": 2.236913,
+            "max_drawdown_pct": 3.981872,
+            "fee_to_trade_gross_pct": 71.101289,
+            "win_rate_pct": 9.677419,
+            "expectancy_r": 0.07386,
+            "avg_winner_r": 1.364548,
+            "avg_loser_r": -0.064428
+          },
+          "champion": {
+            "trades": 346,
+            "wins": 33,
+            "losses": 313,
+            "net_profit": 10.939094,
+            "profit_factor": 2.317437,
+            "max_drawdown_pct": 3.971828,
+            "fee_to_trade_gross_pct": 67.323292,
+            "win_rate_pct": 9.537572,
+            "expectancy_r": 0.076911,
+            "avg_winner_r": 1.405848,
+            "avg_loser_r": -0.0632
+          },
+          "exp07a": {
+            "trades": 346,
+            "wins": 33,
+            "losses": 313,
+            "net_profit": 10.945464,
+            "profit_factor": 2.315029,
+            "max_drawdown_pct": 3.932354,
+            "fee_to_trade_gross_pct": 67.412095,
+            "win_rate_pct": 9.537572,
+            "expectancy_r": 0.076911,
+            "avg_winner_r": 1.405848,
+            "avg_loser_r": -0.0632
+          },
+          "exp07b": {
+            "trades": 346,
+            "wins": 33,
+            "losses": 313,
+            "net_profit": 10.838057,
+            "profit_factor": 2.317526,
+            "max_drawdown_pct": 3.921711,
+            "fee_to_trade_gross_pct": 67.315445,
+            "win_rate_pct": 9.537572,
+            "expectancy_r": 0.076911,
+            "avg_winner_r": 1.405848,
+            "avg_loser_r": -0.0632
+          },
+          "exp07c": {
+            "trades": 346,
+            "wins": 33,
+            "losses": 313,
+            "net_profit": 10.952611,
+            "profit_factor": 2.316457,
+            "max_drawdown_pct": 3.965854,
+            "fee_to_trade_gross_pct": 67.353164,
+            "win_rate_pct": 9.537572,
+            "expectancy_r": 0.076911,
+            "avg_winner_r": 1.405848,
+            "avg_loser_r": -0.0632
+          }
+        }
+      }
+    ]
+  },
+  "volatility": {
+    "1y": [
+      {
+        "label": "low_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 67,
+            "wins": 9,
+            "losses": 58,
+            "net_profit": 2.833819,
+            "profit_factor": 2.384456,
+            "max_drawdown_pct": 3.047913,
+            "fee_to_trade_gross_pct": 64.858319,
+            "win_rate_pct": 13.432836,
+            "expectancy_r": 0.116048,
+            "avg_winner_r": 1.48063,
+            "avg_loser_r": -0.095697
+          },
+          "champion": {
+            "trades": 51,
+            "wins": 8,
+            "losses": 43,
+            "net_profit": 2.652891,
+            "profit_factor": 2.707527,
+            "max_drawdown_pct": 2.756263,
+            "fee_to_trade_gross_pct": 54.773242,
+            "win_rate_pct": 15.686275,
+            "expectancy_r": 0.14329,
+            "avg_winner_r": 1.440041,
+            "avg_loser_r": -0.097966
+          },
+          "exp07a": {
+            "trades": 51,
+            "wins": 8,
+            "losses": 43,
+            "net_profit": 2.455949,
+            "profit_factor": 2.601064,
+            "max_drawdown_pct": 2.72523,
+            "fee_to_trade_gross_pct": 57.504697,
+            "win_rate_pct": 15.686275,
+            "expectancy_r": 0.13427,
+            "avg_winner_r": 1.382535,
+            "avg_loser_r": -0.097966
+          },
+          "exp07b": {
+            "trades": 51,
+            "wins": 8,
+            "losses": 43,
+            "net_profit": 2.439854,
+            "profit_factor": 2.588325,
+            "max_drawdown_pct": 2.732343,
+            "fee_to_trade_gross_pct": 57.833934,
+            "win_rate_pct": 15.686275,
+            "expectancy_r": 0.133219,
+            "avg_winner_r": 1.375834,
+            "avg_loser_r": -0.097966
+          },
+          "exp07c": {
+            "trades": 51,
+            "wins": 8,
+            "losses": 43,
+            "net_profit": 2.457419,
+            "profit_factor": 2.589592,
+            "max_drawdown_pct": 2.757655,
+            "fee_to_trade_gross_pct": 57.736888,
+            "win_rate_pct": 15.686275,
+            "expectancy_r": 0.133219,
+            "avg_winner_r": 1.375834,
+            "avg_loser_r": -0.097966
+          }
+        }
+      },
+      {
+        "label": "mid_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 47,
+            "wins": 5,
+            "losses": 42,
+            "net_profit": 1.547806,
+            "profit_factor": 2.850036,
+            "max_drawdown_pct": 1.62379,
+            "fee_to_trade_gross_pct": 57.698523,
+            "win_rate_pct": 10.638298,
+            "expectancy_r": 0.087921,
+            "avg_winner_r": 1.279319,
+            "avg_loser_r": -0.053912
+          },
+          "champion": {
+            "trades": 42,
+            "wins": 4,
+            "losses": 38,
+            "net_profit": 0.925759,
+            "profit_factor": 2.224383,
+            "max_drawdown_pct": 1.702241,
+            "fee_to_trade_gross_pct": 75.501039,
+            "win_rate_pct": 9.52381,
+            "expectancy_r": 0.058314,
+            "avg_winner_r": 1.124404,
+            "avg_loser_r": -0.053906
+          },
+          "exp07a": {
+            "trades": 42,
+            "wins": 4,
+            "losses": 38,
+            "net_profit": 0.915025,
+            "profit_factor": 2.227427,
+            "max_drawdown_pct": 1.671374,
+            "fee_to_trade_gross_pct": 75.404392,
+            "win_rate_pct": 9.52381,
+            "expectancy_r": 0.058314,
+            "avg_winner_r": 1.124404,
+            "avg_loser_r": -0.053906
+          },
+          "exp07b": {
+            "trades": 42,
+            "wins": 4,
+            "losses": 38,
+            "net_profit": 0.915782,
+            "profit_factor": 2.22656,
+            "max_drawdown_pct": 1.674748,
+            "fee_to_trade_gross_pct": 75.43664,
+            "win_rate_pct": 9.52381,
+            "expectancy_r": 0.058314,
+            "avg_winner_r": 1.124404,
+            "avg_loser_r": -0.053906
+          },
+          "exp07c": {
+            "trades": 42,
+            "wins": 4,
+            "losses": 38,
+            "net_profit": 0.919469,
+            "profit_factor": 2.221404,
+            "max_drawdown_pct": 1.693174,
+            "fee_to_trade_gross_pct": 75.609369,
+            "win_rate_pct": 9.52381,
+            "expectancy_r": 0.058314,
+            "avg_winner_r": 1.124404,
+            "avg_loser_r": -0.053906
+          }
+        }
+      },
+      {
+        "label": "high_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 40,
+            "wins": 4,
+            "losses": 36,
+            "net_profit": 0.920415,
+            "profit_factor": 3.033456,
+            "max_drawdown_pct": 0.427723,
+            "fee_to_trade_gross_pct": 53.803085,
+            "win_rate_pct": 10.0,
+            "expectancy_r": 0.061884,
+            "avg_winner_r": 0.921524,
+            "avg_loser_r": -0.033631
+          },
+          "champion": {
+            "trades": 40,
+            "wins": 4,
+            "losses": 36,
+            "net_profit": 0.917465,
+            "profit_factor": 3.050172,
+            "max_drawdown_pct": 0.447552,
+            "fee_to_trade_gross_pct": 53.501334,
+            "win_rate_pct": 10.0,
+            "expectancy_r": 0.061962,
+            "avg_winner_r": 0.921524,
+            "avg_loser_r": -0.033545
+          },
+          "exp07a": {
+            "trades": 40,
+            "wins": 3,
+            "losses": 37,
+            "net_profit": 0.418483,
+            "profit_factor": 1.922188,
+            "max_drawdown_pct": 0.833272,
+            "fee_to_trade_gross_pct": 88.319098,
+            "win_rate_pct": 7.5,
+            "expectancy_r": 0.029025,
+            "avg_winner_r": 0.800159,
+            "avg_loser_r": -0.0335
+          },
+          "exp07b": {
+            "trades": 40,
+            "wins": 3,
+            "losses": 37,
+            "net_profit": 0.501245,
+            "profit_factor": 2.103043,
+            "max_drawdown_pct": 0.832694,
+            "fee_to_trade_gross_pct": 79.60009,
+            "win_rate_pct": 7.5,
+            "expectancy_r": 0.034644,
+            "avg_winner_r": 0.875079,
+            "avg_loser_r": -0.0335
+          },
+          "exp07c": {
+            "trades": 40,
+            "wins": 4,
+            "losses": 36,
+            "net_profit": 0.931073,
+            "profit_factor": 3.090126,
+            "max_drawdown_pct": 0.444857,
+            "fee_to_trade_gross_pct": 52.743304,
+            "win_rate_pct": 10.0,
+            "expectancy_r": 0.063278,
+            "avg_winner_r": 0.934682,
+            "avg_loser_r": -0.033545
+          }
+        }
+      }
+    ],
+    "3y": [
+      {
+        "label": "low_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 200,
+            "wins": 20,
+            "losses": 180,
+            "net_profit": 5.720051,
+            "profit_factor": 1.916552,
+            "max_drawdown_pct": 3.369188,
+            "fee_to_trade_gross_pct": 87.10696,
+            "win_rate_pct": 10.0,
+            "expectancy_r": 0.071618,
+            "avg_winner_r": 1.490994,
+            "avg_loser_r": -0.086091
+          },
+          "champion": {
+            "trades": 152,
+            "wins": 13,
+            "losses": 139,
+            "net_profit": 3.756899,
+            "profit_factor": 1.758036,
+            "max_drawdown_pct": 5.255111,
+            "fee_to_trade_gross_pct": 95.183248,
+            "win_rate_pct": 8.552632,
+            "expectancy_r": 0.058034,
+            "avg_winner_r": 1.589212,
+            "avg_loser_r": -0.08517
+          },
+          "exp07a": {
+            "trades": 152,
+            "wins": 13,
+            "losses": 139,
+            "net_profit": 3.546907,
+            "profit_factor": 1.71441,
+            "max_drawdown_pct": 5.295585,
+            "fee_to_trade_gross_pct": 98.230435,
+            "win_rate_pct": 8.552632,
+            "expectancy_r": 0.055007,
+            "avg_winner_r": 1.553824,
+            "avg_loser_r": -0.08517
+          },
+          "exp07b": {
+            "trades": 152,
+            "wins": 12,
+            "losses": 140,
+            "net_profit": 2.651255,
+            "profit_factor": 1.53636,
+            "max_drawdown_pct": 5.370162,
+            "fee_to_trade_gross_pct": 112.458935,
+            "win_rate_pct": 7.894737,
+            "expectancy_r": 0.039658,
+            "avg_winner_r": 1.496354,
+            "avg_loser_r": -0.085201
+          },
+          "exp07c": {
+            "trades": 152,
+            "wins": 13,
+            "losses": 139,
+            "net_profit": 3.536446,
+            "profit_factor": 1.712461,
+            "max_drawdown_pct": 5.276866,
+            "fee_to_trade_gross_pct": 98.340834,
+            "win_rate_pct": 8.552632,
+            "expectancy_r": 0.054654,
+            "avg_winner_r": 1.5497,
+            "avg_loser_r": -0.08517
+          }
+        }
+      },
+      {
+        "label": "mid_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 176,
+            "wins": 16,
+            "losses": 160,
+            "net_profit": 5.691573,
+            "profit_factor": 2.62296,
+            "max_drawdown_pct": 2.013289,
+            "fee_to_trade_gross_pct": 62.282671,
+            "win_rate_pct": 9.090909,
+            "expectancy_r": 0.080511,
+            "avg_winner_r": 1.430903,
+            "avg_loser_r": -0.054528
+          },
+          "champion": {
+            "trades": 158,
+            "wins": 18,
+            "losses": 140,
+            "net_profit": 7.299609,
+            "profit_factor": 3.30116,
+            "max_drawdown_pct": 1.693347,
+            "fee_to_trade_gross_pct": 49.288118,
+            "win_rate_pct": 11.392405,
+            "expectancy_r": 0.115588,
+            "avg_winner_r": 1.436965,
+            "avg_loser_r": -0.054303
+          },
+          "exp07a": {
+            "trades": 158,
+            "wins": 18,
+            "losses": 140,
+            "net_profit": 7.656223,
+            "profit_factor": 3.407066,
+            "max_drawdown_pct": 1.653398,
+            "fee_to_trade_gross_pct": 47.638569,
+            "win_rate_pct": 11.392405,
+            "expectancy_r": 0.121054,
+            "avg_winner_r": 1.484939,
+            "avg_loser_r": -0.054303
+          },
+          "exp07b": {
+            "trades": 158,
+            "wins": 18,
+            "losses": 140,
+            "net_profit": 8.093646,
+            "profit_factor": 3.577838,
+            "max_drawdown_pct": 1.625805,
+            "fee_to_trade_gross_pct": 45.204806,
+            "win_rate_pct": 11.392405,
+            "expectancy_r": 0.129319,
+            "avg_winner_r": 1.557489,
+            "avg_loser_r": -0.054303
+          },
+          "exp07c": {
+            "trades": 158,
+            "wins": 18,
+            "losses": 140,
+            "net_profit": 7.513302,
+            "profit_factor": 3.363159,
+            "max_drawdown_pct": 1.674885,
+            "fee_to_trade_gross_pct": 48.304506,
+            "win_rate_pct": 11.392405,
+            "expectancy_r": 0.118919,
+            "avg_winner_r": 1.466197,
+            "avg_loser_r": -0.054303
+          }
+        }
+      },
+      {
+        "label": "high_vol",
+        "range": null,
+        "variants": {
+          "baseline": {
+            "trades": 170,
+            "wins": 17,
+            "losses": 153,
+            "net_profit": 5.062175,
+            "profit_factor": 2.9913,
+            "max_drawdown_pct": 2.468786,
+            "fee_to_trade_gross_pct": 47.722236,
+            "win_rate_pct": 10.0,
+            "expectancy_r": 0.076498,
+            "avg_winner_r": 1.133855,
+            "avg_loser_r": -0.040986
+          },
+          "champion": {
+            "trades": 159,
+            "wins": 16,
+            "losses": 143,
+            "net_profit": 5.186308,
+            "profit_factor": 3.087466,
+            "max_drawdown_pct": 2.614524,
+            "fee_to_trade_gross_pct": 45.630563,
+            "win_rate_pct": 10.062893,
+            "expectancy_r": 0.080429,
+            "avg_winner_r": 1.168149,
+            "avg_loser_r": -0.041274
+          },
+          "exp07a": {
+            "trades": 159,
+            "wins": 14,
+            "losses": 145,
+            "net_profit": 4.565277,
+            "profit_factor": 2.811044,
+            "max_drawdown_pct": 2.672754,
+            "fee_to_trade_gross_pct": 50.437792,
+            "win_rate_pct": 8.805031,
+            "expectancy_r": 0.071185,
+            "avg_winner_r": 1.234409,
+            "avg_loser_r": -0.041127
+          },
+          "exp07b": {
+            "trades": 159,
+            "wins": 14,
+            "losses": 145,
+            "net_profit": 4.738071,
+            "profit_factor": 2.900321,
+            "max_drawdown_pct": 2.609457,
+            "fee_to_trade_gross_pct": 48.602221,
+            "win_rate_pct": 8.805031,
+            "expectancy_r": 0.075079,
+            "avg_winner_r": 1.278641,
+            "avg_loser_r": -0.041127
+          },
+          "exp07c": {
+            "trades": 159,
+            "wins": 15,
+            "losses": 144,
+            "net_profit": 5.164884,
+            "profit_factor": 3.063965,
+            "max_drawdown_pct": 2.628043,
+            "fee_to_trade_gross_pct": 45.861044,
+            "win_rate_pct": 9.433962,
+            "expectancy_r": 0.079802,
+            "avg_winner_r": 1.241332,
+            "avg_loser_r": -0.041191
+          }
+        }
+      }
+    ]
+  },
+  "stress_test": {
+    "1y": [
+      {
+        "label": "overall",
+        "variants": {
+          "baseline": {
+            "net_profit": 1.139188,
+            "profit_factor": 1.938127,
+            "max_drawdown_pct": 8.120813,
+            "trades": 154,
+            "fee_to_trade_gross_pct": 83.741686,
+            "win_rate_pct": 11.688312,
+            "expectancy_r": 0.071415,
+            "avg_winner_r": 1.254652,
+            "avg_loser_r": -0.08519
+          },
+          "champion": {
+            "net_profit": 1.101715,
+            "profit_factor": 1.97986,
+            "max_drawdown_pct": 7.384569,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 81.42387,
+            "win_rate_pct": 12.030075,
+            "expectancy_r": 0.07111,
+            "avg_winner_r": 1.187314,
+            "avg_loser_r": -0.081534
+          },
+          "exp07a": {
+            "net_profit": 0.455343,
+            "profit_factor": 1.790524,
+            "max_drawdown_pct": 8.629248,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 92.009131,
+            "win_rate_pct": 11.278195,
+            "expectancy_r": 0.057878,
+            "avg_winner_r": 1.151966,
+            "avg_loser_r": -0.081201
+          },
+          "exp07b": {
+            "net_profit": 0.516973,
+            "profit_factor": 1.808342,
+            "max_drawdown_pct": 8.629248,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 90.87253,
+            "win_rate_pct": 11.278195,
+            "expectancy_r": 0.059159,
+            "avg_winner_r": 1.163322,
+            "avg_loser_r": -0.081201
+          },
+          "exp07c": {
+            "net_profit": 0.932684,
+            "profit_factor": 1.931978,
+            "max_drawdown_pct": 7.384569,
+            "trades": 133,
+            "fee_to_trade_gross_pct": 83.905844,
+            "win_rate_pct": 12.030075,
+            "expectancy_r": 0.067687,
+            "avg_winner_r": 1.158862,
+            "avg_loser_r": -0.081534
+          }
+        }
+      }
+    ],
+    "3y": [
+      {
+        "label": "overall",
+        "variants": {
+          "baseline": {
+            "net_profit": -0.163116,
+            "profit_factor": 1.647139,
+            "max_drawdown_pct": 14.810859,
+            "trades": 546,
+            "fee_to_trade_gross_pct": 101.369827,
+            "win_rate_pct": 9.340659,
+            "expectancy_r": 0.048336,
+            "avg_winner_r": 1.297923,
+            "avg_loser_r": -0.080409
+          },
+          "champion": {
+            "net_profit": 1.282129,
+            "profit_factor": 1.755509,
+            "max_drawdown_pct": 13.014806,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 93.074121,
+            "win_rate_pct": 9.381663,
+            "expectancy_r": 0.054598,
+            "avg_winner_r": 1.334154,
+            "avg_loser_r": -0.077873
+          },
+          "exp07a": {
+            "net_profit": 0.890436,
+            "profit_factor": 1.721657,
+            "max_drawdown_pct": 14.755913,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 95.259464,
+            "win_rate_pct": 8.955224,
+            "expectancy_r": 0.052359,
+            "avg_winner_r": 1.374614,
+            "avg_loser_r": -0.077699
+          },
+          "exp07b": {
+            "net_profit": 0.642348,
+            "profit_factor": 1.699692,
+            "max_drawdown_pct": 14.545436,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 96.642965,
+            "win_rate_pct": 8.742004,
+            "expectancy_r": 0.050968,
+            "avg_winner_r": 1.3951,
+            "avg_loser_r": -0.077792
+          },
+          "exp07c": {
+            "net_profit": 1.250565,
+            "profit_factor": 1.751798,
+            "max_drawdown_pct": 13.465829,
+            "trades": 469,
+            "fee_to_trade_gross_pct": 93.258808,
+            "win_rate_pct": 9.168443,
+            "expectancy_r": 0.054427,
+            "avg_winner_r": 1.364221,
+            "avg_loser_r": -0.077782
+          }
+        }
+      }
+    ],
+    "execution_model": {
+      "fee_bps": 5.0,
+      "slippage_bps": 3.0,
+      "funding_bps_per_8h": 0.5
+    }
+  },
+  "diagnostics": [
+    {
+      "label": "1Y",
+      "variants": {
+        "baseline": {
+          "trades": 154,
+          "selective_extension_activated_pct": 0.0,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 5.194805
+        },
+        "champion": {
+          "trades": 133,
+          "selective_extension_activated_pct": 0.0,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 4.511278
+        },
+        "exp07a": {
+          "trades": 133,
+          "selective_extension_activated_pct": 2.255639,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 4.511278
+        },
+        "exp07b": {
+          "trades": 133,
+          "selective_extension_activated_pct": 2.255639,
+          "selective_extension_tp_pct": 2.255639,
+          "selective_extension_protection_pct": 2.255639,
+          "take_profit_pct": 4.511278
+        },
+        "exp07c": {
+          "trades": 133,
+          "selective_extension_activated_pct": 1.503759,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 4.511278
+        }
+      }
+    },
+    {
+      "label": "3Y",
+      "variants": {
+        "baseline": {
+          "trades": 546,
+          "selective_extension_activated_pct": 0.0,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 5.128205
+        },
+        "champion": {
+          "trades": 469,
+          "selective_extension_activated_pct": 0.0,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 5.33049
+        },
+        "exp07a": {
+          "trades": 469,
+          "selective_extension_activated_pct": 4.051173,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 5.33049
+        },
+        "exp07b": {
+          "trades": 469,
+          "selective_extension_activated_pct": 4.051173,
+          "selective_extension_tp_pct": 4.051173,
+          "selective_extension_protection_pct": 4.051173,
+          "take_profit_pct": 4.904051
+        },
+        "exp07c": {
+          "trades": 469,
+          "selective_extension_activated_pct": 2.771855,
+          "selective_extension_tp_pct": 0.0,
+          "selective_extension_protection_pct": 0.0,
+          "take_profit_pct": 5.33049
+        }
+      }
+    }
+  ]
+}

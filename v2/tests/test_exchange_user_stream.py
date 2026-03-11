@@ -111,6 +111,8 @@ async def test_user_stream_reorders_events_and_reconnects_with_resync() -> None:
 
     seen: list[int] = []
     resync_count = 0
+    disconnect_reasons: list[str] = []
+    private_ok_sources: list[str] = []
 
     async def _on_event(event: dict[str, Any]) -> None:
         seen.append(int(event.get("E") or 0))
@@ -119,6 +121,12 @@ async def test_user_stream_reorders_events_and_reconnects_with_resync() -> None:
         nonlocal resync_count
         _ = snapshot
         resync_count += 1
+
+    async def _on_disconnect(reason: str) -> None:
+        disconnect_reasons.append(reason)
+
+    async def _on_private_ok(source: str) -> None:
+        private_ok_sources.append(source)
 
     svc = UserStreamManager(
         env="testnet",
@@ -130,7 +138,12 @@ async def test_user_stream_reorders_events_and_reconnects_with_resync() -> None:
         connection_ttl_sec=60,
         reorder_window_ms=250,
     )
-    svc.start(on_event=_on_event, on_resync=_on_resync)
+    svc.start(
+        on_event=_on_event,
+        on_resync=_on_resync,
+        on_disconnect=_on_disconnect,
+        on_private_ok=_on_private_ok,
+    )
 
     await _wait_until(lambda: resync_count >= 2)
     await _wait_until(lambda: len(seen) >= 3)
@@ -141,3 +154,6 @@ async def test_user_stream_reorders_events_and_reconnects_with_resync() -> None:
     assert 400 in seen
     assert rest.listen_idx >= 2
     assert rest.resync_calls >= 2
+    assert disconnect_reasons
+    assert "resync" in private_ok_sources
+    assert "keepalive" in private_ok_sources

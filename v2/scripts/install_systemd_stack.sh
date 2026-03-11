@@ -8,6 +8,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_NAME="v2-stack"
 RUN_USER="$(id -un)"
 WORKDIR="$PROJECT_ROOT"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="live"
 ENVIRONMENT="prod"
 ENV_FILE=".env"
@@ -24,6 +25,7 @@ Options:
   --service-name <name>         (default: v2-stack)
   --user <linux-user>           (default: current user)
   --workdir <absolute-path>     (default: current repo root)
+  --profile <profile-name>      (default: ra_2026_alpha_v2_expansion_live_candidate)
   --mode <shadow|live>          (default: live)
   --env <testnet|prod>          (default: prod)
   --env-file <path>             (default: .env)
@@ -33,8 +35,8 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2
-  bash v2/scripts/install_systemd_stack.sh --mode shadow --env testnet --port 8101
+  bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate
+  bash v2/scripts/install_systemd_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --port 8101
 EOF
 }
 
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --workdir)
             WORKDIR="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
             shift 2
             ;;
         --mode)
@@ -135,7 +141,7 @@ User=$RUN_USER
 WorkingDirectory=$WORKDIR
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=$ENV_FILE_ABS
-ExecStart=/usr/bin/env bash $WORKDIR/v2/scripts/run_stack.sh --mode $MODE --env $ENVIRONMENT --env-file $ENV_FILE --host $HOST --port $PORT
+ExecStart=/usr/bin/env bash $WORKDIR/v2/scripts/run_stack.sh --profile $PROFILE --mode $MODE --env $ENVIRONMENT --env-file $ENV_FILE --host $HOST --port $PORT
 Restart=always
 RestartSec=2
 KillMode=control-group

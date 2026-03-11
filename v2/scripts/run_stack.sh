@@ -5,13 +5,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-PROFILE="normal"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="live"
 ENVIRONMENT="prod"
 ENV_FILE=".env"
 CONTROL_HOST="127.0.0.1"
 CONTROL_PORT="8101"
 CONTROL_HTTP_MODE="control-http"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+STACK_LOCK_FILE="${STACK_LOCK_FILE:-v2/logs/stack.lock}"
 
 usage() {
     cat <<'EOF'
@@ -19,7 +21,7 @@ Usage:
   bash v2/scripts/run_stack.sh [options]
 
 Options:
-  --profile <conservative|normal|aggressive>
+  --profile <profile-name>
   --mode <shadow|live>
   --env <testnet|prod>
   --env-file <path>
@@ -31,6 +33,7 @@ Options:
 Examples:
   bash v2/scripts/run_stack.sh
   bash v2/scripts/run_stack.sh --mode shadow --env testnet
+  bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env
   bash v2/scripts/run_stack.sh --host 127.0.0.1 --port 8101
 EOF
 }
@@ -98,6 +101,12 @@ CONTROL_LOG="v2/logs/control_api.log"
 BOT_LOG="v2/logs/discord_bot.log"
 PIDS_FILE="v2/logs/stack.pids"
 
+exec 9>"$STACK_LOCK_FILE"
+if ! flock -n 9; then
+    echo "another stack instance is already running; lock=${STACK_LOCK_FILE}"
+    exit 1
+fi
+
 CONTROL_PID=""
 BOT_PID=""
 
@@ -133,7 +142,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$CONTROL_HTTP_MODE" == "control-http" ]]; then
-    python -m v2.run \
+    "$PYTHON_BIN" -m v2.run \
         --profile "$PROFILE" \
         --mode "$MODE" \
         --env "$ENVIRONMENT" \
@@ -143,7 +152,7 @@ if [[ "$CONTROL_HTTP_MODE" == "control-http" ]]; then
         --control-http-port "$CONTROL_PORT" \
         >"$CONTROL_LOG" 2>&1 &
 else
-    python -m v2.run \
+    "$PYTHON_BIN" -m v2.run \
         --profile "$PROFILE" \
         --mode "$MODE" \
         --env "$ENVIRONMENT" \
@@ -168,7 +177,7 @@ if [[ -z "${TRADER_API_BASE_URL:-}" ]]; then
     export TRADER_API_BASE_URL="http://127.0.0.1:${CONTROL_PORT}"
 fi
 
-python -m v2.discord_bot.bot >"$BOT_LOG" 2>&1 &
+"$PYTHON_BIN" -m v2.discord_bot.bot >"$BOT_LOG" 2>&1 &
 BOT_PID=$!
 
 printf "%s\n%s\n" "$CONTROL_PID" "$BOT_PID" > "$PIDS_FILE"

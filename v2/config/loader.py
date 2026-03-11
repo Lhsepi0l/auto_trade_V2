@@ -29,7 +29,7 @@ class ExchangeConfig(BaseModel):
     user_stream_reconnect_max_seconds: float = Field(default=30.0, ge=0.5, le=300.0)
     user_stream_connection_ttl_seconds: int = Field(default=23 * 60 * 60, ge=60, le=24 * 60 * 60)
     user_stream_reorder_window_ms: int = Field(default=300, ge=0, le=5000)
-    market_intervals: list[Literal["15m", "1h", "4h"]] = Field(default_factory=lambda: ["15m", "1h", "4h"])
+    market_intervals: list[str] = Field(default_factory=lambda: ["15m", "1h", "4h"])
 
 
 class EngineConfig(BaseModel):
@@ -113,7 +113,7 @@ class RootConfig(BaseModel):
 
     @model_validator(mode="after")
     def ensure_required_profiles(self) -> "RootConfig":
-        required = {"conservative", "normal", "aggressive"}
+        required = {"ra_2026_alpha_v2", "ra_2026_alpha_v2_expansion_live_candidate"}
         missing = required.difference(set(self.profiles.keys()))
         if missing:
             joined = ", ".join(sorted(missing))
@@ -232,7 +232,7 @@ def load_root_config(path: str | Path | None = None) -> RootConfig:
 
 def load_effective_config(
     *,
-    profile: str = "normal",
+    profile: str = "ra_2026_alpha_v2_expansion_live_candidate",
     mode: ModeName = "shadow",
     env: EnvName = "testnet",
     config_path: str | Path | None = None,

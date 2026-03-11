@@ -1,0 +1,7 @@
+interface:
+  display_name: "Alpha Expansion Research"
+  short_description: "Tune the alpha expansion sweep path."
+  default_prompt: "Use $alpha-expansion-research to run a bounded `ra_2026_alpha_v2_expansion` sweep and summarize the strongest candidate."
+
+policy:
+  allow_implicit_invocation: true

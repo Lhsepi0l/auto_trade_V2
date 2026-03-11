@@ -15,8 +15,8 @@ Core code lives in `v2/`, which is the active runtime package.
 - `pip install -e ".[dev]"`: install package with test/lint dependencies.
 - `python -m ruff check v2 v2/tests`: lint and import-order checks.
 - `python -m pytest -q`: run all tests (configured to use `v2/tests`).
-- `python -m v2.run --profile normal --mode shadow --env testnet`: run locally in shadow mode.
-- `python -m v2.run --deploy-prep --profile normal --mode shadow --env testnet --keep-reports 30`: run preflight plus smoke checks.
+- `python -m v2.run --profile ra_2026_v1 --mode shadow --env testnet`: run locally in shadow mode.
+- `python -m v2.run --deploy-prep --profile ra_2026_v1 --mode shadow --env testnet --keep-reports 30`: run preflight plus smoke checks.
 
 ## Coding Style & Naming Conventions
 Use Python 3.10+ conventions with 4-space indentation and type hints on public interfaces.
@@ -58,7 +58,45 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - `StrategyPackV1CandidateSelector` now captures per-symbol candidate-drop reasons and exposes compact multi-symbol summaries (`no_candidate_multi:...`) for operator debugging.
 - Discord immediate-tick and status messaging now localize `no_entry:*` reasons (e.g. `no_entry:donchian` -> `돈치안 진입 조건 미충족`) to reduce false bug alarms during normal wait states.
 - Added focused regression coverage for reason propagation/localization paths in `v2/tests/test_strategy_selector_multi_symbol.py`, `v2/tests/test_discord_panel.py`, and `v2/tests/test_control_api.py`.
+- Applied stage-1 entry-frequency tuning in normal profile by relaxing `donchian_period` from `12` to `11` (`da8e8c3`) for controlled signal increase.
+- Live mode now hard-blocks reentry before kernel execution when an existing live position is detected and `allow_reentry=false` (`b82d52a`), reducing repeated margin-pressure reentry attempts.
+- TP/SL close notifications now include realized PnL and are emitted on bracket leg completion (`9f40cee`).
+- TP/SL close alert headline now follows realized PnL sign (`+` -> `익절 완료!`, `-` -> `손절 완료!`) and zero-PnL wording was refined to operator-preferred Korean label `손익없음 청산!` (`aa9b251`).
+- Status messaging no longer mislabels normal `blocked/position_open` state as an error; `last_error` is now reserved for execution-failure class cases in that path (`1bde040`).
+- Added focused regression coverage in `v2/tests/test_control_api.py` for: live reentry block semantics, TP/SL realized-PnL alerts, sign-based headline selection, and zero-PnL wording.
+- Confirmed current risk-control architecture distinction: manual panic/flatten kill path exists, while automatic threshold-triggered account kill-switch (daily loss / DD / lose streak) is not yet wired in runtime enforcement.
 - Validation habit used in this phase: targeted `ruff` + focused `pytest` for touched modules before push.
+- Added Discord reliability hardening in `77bfd45` (`/panel` path observability, command-sync 429 backoff/retry, safer defer fallback messaging).
+- Confirmed production instability was not token-only: repeated `status=137` / `Killed python -m v2.discord_bot.bot` restart loops continued even after bot/token rotation.
+- Confirmed host-compromise indicators recurred: hidden home binary execution pattern, `@reboot` persistence evidence, and recurring high-CPU masquerading `-bash` process under runtime user.
+- Verified control surface risk posture: stack/systemd launch used `--host 0.0.0.0 --port 8101` and control API endpoints were exposed without request authentication in current runtime design.
+- Incident response decision was finalized: treat host as untrusted, request provider OS reinstall, and avoid carrying runtime artifacts forward.
+- Reconfirmed host-level failure pattern after additional checks: bot process reached `discord_ready` and was still terminated with `Killed`/`status=137`, supporting non-token/non-command routing root cause.
+- Finalized low-cost recovery path with provider: same-account OS reinstall request submitted (cost-sensitive path accepted) and migration to clean Raspberry Pi fallback environment initiated.
+- Confirmed clean-start policy for recovery: do not carry over old host artifacts (`.env`, shell profiles, cron/systemd snippets, logs); rotate credentials and redeploy from repository source only.
+- Prepared Raspberry Pi bootstrap approach (SSH-first, localhost-only control bind, hardened minimal surface) for immediate post-reinstall cutover.
+- Hardened stack/network defaults for Raspberry Pi: `run_stack.sh` and `install_systemd_stack.sh` now default to `127.0.0.1`, and service/runbook examples were aligned to localhost control bind (`4265480`).
+- Confirmed Raspberry Pi bootstrap pitfalls/resolutions: GitHub HTTPS password clone fails (unsupported), server clone must use SSH key auth, and `.env` is created manually at repo root (no `.env.example` flow).
+- Diagnosed panel `RuntimeError: network_error: ConnectError` as local control API/service availability issue (`v2-stack.service` missing/stopped), and validated recovery via install script + local `/status` probe.
+- Verified immediate-tick semantics in production messaging: `no_candidate` + localized `no_entry:donchian` is normal wait-state, while Binance `401/-2015` is surfaced as auth failure with request-IP detail.
+- Added Discord `/set` allowlist coverage for advanced TP/SL risk keys (base TP/SL, policy/regime/ATR knobs) and added regression test coverage (`96cff34`).
+- Re-ran full stability gate after incident handling: `python -m ruff check v2 v2/tests`, full `python -m pytest -q`, and `python -m v2.run --deploy-prep --profile normal --mode shadow --env testnet --keep-reports 30` all passed.
+- Reconfirmed runtime tuning history for `normal` profile: stage-1 frequency tuning keeps `donchian_period=11`, and earlier profile override changed `mean_reversion_enabled=true` / `adx_threshold=10`.
+- Finalized static LAN IP practice for home deployment: prefer ASUS DHCP reservation for `192.168.50.29` before in-OS static edits to avoid SSH lockout risk.
+- Verified Raspberry Pi runtime posture at cutover: listeners constrained to SSH `:22` + control API `127.0.0.1:8101`, with thermal headroom (`temp~42.8C`, `throttled=0x0`).
+- Fully wired panel scoring controls into live strategy entry gating (`8e58de7`): runtime `score_conf_threshold`, `score_gap_threshold`, `score_tf_15m_enabled`, and `tf_weight_*` now propagate `control -> kernel -> selector -> strategy` and actively block entries with explicit reasons (`confidence_below_threshold`, `gap_below_threshold`).
+- Expanded market snapshot coverage for score gating by adding `10m`/`30m` feed paths in kernel payloads, and added guardrail to skip score gate when insufficient timeframe evidence exists (to reduce over-blocking).
+- Added focused regressions for score/runtime integration (`524c289`) in `v2/tests/test_strategy_pack_v1.py`, `v2/tests/test_control_api.py`, and `v2/tests/test_discord_panel.py`.
+- Stabilized pytest runtime policy for mixed environments (`791b954`): `pytest-asyncio` dev dependency, `asyncio_mode=auto`, registered `unit` marker, and warning policy in `pyproject.toml`.
+- Fixed Discord panel production bugs (`4f4a469`): scoring modal crash resolved by respecting Discord modal input count limits, and execution-mode select defaults now sync from cached runtime status so `LIMIT`/`MARKET`/`SPLIT` selection behavior is consistent.
+- Added local-only historical backtest path in `v2/run.py` with CLI flags `--local-backtest`, `--backtest-symbols`, `--backtest-years`, and `--backtest-initial-capital` plus a one-command runner at `local_backtest/run_local_backtest.sh`.
+- Local backtest historical data now fetches Binance Futures klines via `/fapi/v1/klines` with paginated range pull, and the rolling lookback window is computed from UTC now minus `years * 365` days.
+- Resolved local backtest crash `RuntimeError: Event loop is closed` by replacing repeated per-symbol `asyncio.run(...)` calls with a single `asyncio.Runner` lifecycle for download + client close.
+- Local backtest market context now includes downloaded `10m` and `30m` streams (plus `15m` execution base), while `1h`/`4h` are aggregated from `15m` in snapshot provider flow.
+- Added progress visibility for long runs: per-symbol download/replay progress logs emit in 5% steps and completion lines include per-symbol net/return/win-rate/max-drawdown.
+- Local backtest report surface was upgraded: Markdown output is now Korean-first, includes initial/final equity and gross profit/loss amounts, and prints explicit `REPORT_MD`/`REPORT_JSON` paths.
+- Added post-run artifact hygiene for local backtest by auto-removing temporary `backtest_*.csv` and `backtest_*.sqlite3` files while preserving final report files.
+- Added focused regression coverage in `v2/tests/test_v2_local_backtest.py` for symbol parsing, drawdown math, TP hit simulation, Korean markdown rendering, `10m`/`30m` snapshot inclusion, and artifact cleanup semantics.
 
 ### Collaboration Preferences (Observed)
 - Default response language for this operator should be Korean.
@@ -67,6 +105,21 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - Keep explanations practical and panel/operator-centric; include what changed and how to verify quickly.
 - Treat Discord panel "즉시 판단" as a live trading action in production mode (it can place real orders immediately when signal conditions are met).
 - When anxious about regressions, user prefers immediate reassurance backed by quick critical-path test reruns and explicit pass/fail evidence.
+- Operator is highly sensitive to alert wording semantics; labels must be intuitive in Korean (avoid ambiguous terms that can be mistaken for emergency liquidation).
+- Preferred iteration style: tiny wording/logic patch -> immediate verification -> immediate commit/push on request.
+- During active incidents, user prefers blunt yes/no conclusions and one-line state summaries before detailed explanation.
+- User is cost-sensitive under infra incidents; prioritize safest low-cost path (same-instance reinstall) before proposing net-new monthly infrastructure.
+- When under pressure, user prefers copy-paste command blocks with minimal waiting overhead and no long-running capture loops unless strictly necessary.
+- During crisis handling, user values direct reassurance about fault attribution (operator is not at fault) before next remediation step.
+- User expects explicit "지금 운영해도 되는지" verdicts backed by immediate reruns of lint/tests/smoke after major incident recovery.
+- User prefers mixed environment command guidance (Windows PowerShell + Raspberry Pi shell) with minimal branching.
+- User expects end-of-session memory updates to be appended into `AGENTS.md` before wrap-up.
+- User expects immediate commit/push follow-through once fixes are validated, then asks for server-side pull/restart commands in the same flow.
+- User prefers final QA instructions as one-pass copy-paste blocks (update -> verify -> restart -> status) with minimal explanatory overhead.
+- User prefers explicit path + exact command guidance (`어디서 실행`, `무엇을 확인`) rather than abstract instructions.
+- For long-running local jobs, user prefers visible percent-progress output during execution.
+- User prefers Korean human-readable report output first (Markdown) and uses JSON only as secondary detail.
+- User wants generated backtest artifacts to stay local and not be uploaded to Git.
 
 ### Security and Ops Notes
 - `.env` remains secrets-only; runtime behavior flags stay in `v2/config/config.yaml` or runtime risk config storage.
@@ -77,13 +130,1778 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - For live troubleshooting, keep `notify_interval_sec` and `scheduler_tick_sec` configured independently; do not assume one controls the other.
 - `no_candidate` + `no_entry:*` should be interpreted as a strategy wait condition (conditions unmet), not as an execution-path failure.
 - For operator sanity checks, compare immediate-tick reason and status reason together; they should match semantically even if formatting differs.
+- For frequency tuning, change only one lever at a time (currently `donchian_period=11` on normal), then observe at least 24-48h before the next adjustment.
+- Current kill behavior is operator-invoked (`/panic` -> pause/safe/flatten). Do not assume configured `daily_loss_limit_pct` / `dd_limit_pct` implies automatic runtime trip until dedicated enforcement is implemented.
+- Repeated `status=137` + unexplained high-CPU shell process should be treated as host-level compromise signal first, not as Discord token/app routing issue.
+- Never expose control HTTP to public internet in live operations; prefer `127.0.0.1` bind with VPN/SSH tunnel/reverse-proxy auth.
+- On compromised host recovery, do not reuse old `.env`, shell profiles, cron/systemd snippets, or runtime logs; rebuild from clean OS and rotate all credentials from a trusted machine.
+- For compromise triage, collect timeline from `journalctl -u v2-stack`, kernel OOM logs, and suspicious process `/proc/<pid>` metadata before decommission.
+- Raspberry Pi recovery baseline: keep SSH-only administration first; defer optional remote desktop/agent tooling until after security baseline hardening and stable runtime validation.
+- For fresh Raspberry Pi images, avoid `root` SSH login for operations; create/use a non-root admin account and move to key-only auth after bootstrap.
+- After host migration, treat Binance `-2015` as key/IP/permission mismatch first; verify public IP whitelist + futures/read permission before code-level debugging.
+- Keep post-restart network check in runbook: `ss -ltnp` should show control API only on `127.0.0.1:8101`.
+- If mDNS discovery is unnecessary in production home-LAN setups, disable `avahi-daemon` to reduce local exposure/noise.
+- GitHub clone on server must use SSH key auth (PAT/HTTPS password-less assumptions are invalid for simple password login).
+- If Raspberry Pi shows `/usr/bin/python: No module named pytest`, treat it as venv activation mismatch first; use `source .venv/bin/activate` (or `./.venv/bin/python`) before troubleshooting test code.
+- For pytest marker warnings on remote hosts, prefer repository-level pytest config sync (`pyproject.toml` markers/asyncio mode) and verify with `python -m pytest --markers` after dependency refresh.
+- Keep local backtest execution off production Raspberry Pi when possible; treat Pi as runtime host and use workstation for heavy historical replay.
+- Keep local backtest outputs Git-safe: ignore report artifacts and avoid carrying generated CSV/SQLite into commits.
+- For Pi health checks before live runtime, continue quick guardrail probes (`free -h`, `vcgencmd measure_temp`, `vcgencmd get_throttled`, `uptime`) and require `throttled=0x0` with thermal headroom.
 
 ### Next Planned Direction
-- Build a minimal read-first web dashboard backed by existing control/status endpoints.
-- Add visual trade markers and event traceability (`decision -> execution -> fill -> Discord`) with consistent IDs for operator verification.
-- Expose structured no-candidate reason counters (by symbol/reason) in status/dashboard surfaces for faster live diagnosis.
+- Freeze all existing strategy branches (`strict`, `portfolio_v1`, `mr_v1`, `fb_v1`, `cbr_v1`, `lsr_v1`, `sfd_v1`, `pfd_v1`) as historical evidence only.
+- Keep the repository on `research_reset_v1`: `experiment template -> opportunity scan -> strategy implementation only if scan_gate=KEEP`.
+- Allow only one active experiment at a time through `research/registry.yaml`; no parallel strategy builds.
+- Use `crowding_plus_liquidity` as the current reference scan family, not as an implied strategy name.
+- If a scan ends in `killed_pre_implementation`, define a new scan family or end hypothesis search; do not rescue it with immediate strategy coding.
+- Block `shadow/live/Discord/status` expansion for any new research branch until the new process has produced `6m KEEP`, `1y KEEP`, and then `3y confirm`.
 
 ### Session References (2026-02 latest)
 - Primary deep-work session: `ses_3758d5f45ffeQWNqxcFXrLc8nP` (entry suppression -> live execution rejects -> bracket precision -> status/panel fixes end-to-end).
 - Earlier context-heavy thread: `ses_37e7e459affelpF6A52mP3pHeB` (baseline runtime/panel stabilization and ops workflow).
 - Reason-visibility subthreads: `ses_36f1a5337ffeT74yHDcA7bqu1B`, `ses_36f1a4c5dffeyCNXkxL9t3106S`, `ses_36f0f61f9ffe5AGdfBltIV0TD7`.
+- 2026-02-26 follow-up research subthreads: `ses_36a01e106ffeuGF0uqOAq9hyaW` (status `오류:` label root-cause trace), `ses_36a01d5fcffeTgf82Fcy19S4Nt` (last_error semantics and blocked-vs-error separation), `ses_3694b9567ffe59fdqSoEqQc2QF` (today commit impact summary), `ses_3694b7b60ffeGtPL2nF1LAAXq1` (collaboration preference extraction).
+- 2026-02-27 incident-response threads: `ses_3658c1130ffehxdnAswyg2tGoI` (Oracle: persistent `/panel` failure under host stress), `ses_3655ee6a8ffeVhZzlUk2rCFxUP` (Oracle: likely initial compromise vectors), `ses_36563a795ffe4ypV0XxjnZyzvC` (Oracle: risk-based low-cost recovery), `ses_36563c43dffe5I15ikIeJ0NL1A` (Librarian: Cafe24 reinstall/cost options).
+- 2026-02-27 recovery execution thread (current): Raspberry Pi SSH/bootstrap and systemd bring-up, Binance `-2015` triage, `/set` TP/SL key allowlist patch (`96cff34`), and full-suite regression rerun.
+- 2026-02-28 runtime-scoring hardening thread: score-gate runtime wiring + regressions + pytest async policy stabilization + panel modal/exec-mode bugfix chain (`8e58de7`, `524c289`, `791b954`, `4f4a469`).
+- 2026-02-28 local-backtest hardening thread: `ses_35f261049ffew5UqMRFoSDfbD4` (local runner flow, progress-percent logs, event-loop lifecycle fix, 10m/30m context feed, Korean Markdown report upgrade, and artifact auto-cleanup).
+
+## Session Memory (2026-03)
+
+### Recent Technical Outcomes
+- Continued local-backtest tuning loop focused on strict quality-gate + profit objective under fixed simulation costs (`fee_bps=4.0`, `slippage_bps=2.0`, `funding_bps_8h=0.5`).
+- Local runner now supports positional args and advanced backtest controls in defaults path (`local_backtest/run_local_backtest.sh`), including reward/risk gate and cooldown controls.
+- `v2/run.py` local simulator includes additional entry guards/counters used in this cycle (`min_reward_risk_ratio`, `loss_cooldown_bars`, reward-risk and cooldown block distributions).
+- `StrategyPackV1` was expanded in working tree with adaptive/profit_daily pathways and runtime params; dedicated tests for adaptive/profit_daily behavior were added in `v2/tests/test_strategy_pack_v1.py`.
+- Current normal profile in working tree is set to strict adaptive trend gating (`entry_mode=adaptive`, `mean_reversion_enabled=false`, higher score/adaptive structure constraints) in `v2/config/config.yaml`.
+- Added runtime risk-context wiring from `v2/control/api.py` into clean-room kernel context: daily loss usage, drawdown usage, lose streak, cooldown, score floor, spread cap, and drawdown scaling now propagate into kernel evaluation.
+- Added `LiveRuntimeRiskGate`, `RiskAwareSizer`, and multi-strategy candidate aggregation in `v2/clean_room/*`; enabled strategies can now run in parallel, reject side/regime conflicts, preserve no-candidate reasons, and carry candidate source/risk metadata.
+- Control API now persists operational risk state (`daily_loss_used_pct`, `dd_used_pct`, `lose_streak`, `cooldown_until`, `recent_blocks`, `last_auto_risk_reason`) and can auto trigger pause/safe-mode/flatten on runtime daily-loss or drawdown trips.
+- Added new BTC-only modular strategy `ra_2026_alpha_v2` with three parallel alphas (`alpha_breakout`, `alpha_pullback`, `alpha_expansion`), decomposed block reasons (`regime_missing`, `bias_missing`, `trigger_missing`, `volume_missing`, `cost_missing`), `alpha_id` propagation into candidate/status/report surfaces, and 6-month slice summaries in local backtest reports.
+- Fixed local-backtest market data plumbing for volume-aware strategies by extending `_Kline15m`/CSV cache/snapshot payloads with `volume`, summing volume during interval aggregation, and recaching stale klines CSVs that were missing the `volume` column.
+- Fixed local-backtest report filename collisions under parallel runs by changing replay/local-backtest artifact stamps from second precision to microsecond precision.
+- Implemented profit-max research track `ra_2026_portfolio_v1` with fixed universe `BTCUSDT/ETHUSDT/SOLUSDT/BNBUSDT`, `max_open_positions=2`, breakout+expansion only defaults, portfolio-scored ranked selection, and explicit routing block reasons (`portfolio_symbol_open`, `portfolio_bucket_cap`, `portfolio_cap_reached`).
+- Added clean-room portfolio routing helpers and kernel portfolio-cycle reporting so ranked selectors can execute multiple candidates per tick while legacy single-candidate strategies still keep prior behavior through the compatibility path.
+- Upgraded local portfolio backtest replay in `v2/run.py` to shared-capital synchronized evaluation: timestamp-merged candidate routing, slot/bucket enforcement, portfolio slot/capital utilization metrics, and profit-max research gate summary (`1y net >= 12`, `3y net >= 18`, `PF >= 1.8`, `max_dd <= 18%`, `fee_to_trade_gross <= 60%`).
+- Control/status surfaces now expose portfolio slot usage and the new portfolio block reasons in Korean operator messaging.
+- Verification completed after the portfolio implementation: `python -m pytest -q` and focused `python -m ruff check v2/clean_room/contracts.py v2/clean_room/portfolio.py v2/clean_room/kernel.py v2/strategies/ra_2026_portfolio_v1.py v2/control/api.py v2/run.py` both passed on 2026-03-08.
+- Local portfolio backtest replay performance was optimized on 2026-03-08 by removing per-tick history list materialization, compacting replay decision payloads, and adding explicit portfolio replay progress logs; warm-cache timed runs now complete in about `1:50` for 1y and `6:04` for 3y on the current workstation.
+- Added a separate BTC-only mean-reversion research branch `ra_2026_mr_v1` on 2026-03-08 with explicit `trend_regime_block / mean_not_stretched / reclaim_missing / rsi_not_extreme / wick_rejection_missing / volume_missing / cost_missing` reasons, clean-room selector support, dedicated profile defaults, and local-backtest `mr-fast-kill` research gate rendering in JSON/Markdown reports.
+- Full validation after the MR branch landed passed on 2026-03-08: `python -m pytest -q` and `python -m ruff check v2 v2/tests`.
+- Added a third non-trend research branch `ra_2026_fb_v1` on 2026-03-08 as a BTC-only failed-breakout reversal strategy (`failed_break_revert`) using 15m execution plus 1h/4h reclaim context, explicit block reasons (`break_not_extended`, `reclaim_missing`, `wick_rejection_missing`, `rsi_not_extreme`, `volume_missing`, `cost_missing`), and clean-room selector wiring via the legacy single-candidate compatibility path.
+- Extended local backtest runtime overrides and bounded sweep support for `ra_2026_fb_v1` in `v2/run.py` and `local_backtest/param_sweep.py`, including failed-break buffer, wick-ratio, TP-R, and time-stop controls plus a dedicated `fb-fast-kill` research gate rendered into JSON/Markdown reports.
+- Validation completed after the FB branch landed on 2026-03-08: targeted `ruff`, targeted `pytest`, full `python -m pytest -q`, and syntax compile checks for `v2/strategies/ra_2026_fb_v1.py`, `v2/run.py`, and `local_backtest/param_sweep.py` all passed.
+- Added a fourth research branch `ra_2026_cbr_v1` on 2026-03-08 as a BTC-only compression-breakout retest strategy using 4h trend + 1h bias alignment with 15m squeeze/impulse/retest structure, explicit block reasons (`trend_missing`, `bias_missing`, `squeeze_missing`, `impulse_missing`, `retest_missing`, `wick_rejection_missing`, `volume_missing`, `cost_missing`), and clean-room selector support through the existing single-candidate compatibility path.
+- Wired `ra_2026_cbr_v1` into local backtest and sweep surfaces in `v2/run.py` and `local_backtest/param_sweep.py`, including dedicated `cbr-fast-kill` research gate output plus backtest overrides for squeeze percentile, breakout buffer, TP-R, and time-stop parameters.
+- Full validation after the CBR branch landed passed on 2026-03-08: `python -m pytest -q`, `python -m ruff check v2 v2/tests local_backtest/param_sweep.py`, and focused CBR selector/profile/local-backtest regression coverage all succeeded.
+- On 2026-03-09, fixed a local-backtest research-gate bug where `window_slices_6m` omitted `fee_to_trade_gross_pct`, which caused CBR/MR/FB slice checks to report `fee>...` even when the fee metric was unavailable; `_build_half_year_window_summaries` now computes slice fee efficiency from per-trade `entry_fee`/`exit_fee` and `gross_pnl`.
+- On 2026-03-09, expanded `ra_2026_cbr_v1` local-backtest tuning surface in `v2/run.py` and `local_backtest/param_sweep.py` to include `trend_adx_min_4h`, `ema_gap_trend_min_frac_4h`, `breakout_min_range_atr`, and `breakout_min_volume_ratio_15m`, enabling bounded participation/fee-efficiency experiments against the actual dominant block reasons (`regime_missing`, `impulse_missing`, `squeeze_missing`).
+- Focused validation for the 2026-03-09 CBR tuning pass succeeded: `python -m pytest -q v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py` and `python -m ruff check v2/run.py v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py local_backtest/param_sweep.py` both passed.
+- Added a fifth non-trend research branch `ra_2026_lsr_v1` on 2026-03-09 as a BTC-only liquidity-sweep reclaim strategy (`liquidity_sweep_reclaim`) using 4h regime conflict, 1h bias alignment, and 15m prior-session / 4h swing sweep-reclaim structure, with explicit block reasons (`trend_conflict`, `bias_missing`, `level_not_swept`, `reclaim_missing`, `wick_rejection_missing`, `rsi_not_extreme`, `volume_missing`, `cost_missing`) and clean-room selector support.
+- Validation after landing `ra_2026_lsr_v1` passed on 2026-03-09: focused `pytest`, full `python -m pytest -q`, and `python -m ruff check v2 v2/tests local_backtest/param_sweep.py` all passed.
+- Implemented `research_reset_v1` on 2026-03-10 by adding `research/registry.yaml`, `research/templates/experiment_template.md`, `v2/docs/research_protocol.md`, and the new CLI/report path `python -m local_backtest.opportunity_scan`.
+- The new evidence-first scan reads only cached `OHLCV + premiumIndexKlines + fundingRate`, emits `scan_<experiment_id>.json/.md`, updates registry status on `scan_gate` failure, and exposes a `can_proceed_to_strategy_build(...)` helper for pre-implementation gating.
+- Validation after the reset implementation passed on 2026-03-10: `python -m ruff check v2 v2/tests local_backtest/opportunity_scan.py` and full `python -m pytest -q` both succeeded.
+- On 2026-03-11, implemented Phase 1 `alpha_expansion` ablation hooks in `v2/strategies/ra_2026_alpha_v2.py` and `v2/run.py`: `expansion_quality_score_min`, `expansion_breakout_efficiency_min`, `trend_adx_max_4h`, `trend_adx_rising_lookback_4h`, and `trend_adx_rising_min_delta_4h`, with new block reasons and focused regression coverage in `v2/tests/test_ra_2026_alpha_v2.py` and `v2/tests/test_v2_local_backtest.py`.
+- Phase 1 ablation verdict on 2026-03-11: `quality_score` v1 was effectively redundant with existing hard gates (new block reasons appeared but 1Y/3Y final trade sets and metrics were unchanged), `ADX window` and `ADX rising` were full plateaus (no 1Y/3Y effect), and the first `breakout_efficiency` filter did move the trade set but degraded `net/PF/expectancy` while slightly improving `MDD`, implying the bottleneck is still breakout structure quality but the one-line efficiency filter is too blunt.
+- Phase 1 research outputs were written to `output/research/alpha_expansion_phase1_20260311.md` plus paired local-backtest JSON/Markdown reports under `local_backtest/reports/alpha_expansion_phase1_*_20260311.{json,md}`; recommendation was to do a `Phase 1.5` redesign of breakout-stability / quality scoring before any Phase 2 entry-split or exit-conditioning work.
+- On 2026-03-11, completed `alpha_expansion` Phase 1.5 with new penalty-based structure-quality gates in `v2/strategies/ra_2026_alpha_v2.py`: `expansion_breakout_stability_score_min`, `expansion_breakout_stability_edge_score_min`, and `expansion_quality_score_v2_min`, plus local-backtest CLI/report wiring in `v2/run.py` and focused regressions in `v2/tests/test_ra_2026_alpha_v2.py` and `v2/tests/test_v2_local_backtest.py`.
+- Phase 1.5 verdict on 2026-03-11: `breakout structure quality` was confirmed as a live bottleneck. `EXP-04` (`breakout_stability_score`) improved 3Y `net/PF/MDD/fee efficiency` over baseline, `EXP-05` (`stability + cost-edge interaction`) improved further, and `EXP-06` (`quality_score_v2` as `max(structure_penalty, width_edge_penalty)`) became the current top candidate with `quality_score_v2_min=0.72`.
+- Current best Phase 1.5 backtest metrics as of 2026-03-11: baseline 3Y `net=7.9560`, `PF=2.3404`, `MDD=7.7014%`, `trades=546`, `fee_to_trade_gross=68.4038%`; `EXP-06` 3Y `net=8.4157`, `PF=2.4991`, `MDD=6.6982%`, `trades=463`, `fee_to_trade_gross=62.8188%`; 1Y also improved from baseline `net=3.0018`, `PF=2.5893`, `MDD=6.3317%` to `EXP-06` `net=2.6956`, `PF=2.6729`, `MDD=5.5271%`, with better expectancy/fee efficiency despite lower raw net.
+- Phase 1.5 outputs were written to `output/research/alpha_expansion_phase15_20260311.md` and paired local-backtest reports under `local_backtest/reports/alpha_expansion_phase15_*_20260311.{json,md}`. Full regression gate also passed on 2026-03-11: targeted `ruff`, targeted `pytest`, and full `python -m pytest -q`.
+- On 2026-03-11, the live launch path was hardened so `v2/scripts/install_systemd_stack.sh` now accepts `--profile` and defaults to `ra_2026_v1_live24`; generated systemd `ExecStart` lines, the template unit, and `v2/docs/RUNBOOK.md` live/prod examples now pin the same profile, and a dry-run regression test was added in `v2/tests/test_install_systemd_stack.py`.
+
+### Latest Verified Research Evidence
+- Strict-default 3y validation passed gate: `local_backtest/reports/local_backtest_20260301_223610.json` with `net=15.9793`, `pf=1.2346`, `max_dd=30.2594%`, `trades=253`, `fee_to_trade_gross=45.5227%` (`VERDICT=GO`).
+- Strict-default 1y validation failed gate: `local_backtest/reports/local_backtest_20260301_224732.json` with `net=1.7363`, `pf=1.1067`, `max_dd=27.8856%`, `trades=127`, `fee_to_trade_gross=82.6668%` (`VERDICT=NO-GO`).
+- High-net historical runs exist but are risk/cost-heavy (example: `local_backtest_20260301_095230.json` with `net=869.7173`, `pf=1.2284`, `max_dd=49.7597%`, `trades=3604`, `fee_to_trade_gross=82.1134%`).
+- `ra_2026_alpha_v2` full 1y combo is now alive after volume-plumbing fix: `local_backtest/reports/local_backtest_20260307_162400.json` with `net=5.5638`, `pf=2.4977`, `max_dd=7.2385%`, `trades=240`; top blocks remained `regime_missing`, `bias_missing`, `volume_missing`.
+- 3y single-alpha survival screen (BTC only) found all three modules economically positive, but `alpha_expansion` was best: breakout-only `local_backtest/reports/local_backtest_20260307_162719.json` (`net=5.5292`, `pf=2.2876`, `max_dd=4.7045%`, `trades=446`), expansion-only `local_backtest/reports/local_backtest_20260307_163653.json` (`net=11.0275`, `pf=2.6292`, `max_dd=5.9570%`, `trades=517`), and pullback-only (stdout-captured before timestamp-fix rerun) `net=3.31`, `pf=1.817`, `max_dd=9.56%`, `trades=553`.
+- 3y combo ranking favored `breakout+expansion`: `local_backtest/reports/local_backtest_20260307_164809_562806.json` (`net=13.1766`, `pf=2.4469`, `max_dd=6.3273%`, `trades=727`) ahead of full 3-alpha `local_backtest/reports/local_backtest_20260307_165809_738481.json` (`net=9.8394`, `pf=2.0436`, `max_dd=9.0093%`, `trades=841`) and `breakout+pullback` `local_backtest/reports/local_backtest_20260307_165809_754808.json` (`net=3.6913`, `pf=1.8287`, `max_dd=9.8592%`, `trades=566`).
+- 1y retest of the best 3y combo still failed the profit acceptance target: `local_backtest/reports/local_backtest_20260307_170808_349795.json` with `net=5.6964`, `pf=3.1871`, `max_dd=6.3286%`, `trades=201`.
+- Final guardrail check on the strongest single alpha confirmed the same ceiling: `local_backtest/reports/local_backtest_20260307_172257_591546.json` (`alpha_expansion` only, 1y) produced `net=3.4426`, `pf=2.8863`, `max_dd=5.9567%`, `trades=140`, confirming the strategy family still misses the required 1y profit target by a wide margin.
+- First synchronized 4-symbol portfolio run on the new `ra_2026_portfolio_v1` track failed badly on 1y: `local_backtest/reports/local_backtest_20260307_185629_455699.json` with `net=-9.8698`, `pf=0.8952`, `max_dd=44.4623%`, `trades=893`, `research_gate=NO-GO`; portfolio slot usage stayed mostly idle (`0`:22384, `1`:8978, `2`:3677) while the dominant rejects remained `regime_missing`, `bias_missing`, and `volume_missing`.
+- Matching 3y synchronized portfolio run also failed: `local_backtest/reports/local_backtest_20260307_185920_110242.json` with `net=-15.0040`, `pf=0.8506`, `max_dd=51.9114%`, `trades=1447`, `research_gate=NO-GO`; major additional block surface was `equity_floor_block`, confirming the portfolio version worsened both profitability and drawdown versus the BTC-only balanced combo.
+- First `ra_2026_mr_v1` baseline run was evaluated on the fixed 6-month window `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z` and failed immediately: `local_backtest/reports/local_backtest_20260307_202111_553383.json` produced `net=0.0000`, `pf=None`, `max_dd=0.0000%`, `trades=0`, `research_gate=KILL`; dominant entry blocks were `trend_regime_block` (14172) and `insufficient_4h_data` (3293).
+- Per the MR fast-kill policy, no 1y rerun or bounded sweep was performed after the 6-month baseline returned `KILL` with zero trades.
+- First `ra_2026_fb_v1` baseline run was evaluated on the fixed 6-month window `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z` and also failed its fast-kill policy: `local_backtest/reports/local_backtest_20260308_194819_827248.json` produced full-window `net=-6.0141`, `pf=0.5597`, `max_dd=19.8697%`, `trades=86`, `research_gate=KILL`; the primary 6-month slice itself was `net=-3.2253`, `pf=0.5597`, `max_dd=11.6850%`, `trades=86`.
+- Dominant `ra_2026_fb_v1` entry blocks were `break_not_extended` (13223), `insufficient_4h_data` (3293), `reclaim_missing` (567), `rsi_not_extreme` (93), and `wick_rejection_missing` (87); alpha stats showed `failed_break_revert` at `13 wins / 73 losses` with `net=-3.2253` on the 6-month baseline slice.
+- Per the FB fast-kill policy, no 1y rerun or bounded sweep should be performed unless the operator explicitly overrides the default branch-stop rule after the failed 6-month baseline.
+- First `ra_2026_cbr_v1` baseline run was evaluated on the fixed 6-month window `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z` and produced the first non-negative replacement branch, but still failed the fast-kill policy: `local_backtest/reports/local_backtest_20260308_201915_755743.json` produced full-window `net=0.0156`, `pf=1.7687`, `max_dd=1.0862%`, `trades=23`, `research_gate=KILL`.
+- The primary 6-month slice for `ra_2026_cbr_v1` was `net=0.2563`, `pf=1.7687`, `max_dd=0.6570%`, `trades=23`; the branch missed the fast-kill threshold on participation and fee efficiency (`trades<25`, `fee>70%`) rather than on expectancy or drawdown.
+- Dominant `ra_2026_cbr_v1` entry blocks were `regime_missing` (6896), `impulse_missing` (4453), `insufficient_4h_data` (3293), `squeeze_missing` (2578), and `retest_missing` (162); alpha stats for `compression_break_retest` showed `23 trades`, `2 wins`, `21 losses`, `net=0.2563`, `pf=1.7687`, and `max_dd=0.6570%` on the 6-month slice.
+- Per the CBR fast-kill policy, no 1y rerun should be treated as default yet; however, unlike the MR/FB branches, CBR now has positive expectancy and very low drawdown, so the next decision is a narrow participation/fee-efficiency tuning pass rather than immediate archival.
+- After fixing the slice-fee bug and extending the override surface, the first successful CBR 6-month gate pass was achieved on 2026-03-09 with `local_backtest/reports/cbr_case_fee_m5.json`: full-window `net=0.3563`, `pf=2.7053`, `max_dd=1.0862%`, `trades=25`, `fee_to_trade_gross=59.2436%`, `research_gate=KEEP` using `cbr_squeeze_percentile_max=0.50`, `cbr_breakout_buffer_bps=2.0`, `cbr_take_profit_r=2.8`, `cbr_time_stop_bars=20`, `cbr_trend_adx_min_4h=13.0`, and `cbr_ema_gap_trend_min_frac_4h=0.0025`.
+- Additional 6-month CBR tuning cases on 2026-03-09 confirmed the tradeoff surface: `cbr_case_selective_m2.json` / `cbr_case_selective_m3.json` both reached `trades=25` with positive expectancy and `pf=1.9517`, but still failed on `fee_to_trade_gross=75.03%`; looser participation cases (`cbr_case_baseline_fixed.json`, `cbr_case_regime_relaxed.json`, `cbr_case_combo_relaxed.json`) increased trades to `45-50` but turned the branch economically negative with fee ratios `142.90%-170.50%`.
+- The required 1-year follow-up on the surviving 6-month CBR configuration failed decisively: `local_backtest/reports/cbr_case_fee_m5_1y.json` returned `net=-1.1358`, `pf=0.7071`, `max_dd=5.3393%`, `trades=57`, `fee_to_trade_gross=517.9715%`, `research_gate=KILL`; the first 6-month slice (`2025-03-07 ~ 2025-09-07`) was itself negative (`net=-0.6269`, `pf=0.0`, `trades=26`), while the second slice remained only modestly positive (`net=0.2425`, `pf=1.3536`, `fee_to_trade_gross=133.58%`).
+- First `ra_2026_lsr_v1` baseline run on the fixed 6-month window `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z` failed immediately: `local_backtest/reports/local_backtest_20260308_204717_274788.json` returned `net=-0.0450`, `pf=0.0`, `max_dd=0.0%`, `trades=1`, `research_gate=KILL`; dominant entry block was `trend_conflict` (14171).
+- A single bounded LSR loosening pass on 2026-03-09 also failed to change the picture: `local_backtest/reports/local_backtest_20260308_204826_308589.json` returned the same `trades=1` / `net=-0.0450` profile with `trend_conflict` still dominant (14123), confirming the default liquidity-sweep reclaim thesis is another rejected branch rather than something to tune incrementally.
+- `research_reset_v1` is now implemented. The first evidence-first scan on the fixed 6-month window `2025-09-10T00:00:00Z ~ 2026-03-10T00:00:00Z` produced `local_backtest/reports/scan_rr_2026_scan_001.json` with `candidate_events=13`, `events_per_symbol_min=2`, `participation_rate=0.056112%`, `top_edge_decile_median_after_cost=4.968582`, `median_hold_bars=9`, and `scan_gate=KILL`.
+- The first scan shows some after-cost edge quality in the top decile, but the hypothesis fails before implementation on participation and breadth. Registry status was updated to `killed_pre_implementation` with `kill_reason=candidate_events,events_per_symbol_min`, so no strategy class may be built from `rr_2026_scan_001`.
+
+### Decision State (for Codex Continuation)
+- Strategy-first continuation is suspended. The active policy is now `evidence-first`.
+- Existing strategy branches are frozen as rejected or historical references only:
+  - `strict`
+  - `portfolio_v1`
+  - `mr_v1`
+  - `fb_v1`
+  - `cbr_v1`
+  - `lsr_v1`
+  - `sfd_v1`
+  - `pfd_v1`
+- The only valid next step is:
+  - define one experiment in `research/registry.yaml`
+  - run `python -m local_backtest.opportunity_scan`
+  - build strategy code only if `scan_gate=KEEP`
+- Current experiment state:
+  - `experiment_id=rr_2026_scan_001`
+  - `scan_family=crowding_plus_liquidity`
+  - fixed window `2025-09-10T00:00:00Z ~ 2026-03-10T00:00:00Z`
+  - verdict `killed_pre_implementation`
+  - report `/home/user/project/auto-trader/local_backtest/reports/scan_rr_2026_scan_001.json`
+- The first evidence-first scan did not fail on cost quality. It failed because the opportunity set was too small and too narrow:
+  - `candidate_events=13 < 120`
+  - `events_per_symbol_min=2 < 15`
+  - `top_edge_decile_median_after_cost=4.968582 > 0`
+  - `median_hold_bars=9 <= 16`
+- Practical rule for continuation:
+  - do not implement a new strategy class from `rr_2026_scan_001`
+  - if continuation is desired, start a new scan family or a materially different data-axis combination first
+  - keep `active` experiment count at `1`
+  - allow at most `1` salvage after implementation
+  - keep `shadow/live/Discord/status` blocked until a future branch achieves `6m KEEP` and `1y KEEP`
+
+### Collaboration Preferences (Updated)
+- User asked to preserve detailed session state in `AGENTS.md` for handoff to Codex and continue from memory without re-discovery overhead.
+- User explicitly prioritizes final net profit over conservative scoring optics, but still expects blunt pass/fail honesty.
+
+### Session References (2026-03)
+- Explore (report ranking): `ses_3506f07e7ffeS18Hu0MXm43YQD`
+- Explore (minimal profit-first code path mapping): `ses_3506eebb1ffeZ42JHijgbmJEMu`
+- Oracle (profit-first decision framework): `ses_3506eebabffef6TZU4Fx66TwKp`
+
+### Backtesting Intent (Detailed)
+- Primary operator intent in this cycle: **final net profit first** (profit-first), with blunt honesty on pass/fail.
+- Secondary constraint introduced during tuning: desire for at-least-daily participation conflicted with strict fee-efficiency gate on current cost model.
+- Current explicit decision framework to avoid confusion:
+  - `strict` track: require **both 1y and 3y pass** for operational GO.
+  - `profit-max` track: maximize net, report DD/fee trade-offs explicitly, do not label operational GO using strict criteria.
+- Important historical confusion to avoid: 3y-only pass was once called GO while 1y remained NO-GO; this should no longer be treated as operational GO.
+
+### Backtesting Execution Methods (Detailed)
+- Environment/bootstrap:
+  - `python3 -m venv .venv`
+  - `source .venv/bin/activate`
+  - `python -m pip install -U pip`
+  - `python -m pip install -e ".[dev]"`
+- Standard local backtest run (wrapper):
+  - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 3 30`
+  - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 1 30`
+- Gate/score output commands:
+  - `python local_backtest/param_sweep.py --action gate --report <json>`
+  - `python local_backtest/param_sweep.py --action score --score-limit 25`
+- Wrapper override pattern (used repeatedly):
+  - `VAR1=value VAR2=value ... bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT <years> 30`
+  - Example variables used in this cycle: `MIN_SIGNAL_SCORE`, `MIN_REWARD_RISK_RATIO`, `MAX_TRADES_PER_DAY`, `REVERSE_COOLDOWN_BARS`, `REVERSE_MIN_HOLD_BARS`, `REVERSE_EXIT_MIN_PROFIT_PCT`, `REVERSE_EXIT_MIN_SIGNAL_SCORE`, `STOPLOSS_STREAK_TRIGGER`, `STOPLOSS_COOLDOWN_BARS`, `LOSS_COOLDOWN_BARS`, `MARGIN_USE_PCT`.
+- Direct run path in runtime entrypoint:
+  - `python -m v2.run --profile normal --mode shadow --env prod --local-backtest --backtest-symbols BTCUSDT,ETHUSDT --backtest-years <1|3> --backtest-initial-capital 30 --report-dir local_backtest/reports`
+
+### Backtesting-Related Files (Code + Tooling)
+- Core simulation and CLI surface:
+  - `v2/run.py`
+- Strategy logic and selector behavior:
+  - `v2/strategies/strategy_pack_v1.py`
+- Profile/runtime defaults affecting behavior:
+  - `v2/config/config.yaml`
+- Local wrapper and run defaults:
+  - `local_backtest/run_local_backtest.sh`
+- Evaluation tooling:
+  - `local_backtest/param_sweep.py`
+- Tests touched/used during this cycle:
+  - `v2/tests/test_v2_local_backtest.py`
+  - `v2/tests/test_strategy_pack_v1.py`
+  - (frequently re-run for safety) `v2/tests/test_strategy_selector_multi_symbol.py`, `v2/tests/test_v2_replay.py`
+
+### Current Strict Defaults Used in Wrapper
+- File: `local_backtest/run_local_backtest.sh`
+- Defaults currently active in working tree:
+  - `PROFILE=normal`
+  - `SYMBOLS=BTCUSDT,ETHUSDT`
+  - `YEARS=3`
+  - `INITIAL_CAPITAL=30`
+  - `FEE_BPS=4.0`, `SLIPPAGE_BPS=2.0`, `FUNDING_BPS_8H=0.5`
+  - `MARGIN_USE_PCT=10.0`
+  - `REVERSE_MIN_HOLD_BARS=16`
+  - `REVERSE_COOLDOWN_BARS=30`
+  - `REVERSE_EXIT_MIN_PROFIT_PCT=0.4`
+  - `REVERSE_EXIT_MIN_SIGNAL_SCORE=0.60`
+  - `MAX_TRADES_PER_DAY=1`
+  - `MIN_SIGNAL_SCORE=0.42`
+  - `STOPLOSS_STREAK_TRIGGER=2`
+  - `STOPLOSS_COOLDOWN_BARS=24`
+  - `LOSS_COOLDOWN_BARS=30`
+  - `MIN_REWARD_RISK_RATIO=2.0`
+
+### Backtest Report Inventory (2026-03 Run Set)
+- Report directory: `local_backtest/reports`
+- JSON files generated/used in this cycle (Mar-01 ~ Mar-02):
+  - `local_backtest_20260301_084456.json`
+  - `local_backtest_20260301_091649.json`
+  - `local_backtest_20260301_094049.json`
+  - `local_backtest_20260301_095230.json`
+  - `local_backtest_20260301_095827.json`
+  - `local_backtest_20260301_101818.json`
+  - `local_backtest_20260301_102627.json`
+  - `local_backtest_20260301_103851.json`
+  - `local_backtest_20260301_104956.json`
+  - `local_backtest_20260301_105720.json`
+  - `local_backtest_20260301_110209.json`
+  - `local_backtest_20260301_110613.json`
+  - `local_backtest_20260301_111929.json`
+  - `local_backtest_20260301_115105.json`
+  - `local_backtest_20260301_120816.json`
+  - `local_backtest_20260301_123319.json`
+  - `local_backtest_20260301_123806.json`
+  - `local_backtest_20260301_124302.json`
+  - `local_backtest_20260301_124738.json`
+  - `local_backtest_20260301_125936.json`
+  - `local_backtest_20260301_132803.json`
+  - `local_backtest_20260301_145455.json`
+  - `local_backtest_20260301_160606.json`
+  - `local_backtest_20260301_161938.json`
+  - `local_backtest_20260301_164455.json`
+  - `local_backtest_20260301_172532.json`
+  - `local_backtest_20260301_180701.json`
+  - `local_backtest_20260301_182449.json`
+  - `local_backtest_20260301_185333.json`
+  - `local_backtest_20260301_192303.json`
+  - `local_backtest_20260301_193355.json`
+  - `local_backtest_20260301_194428.json`
+  - `local_backtest_20260301_195344.json`
+  - `local_backtest_20260301_195718.json`
+  - `local_backtest_20260301_200849.json`
+  - `local_backtest_20260301_202720.json`
+  - `local_backtest_20260301_203057.json`
+  - `local_backtest_20260301_203438.json`
+  - `local_backtest_20260301_203901.json`
+  - `local_backtest_20260301_204252.json`
+  - `local_backtest_20260301_204631.json`
+  - `local_backtest_20260301_205056.json`
+  - `local_backtest_20260301_205445.json`
+  - `local_backtest_20260301_205833.json`
+  - `local_backtest_20260301_210221.json`
+  - `local_backtest_20260301_210657.json`
+  - `local_backtest_20260301_211039.json`
+  - `local_backtest_20260301_211425.json`
+  - `local_backtest_20260301_211813.json`
+  - `local_backtest_20260301_214805.json`
+  - `local_backtest_20260301_215422.json`
+  - `local_backtest_20260301_215926.json`
+  - `local_backtest_20260301_220322.json`
+  - `local_backtest_20260301_220737.json`
+  - `local_backtest_20260301_221123.json`
+  - `local_backtest_20260301_221508.json`
+  - `local_backtest_20260301_221855.json`
+  - `local_backtest_20260301_222301.json`
+  - `local_backtest_20260301_222653.json`
+  - `local_backtest_20260301_223039.json`
+  - `local_backtest_20260301_223610.json`
+  - `local_backtest_20260301_224732.json`
+  - `local_backtest_20260302_172153.json`
+- Key milestone reports to reference first:
+  - Strict 3y pass: `local_backtest_20260301_223610.json`
+  - Strict 1y fail: `local_backtest_20260301_224732.json`
+  - Earlier 3y strict-near-pass: `local_backtest_20260301_185333.json`
+  - High-net/high-risk references: `local_backtest_20260301_095230.json`, `local_backtest_20260301_091649.json`
+
+### Handoff Notes for Codex (Immediate)
+- Preserve current `strict` defaults as baseline and do not overwrite strict policy without explicit intent.
+- If pursuing profit-first next, create separate `profit-max` profile/path and compare against strict baseline using the same cost model.
+- Always report both:
+  - strict verdict (`GO/NO-GO` on 1y+3y), and
+  - profit-max outcome (net/DD/fee trade-off) without relabeling it as strict GO.
+
+### Session Memory Update (2026-03-03)
+- Added automated parameter sweep tool: `local_backtest/param_sweep.py`
+  - Runs multi-year local backtest sweeps.
+  - Produces ranked outputs: `sweep_summary_*.json` + `sweep_summary_*.csv`.
+  - Includes risk gate filters (`min_pf`, `max_dd_pct`, `max_trades_per_year`, `max_fee_to_trade_gross_pct`) and objective ranking.
+  - Default safety guard blocks `max_trade_margin_loss_fraction < 30` unless `--allow-risky-loss-cap` is explicitly set.
+- Added regression tests for sweep helper logic: `v2/tests/test_local_backtest_param_sweep.py`.
+- Updated runbook with sweep command usage and safety note: `v2/docs/RUNBOOK.md`.
+- Empirical sensitivity (latest reruns):
+  - `max_trades_per_day`: increasing from `1 -> 2/3` degraded 1y and 3y baseline outcomes.
+  - `reverse_cooldown_bars`: horizon-dependent; 1y preferred `24` vs 30, 3y preferred `30`.
+  - `min_signal_score`: cliff behavior around `0.52+` (can drop to zero trades), while `0.40~0.50` often identical in tested window.
+  - `min_reward_risk_ratio`: identical up to `2.4`, then cliff at `2.6+` (zero trades in tested window).
+  - `max_trade_margin_loss_fraction`: strongest lever; lower values sharply improve backtest metrics, but increases realism risk/overfit potential.
+- `param_sweep.py` was reworked to a faster default flow after operator feedback:
+  - Stage-1 quick scan on `--years` (default `1`).
+  - Stage-2 verification on `--verify-years` (default `3`) only for `--preselect-top-k` (default `6`).
+  - Search-space defaults were reduced for faster iteration (`score/rr/margin/daily/dd-min` narrowed, `max_cases=12`).
+- `param_sweep.py` now also supports integrated evaluation actions:
+  - `--action gate`: single report GO/NO-GO judge (quality gate equivalent).
+  - `--action score`: recent report ranking output (scoreboard equivalent).
+  - `param_sweep.py` can be used as the single operator entrypoint for sweep/gate/score workflow.
+
+### Session Memory Update (2026-03-03 RA-2026 Clean-Slate)
+- Implemented new clean strategy module: `v2/strategies/strategy_ra_2026.py`.
+  - Added indicator helpers (`ema`, `atr`, `adx`, `bollinger_bandwidth`, `rsi`).
+  - Added 4h regime classifier (`TREND`/`RANGE`/`UNKNOWN`).
+  - Added dual signal engine (trend pullback/retest + range mean reversion), cost gate, risk-based sizing hints, and reverse-exit `+R` threshold payload fields.
+- Wired kernel strategy selection for `strategy_ra_2026` in `v2/clean_room/kernel.py` and added selector regression in `v2/tests/test_clean_room_kernel.py`.
+- Local backtest capital lock enforced in `v2/run.py`:
+  - `LOCAL_BACKTEST_INITIAL_CAPITAL_USDT = 30.0`
+  - `_locked_local_backtest_initial_capital(...)` always enforces `30.0`.
+  - Runtime logs lock mismatch when user passes different value.
+  - Markdown report now includes `Initial Capital (USDT): 30.00`.
+- Added/updated tests:
+  - `v2/tests/test_strategy_ra_2026.py`
+  - `v2/tests/test_v2_local_backtest_capital_lock.py`
+  - `v2/tests/test_v2_local_backtest.py`
+  - `v2/tests/test_local_backtest_param_sweep.py`
+- Added local sweep utility and runner defaults:
+  - `local_backtest/param_sweep.py` (default profile now `ra_2026`, initial capital fixed to `30.0`).
+  - `local_backtest/run_local_backtest.sh` defaults updated for RA-2026 path.
+- Latest verified commands/results:
+  - Targeted tests: `42 passed`.
+  - 3y baseline RA run: `local_backtest/reports/local_backtest_20260303_195220.{json,md}`
+    - `Initial Capital (USDT): 30.00`, `strategy_name=strategy_ra_2026`, `position_sizing_mode=volatility_targeted`
+    - Summary: `net=-1.18`, `PF=1.073`, `max_dd=16.00%`, `trades=534`, `fees=4.82`.
+  - Stricter override experiments:
+    - `local_backtest_20260303_202450.json`: `net=-0.54`, `PF=0.821`, `max_dd=4.34%`, `trades=108`.
+    - `local_backtest_20260303_205920.json`: `net=-2.18`, `PF=1.000`, `max_dd=15.22%`, `trades=484`.
+- Decision state:
+  - RA-2026 clean rebuild and capital-lock requirements are implemented and test-covered.
+  - Acceptance target (`PF>=1.35`, `MaxDD<=18%`) is partially met only on DD; PF remains below target in current cost model/data window.
+
+### Session Memory Update (2026-03-05 Prompt #2/#3 Integration + Tuning/Debug)
+- Prompt #2 진행 중, 기존 워킹트리에 이미 `v2/strategies/ra_2026_v1.py`/커널 연결/market interval 경로가 존재함을 재확인하고 해당 경로 기준으로 보강 패치 진행.
+- `local_backtest` Git 제외 규칙은 `.git/info/exclude`에 요구 패턴이 이미 반영되어 있음을 확인:
+  - `local_backtest/`, `local_backtest/reports/`, `backtest_data/`, `**/klines_cache/`, `**/*.csv`, `**/*.parquet`, `**/*.db`.
+- `v2/strategies/ra_2026_v1.py` 보강:
+  - `supported_symbols` 파라미터 추가(기본: `BTCUSDT,ETHUSDT`) 및 비지원 심볼 `unsupported_symbol` 반환.
+  - execution hint에 쿨다운 관련 숫자 파라미터 추가:
+    - `stop_exit_cooldown_bars=8`
+    - `loss_streak_trigger=2`
+    - `loss_streak_cooldown_bars=24`
+    - `profit_exit_cooldown_bars=0`
+  - 기존 trend/range time-stop hint 유지(`trend=12`, `range=8` 기본).
+- `v2/run.py` 보강:
+  - `_to_int(...)` 유틸 추가.
+  - `_OpenTrade` dataclass 기본값/필드 확장(`time_stop_bars`, stop/loss/profit cooldown fields).
+  - `_build_local_backtest_cycle_input(...)`에서 `decision.execution`을 로컬 시뮬레이터 입력으로 전달.
+  - `_simulate_symbol_metrics(...)`에서 execution hint 기반 time-stop/쿨다운 처리 반영.
+  - 핵심 버그픽스: `open_trade`가 `_close_trade()`로 `None` 된 뒤 `open_trade.sl`에 접근하던 분기 제거.
+    - LONG/SHORT 분기 분리.
+    - 모든 `open_trade.*` 접근 전에 `open_trade is not None` 가드 보장.
+    - time-stop은 SL/TP 이후 포지션이 여전히 열려 있을 때만 수행.
+- 테스트 보강:
+  - `v2/tests/test_ra_2026_v1.py`에 execution hint 필드 검증 추가.
+  - `unsupported_symbol` 리턴 테스트 추가.
+- 사용자 실행 편의용 스크립트 추가:
+  - `v2/scripts/run_ra2026_prompt2_local.py`
+    - Prompt #2 흐름용(베이스라인 + 최대 3회 숫자 튜닝 + md 리포트 생성 자동화).
+  - `local_backtest/run_ra2026_tuning_once.sh`
+    - 한 줄 실행으로 백테스트 + 핵심 메트릭 추출(`PASTE_BACK_*`) 출력.
+  - `local_backtest/run_ra2026_batch_tune.sh`
+    - `param_sweep.py` 기반 배치 탐색(one-shot).
+    - `SWEEP_JSON/SWEEP_CSV` 파싱 후 `MIN_TOTAL_TRADES` 조건 포함 후보 선택 및 `RUN_THIS ...` 추천 출력.
+    - 로그 즉시 확인을 위해 `PYTHONUNBUFFERED=1` + `-u` + `stdbuf` 적용.
+    - `FAST_MODE=1` 추가(기본 48 cases -> 빠른 탐색 8 cases, 추가로 `MAX_CASES` override 가능).
+- Prompt #3(튜닝 only) 진행 요약:
+  - 초기 상태: 연속적으로 `trades=0`, `state_distribution`이 사실상 `no_candidate` 100%.
+  - 수동 숫자 튜닝만으로는 거래가 살아나지 않아 원인 진단 스크립트를 추가로 실행.
+  - 진단 결과(샘플 20k):
+    - `reason` 상위: `trend_setup_missing`, `range_setup_missing`, `insufficient_4h_data`, `regime_unknown`, `cost_gate_reject`.
+    - 스프레드 분포: BTC p50≈19.85bps / p90≈54.63bps, ETH p50≈21.22bps / p90≈56.8bps.
+    - 기존 `max_spread_bps=3.0` 하에서는 gate pass가 사실상 0.
+    - 확인 수치: `setup`은 발생(BTC 384, ETH 360)하지만 `gate_pass=0`.
+  - `max_spread_bps`를 60으로 완화 후 거래 복구 확인:
+    - `local_backtest_20260304_174832.json`: `trades=56`, `PF=1.171`, `MaxDD=2.72%`, `net=+0.04`.
+  - 이후 PF 개선 위해 게이트 강화 시:
+    - `local_backtest_20260304_175927.json`: `PF=3.634`, `MaxDD=0.32%`, `trades=2` (표본 부족/과필터링).
+  - 거래수 복구 재완화 시:
+    - `local_backtest_20260304_180931.json`: `trades=10`, `PF=0.763`, `net=-0.11` (품질 저하).
+  - 결론:
+    - 단순 미세조정은 PF/거래수 트레이드오프가 극단적.
+    - `min trades` 제약이 포함된 배치 탐색이 필요하다는 운영 판단으로 전환.
+- 현재 `profiles.ra_2026_v1` 파라미터 스냅샷(작업 시점):
+  - `trend_adx_min_4h=18.0`
+  - `range_adx_max_4h=18.0`
+  - `bbw_percentile_lookback_4h=40`
+  - `bbw_percentile_threshold=0.45`
+  - `trend_rsi_long_min_15m=53.0`
+  - `trend_rsi_short_max_15m=47.0`
+  - `range_rsi_long_max_15m=32.0`
+  - `range_rsi_long_confirm_cross=30.0`
+  - `range_rsi_short_min_15m=65.0`
+  - `range_rsi_short_confirm_cross=60.0`
+  - `max_spread_bps=60.0`
+  - `min_expected_move_floor=0.0011`
+  - `expected_move_cost_mult=4.2`
+  - `risk_per_trade_trend_pct=0.01`
+  - `risk_per_trade_range_pct=0.003`
+  - `trend_tp1_r_multiple=1.5`
+  - `trend_time_stop_bars=20`
+  - `range_time_stop_bars=10`
+  - `stop_exit_cooldown_bars=8`
+  - `loss_streak_trigger=2`
+  - `loss_streak_cooldown_bars=24`
+  - `profit_exit_cooldown_bars=0`
+- 검증 상태 메모:
+  - 단일 버그 타겟 테스트 `test_simulate_symbol_metrics_closes_with_take_profit`는 통과 확인.
+  - 전체 `pytest -q`는 사용자 중단/운영 제약으로 완료 결과 미확정(세션 중단).
+- 협업 선호 업데이트(2026-03-05):
+  - 사용자는 긴 다단계 안내보다 반드시 "한 줄 실행" 선호.
+  - 백테스트/스윕은 진행 로그가 즉시 보여야 대기 가능.
+  - 패치는 에이전트가 즉시 수행하고, 실행은 사용자가 수행 후 결과 ping-pong 방식 선호.
+- 다음 액션:
+  - `FAST_MODE=1` 배치 스윕 완료 후 `CHOSEN`/`RUN_THIS` 출력 기반으로 후보 1개 재검증.
+  - 후보 선택 시 `min_total_trades` 제약을 유지해 PF 착시(거래 1~2건) 방지.
+
+### Session Memory Update (2026-03-04 Prompt #3 Live Ping-Pong Progress)
+- 운영자 실행/에이전트 패치 분리 규칙을 명시적으로 적용:
+  - 에이전트는 코드/스크립트 패치 중심.
+  - 실제 `pytest`/`local_backtest` 실행은 운영자가 직접 수행 후 결과를 붙여넣는 ping-pong 방식.
+- Prompt #3 튜닝 루프에서 관찰된 핵심 결과(운영자 제공 로그 기준):
+  - 반복 구간 1: `trades=0`, `pf=0.000`, `net=0.00`, `max_dd=0.00%` (복수 회차 동일 패턴).
+  - 복구 구간: `local_backtest_20260304_174832`에서 `trades=56`, `pf=1.171`, `max_dd=2.72%`, `net=+0.04`.
+  - 과필터링 구간: `local_backtest_20260304_175927`에서 `trades=2`, `pf=3.634`, `max_dd=0.32%`, `net=+0.11`.
+  - 재완화 후 품질 저하: `local_backtest_20260304_180931`에서 `trades=10`, `pf=0.763`, `max_dd=1.50%`, `net=-0.11`.
+- 위 결과로 확인한 현재 튜닝 리스크:
+  - 동일 로직 내 숫자 파라미터 조정만으로는 `PF`/`trades` 균형이 급격히 흔들림.
+  - 고 PF 결과가 소수 거래(2건)에 집중되어 신뢰 표본 부족 가능성이 큼.
+- 실행 편의성 요구 대응:
+  - 운영자 피드백: "한 줄 실행", "중간 진행 로그 가시성"이 필수.
+  - 이에 따라 배치 스윕 스크립트에 즉시 로그 출력 및 `FAST_MODE` 단축 경로를 유지.
+- 배치 스윕 진행 메모(운영자 공유 로그):
+  - 진행 로그 예: `[BATCH] start ra_2026_v1 sweep (1y -> top-k verify 3y)`.
+  - 완료 로그 예: `[SWEEP] case 8/8 (100%) ...`, `[SWEEP] verify phase selected=4/8 years=[3]`.
+  - 이 시점에서 사용자는 "종료/대기 여부" 판단이 어려웠고, 후속으로 결과 파일 파싱/추천 파라미터 출력 개선 필요성이 재확인됨.
+- 현재 작업 상태(핸드오프 기준):
+  - Prompt #2 구현/버그픽스/스크립트화는 반영 완료.
+  - Prompt #3은 튜닝 루프 및 배치 스윕 기반 탐색 체계까지 준비됨.
+  - 최종 "best params" 확정은 최신 sweep summary 파싱 결과와 추가 검증 1회가 필요.
+
+### Session Memory Update (2026-03-04 Prompt #3 Sweep Result Ingest + Batch Script Retune)
+- 운영자가 `FAST_MODE` 배치 스윕 결과를 공유했고, 결과 파일은 아래 경로로 확인됨:
+  - `SWEEP_JSON=/home/user/project/auto-trader/local_backtest/reports/ra2026_batch_20260304_195247.json`
+  - `SWEEP_CSV=/home/user/project/auto-trader/local_backtest/reports/ra2026_batch_20260304_195247.csv`
+- 스윕 출력 요약(4개 케이스):
+  - case 1~4 모두 `go=True`, `objective=1108.62`, `net_sum=0.16`, `pf_avg=18.565`, `worst_dd=0.45%`로 동일.
+  - 파라미터 조합 차이는 `max_trades_per_day`(1/2), `min_reward_risk_ratio`(1.6/1.8)였으나 결과는 동일.
+  - 공통 파라미터 핵심:
+    - `min_signal_score=0.58`
+    - `reverse_cooldown_bars=18`
+    - `margin_use_pct=10.0`
+    - `daily_loss_limit_pct=2.5`
+    - `drawdown_margin_scale_min_pct=35.0`
+    - `max_trade_margin_loss_fraction_pct=30.0`
+- 후보 필터 결과:
+  - `MIN_TOTAL_TRADES=20`
+  - `CANDIDATES_WITH_MIN_TRADES=0`
+  - 필터 미충족으로 fallback 선택:
+    - `CHOSEN case=1 ... total_trades=5 ... worst_fee_to_trade=23.43%`
+  - 연도별 내역(내부 확인):
+    - 1y: `trades=2`, `pf=34.714822`, `dd=0.295526%`, `net=0.102307`
+    - 3y: `trades=3`, `pf=2.415121`, `dd=0.449435%`, `net=0.057`
+- 해석:
+  - 현재 스윕 상위 결과는 품질 지표가 매우 좋아 보이지만, 거래 수가 극단적으로 적어(`total_trades=5`) 통계 신뢰성이 낮음.
+  - `go=True` 판단은 기존 gate 기준을 충족한 것이며, 운영자 목적(실전성 있는 거래 빈도 확보)과는 별개로 분리 해석 필요.
+- 후속 패치(실행 편의 + 거래수 확보 목적):
+  - 파일: `local_backtest/run_ra2026_batch_tune.sh`
+  - `FAST_MODE=1` 기본 탐색 범위를 아래처럼 완화:
+    - `SCORE_VALUES: 0.58,0.62 -> 0.50,0.54,0.58`
+    - `RR_VALUES: 1.6,1.8 -> 1.4,1.6`
+    - `MAX_TRADES_VALUES: 1,2 -> 2,3`
+    - `REVERSE_COOLDOWN_VALUES: 18 -> 12,18`
+    - `MAX_CASES: 8 -> 16`
+  - 의도: 과필터링으로 인한 `trades` 부족 해소를 우선 시도하면서도 `FAST_MODE`의 실행시간 이점은 유지.
+- 운영자 실행 지시(최근 제공):
+  - `FAST_MODE=1 MIN_TOTAL_TRADES=20 bash local_backtest/run_ra2026_batch_tune.sh`
+  - `eval "$(grep '^RUN_THIS ' /tmp/ra2026_batch_tune.log | tail -n1 | sed 's/^RUN_THIS //')"`
+
+### Session Memory Update (2026-03-05 Prompt #3 Batch Sweep UX Improvement)
+- `local_backtest/run_ra2026_batch_tune.sh`에서 후보 미충족 시 동작을 강화해 실행 가능성을 개선.
+- 기존 동작:
+  - `CANDIDATES_WITH_MIN_TRADES=0`일 때 즉시 목표 미달 케이스를 fallback로 고정.
+- 변경된 동작:
+  - 미달 케이스에서라도 `ok_all=True` + `objective + total_trades` 기준으로 보조 정렬해 `RUN_THIS`를 선택.
+  - 추가 출력으로 `RUN_THIS_MAX_TRADES ...`를 함께 표시해 거래 건수 우선 후보도 즉시 재검증 가능하도록 수정.
+  - 출력 포맷은 기존 `RUN_THIS` 구조를 유지해 기존 복붙 방식과 호환.
+- 기대 효과:
+  - `MIN_TOTAL_TRADES` 한계로 유효 후보가 없을 때도, trade 수가 상대적으로 많은 후보를 즉시 비교 실행할 수 있어 튜닝 속도 상승.
+
+### Session Memory Update (2026-03-05 Prompt #3 Log Extraction Fix)
+- `local_backtest/run_ra2026_batch_tune.sh`에 최종 완료 검출용 하드 마커 추가.
+- 변경 사항:
+  - `SUMMARY_JSON=<path>` 추가 출력 (기본 `local_backtest/reports/ra2026_batch_latest_summary.json`).
+  - `BATCH_COMPLETE=1` 마커 출력 추가.
+  - `run` 종료 시 후보 요약(JSON) 저장: `chosen`, `max_trades_candidate`, `SWEEP_JSON`, `SWEEP_CSV`, `CANDIDATES_WITH_MIN_TRADES`.
+- 목적:
+  - `grep` 패턴 미스매치/로그 라인 누락 이슈를 피하고, 스크립트 종료 유무를 단일 마커로 명확하게 판별.
+
+### Session Memory Update (2026-03-05 Prompt #3 Sweep Output Robustness)
+- `run_ra2026_batch_tune.sh` 출력 경로 탐지 보강 패치 적용.
+- 변경 사항:
+  - 기본 `OUTPUT_PREFIX`를 실행 시각 기반 `ra2026_batch_<timestamp>`로 자동 생성.
+  - `SWEEP_JSON/SWEEP_CSV`를 먼저 `SWEEP_LOG`에서 추출하고, 비어있으면 같은 prefix의 최신 산출물을 자동 탐색.
+  - 결과 파일 미탐색 시 즉시 실패하지 않도록 fallback 경로를 넣어 `RUN_THIS` 파생 단계로 진입 확률을 높임.
+- 목적:
+  - 로그 파일이 비어 있거나 `grep`이 실패해도 운영자가 선택/재실행용 파라미터를 얻을 수 있게 함.
+
+### Session Memory Update (2026-03-05 Trade-Ready Single Candidate Mode)
+- 운영자 요구(“지금 당장 매매용”: 전체 스캔 정지 후 후보 1개만 빠른 검증)에 맞춰 `local_backtest/run_ra2026_batch_tune.sh`에 긴급 검증 모드 추가.
+- 변경 사항:
+  - `TRADE_READY_ONLY=1` 시 탐색/파라미터 스윕을 건너뛰고 2단계 단일 검증 실행:
+    - 기본: 1년차 프리체크 → 3년차 확인
+    - `TRADE_READY_TWO_STEP=0`이면 `TRADE_READY_YEARS` 값으로 단일 회차만 실행.
+  - 프리체크 통과 임계값은 `TRADE_READY_PRECHECK_MIN_TRADES/PF/DD`(기본 1 / 0.0 / 100.0).
+  - 확인차 검증 통과 임계값은 `TRADE_READY_VERIFY_MIN_TRADES/PF/DD`(기본 0 / -999 / 999).
+  - 기본 빠른 검증 파라미터:
+    - `MIN_SIGNAL_SCORE=0.60`
+    - `MIN_REWARD_RISK_RATIO=1.80`
+    - `MAX_TRADES_PER_DAY=2`
+    - `REVERSE_COOLDOWN_BARS=18`
+    - `MARGIN_USE_PCT=10.0`
+    - `STOPLOSS_STREAK_TRIGGER=2`
+    - `STOPLOSS_COOLDOWN_BARS=24`
+    - `LOSS_COOLDOWN_BARS=30`
+    - `REVERSE_MIN_HOLD_BARS=16`
+    - `REVERSE_EXIT_MIN_PROFIT_PCT=0.4`
+    - `REVERSE_EXIT_MIN_SIGNAL_SCORE=0.60`
+    - `MIN_EXPECTED_EDGE_MULTIPLE=2.2`
+    - `FEE_BPS=4.0`
+    - `SLIPPAGE_BPS=2.0`
+    - `FUNDING_BPS_8H=0.5`
+  - 실행/출력 보강:
+    - `TRADE_READY_SYMBOLS`, `TRADE_READY_YEARS`, `TRADE_READY_INITIAL_CAPITAL`, `TRADE_READY_LOG` 환경변수로 대상/기간/로그 제어.
+    - 단일 검증이 끝나면 `tee`로 로그 저장 후 해당 종료코드로 그대로 반환.
+- 즉시 실행 예시:
+  - `TRADE_READY_ONLY=1 TRADE_READY_SYMBOLS=BTCUSDT,ETHUSDT TRADE_READY_INITIAL_CAPITAL=30 bash local_backtest/run_ra2026_batch_tune.sh`
+  - 수동 1차/3차 분리 실행:
+    - `TRADE_READY_ONLY=1 TRADE_READY_TWO_STEP=0 TRADE_READY_YEARS=1 bash local_backtest/run_ra2026_batch_tune.sh`
+  - 결과 경로 확인:
+    - `grep '^REPORT_JSON=' /tmp/ra2026_trade_ready.log`
+
+### Session Memory Update (2026-03-05 RA-2026_v1 Full Rewrite)
+- 운영자 요청(`재작성`)에 따라 `v2/strategies/ra_2026_v1.py`를 대규모 정비하여 전략 코어를 다시 작성함.
+- 반영 핵심:
+  - 기존 모듈은 교체하고, 같은 `RA2026V1Params`/결정/후보자 선택 인터페이스를 유지한 채 신호 생성 로직을 정리.
+  - 4시간 프레임 regime 판정(`TREND_UP`, `TREND_DOWN`, `RANGE`, fallback)를 더 간결화.
+  - 추세/레인지 진입 로직을 분기해:
+    - 추세: 1h 추세정렬 + 15m 돌파 + RSI/볼륨 필터 + 비용 게이트 강화.
+    - 레인지: BB 바닥/천장 이탈 + RSI 확인/크로스 + 비용 게이트 후 TP를 `bb_mid` 또는 `R` 기반 목표 중 선택.
+  - 점수 산정(`score`)를 재정의해 과잉 무신호 상태 완화 시도.
+  - 후보자 생성(캔디데이트) 경로(`RA2026V1CandidateSelector`)와 호환 유지.
+- 실행 검증:
+  - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py` 통과.
+  - `python -m pytest -q v2/tests/test_ra_2026_v1.py` 통과.
+  - `python -m pytest -q v2/tests/test_clean_room_kernel.py -k ra_2026_v1` 통과.
+
+### 2026-03-05 작업
+- `local_backtest/run_local_backtest.sh`를 실시간 로그 스트리밍에 맞게 수정: 파이프라인에 `2>&1` 병합, `PYTHONUNBUFFERED=1` + `-u`, `stdbuf -oL -eL` 적용으로 백테스트 실행 중 즉시 로그 반영되게 변경.
+
+### Session Memory Update (2026-03-06)
+- Hard-deleted `strategy_pack_v1` and `strategy_ra_2026` from runtime/test/tooling paths and standardized the repo on `ra_2026_v1` as the only supported strategy/profile.
+- `v2/config/config.yaml`, `v2/config/loader.py`, `v2/run.py`, local-backtest defaults, and operational scripts were aligned so legacy profiles (`normal`, `aggressive`, `ra_2026`) are no longer valid runtime surfaces.
+- Kernel strategy selection is now single-path only: unsupported or multiple enabled strategies raise explicit `unsupported_strategy:*` errors instead of falling back.
+- 2026-03-06: `ra_2026_v1` 24/7 강화 작업을 진행했다. 전략은 추세 우선(`range_enabled=false` 기본), breakout/pullback 이중 진입, 4h 레짐 히스테리시스, 과열(funding/long-short ratio) 차단, runner(trail-only) 힌트를 내보내도록 확장했다. `v2/clean_room/contracts.py`에 `entry_family/stop_price_hint/stop_distance_frac/regime_strength`를 추가했고 `RiskAwareSizer`는 stop distance 기반 사이징을 우선한다. `v2/clean_room/kernel.py`는 10m/30m/bookTicker를 포함한 스냅샷과 overheat fetch를 selector에 연결한다. `v2/control/api.py`는 generic scoring knobs 대신 전략 전용 runtime knobs를 노출하고 `/status` `/risk` 표면에 `last_strategy_block_reason`, `last_entry_family`, `last_regime`, `overheat_state`를 포함한다. `v2/run.py` 로컬 백테스트는 partial take-profit + trail runner + regime-lost reverse exit semantics를 이해하도록 확장했다. 이번 턴에서는 테스트 실행은 하지 않았다.
+- 2026-03-06 later update:
+  - `python -m pytest -q`는 최종적으로 전체 통과 상태까지 복구했다.
+  - 로컬 백테스트 리포트에 `no_candidate` 세부 이유가 보이지 않던 문제를 보강했다. `v2/run.py`가 이제 `cycle.state == no_candidate`일 때 selector reason을 `entry_block_distribution`에 누적한다.
+  - 백테스트 spread 추정 버그를 수정했다. 기존 `ra_2026_v1`는 백테스트에서 `15m high-low` 전체 변동폭을 spread proxy로 사용했고, 기본 `max_spread_bps=3.0`과 충돌해 사실상 전구간 `spread_block` 상태였다. 이를 `backtest_spread_bps_fallback`(기본 1.5bps)로 분리해 `v2/strategies/ra_2026_v1.py`와 `v2/config/config.yaml`에 반영했다.
+  - 그 후에도 백테스트는 여전히 `trades=0`이며, 문제는 이제 spread가 아니라 전략/엔트리 게이트 deadlock 쪽으로 좁혀졌다.
+  - 최신 확인 리포트:
+    - 1y: `local_backtest/reports/local_backtest_20260305_201936.json`
+    - 3y: `local_backtest/reports/local_backtest_20260305_205017.json`
+  - 최신 3y 결과 요약:
+    - `state_distribution`: `no_candidate=206658`, `dry_run=3366`
+    - `total_trades=0`
+    - top blocks: `regime_unknown=79714`, `trend_volume_block=71500`, `trend_setup_missing=22983`, `cost_gate_reject=15971`, `breakout_exhaustion_block=10004`, `reward_risk_block=3136`, `score_quality_block=230`
+  - 해석:
+    - 전략은 완전 무신호는 아니다. `dry_run`이 존재하므로 일부 후보는 생성된다.
+    - 하지만 후보가 실진입까지 연결되지 못하고 최종 게이트에서 전부 제거되고 있다.
+    - 현재 핵심 병목은 `regime_unknown`, `trend_volume_block`, `cost_gate_reject`이며, 그 다음이 `reward_risk_block`, `score_quality_block`이다.
+  - 이미 수행한 완화:
+    - 4h regime에 `soft trend` 판정을 추가해 `UNKNOWN` 과잉을 줄이도록 보정.
+    - trend cost gate가 `15m ATR`만 보지 않도록 `1h ATR` 기반 기대 움직임 보정을 추가.
+    - config 기본값 완화:
+      - `trend_enter_adx_4h: 22 -> 20`
+      - `trend_exit_adx_4h: 18 -> 16`
+      - `min_expected_move_floor` 완화
+      - `expected_move_cost_mult: 4.x -> 2.2`
+      - `breakout_buffer_bps: 8 -> 6`
+      - `min_volume_ratio_15m: 1.2 -> 1.05`
+  - ops/tooling:
+    - `rg`가 shell에서 안 잡히던 문제는 시스템 설치가 아니라 PATH/실행 경로 이슈였다.
+    - `~/.local/bin/rg` symlink를 만들어 현재 shell에서 `rg --version`이 동작하도록 복구했다.
+  - 다음 세션 계획:
+    - 무한 튜닝 금지. 최대 1~2번 더만 본다.
+    - 다음 수정 목표는 `candidate -> actual entry` deadlock 해소다.
+    - 특히 `reward_risk_block`와 `score_quality_block`를 포함한 최종 entry gate를 실전형으로 재설계/완화해 `1y`, `3y` 모두 `trades > 0`를 만들고, 2번 안에 안 되면 현재 `ra_2026_v1` 구조를 더 단순한 단일 엔트리 체계로 자르는 쪽으로 전환한다.
+
+### Session Memory Update (2026-03-06 RR/Score Deadlock Fix)
+- `0 trade` 직접 원인을 확정했다:
+  - 3y 리포트에서 `dry_run=3366`이었고, 백테스트 최종 진입 차단이 `reward_risk_block=3136` + `score_quality_block=230`으로 정확히 합산됐다.
+  - 즉 전략은 후보를 만들고 있었지만, 로컬 백테스트 RR 게이트가 `trend`의 `첫 부분익절(1.2R)`만 보고 판단해서 기본 `MIN_REWARD_RISK_RATIO=1.8`을 구조적으로 통과할 수 없었다.
+- 적용한 수정:
+  - `v2/strategies/ra_2026_v1.py`
+    - 추세 payload에 `reward_risk_reference_r`를 추가해 `partial + runner` 혼합 기대보상을 명시했다.
+    - 추세 `sl_tp`에 `take_profit_final` 참조값을 채웠다. 기존 `take_profit`은 부분익절 가격을 유지한다.
+    - confirmed trend entry 점수에 소폭 보정(`breakout +0.06`, `pullback +0.04`)을 넣어 `score_quality_block`도 완화했다.
+  - `v2/run.py`
+    - 로컬 백테스트 진입 RR/edge 게이트가 이제 `reward_risk_reference_r` 또는 `take_profit_final`을 우선 사용해 `부분익절 + 러너` 구조를 올바르게 평가한다.
+    - replay/local-backtest cycle record builder가 `sl_tp.take_profit_final`을 보존하도록 보강했다.
+- 추가/갱신한 검증:
+  - `python -m ruff check v2/run.py v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py v2/tests/test_v2_local_backtest_runner_247.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_v1_247.py v2/tests/test_v2_local_backtest_runner_247.py`
+  - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k "reward_risk or edge_below_roundtrip_cost or build_replay_cycle_record"`
+  - `python -m pytest -q v2/tests/test_ra_2026_v1.py`
+- 최신 백테스트 결과(동일 비용 모델 유지):
+  - 1y: `local_backtest/reports/local_backtest_20260306_083015.json`
+    - `net=16.143717`, `pf=3.776325`, `max_dd=23.262245%`, `trades=78`, `VERDICT=GO`
+    - 상위 차단: `regime_unknown=25185`, `trend_volume_block=21888`, `trend_setup_missing=7140`, `cost_gate_reject=5058`
+    - 최종 진입 차단 잔여: `reward_risk_block=8`, `score_quality_block=2`
+  - 3y: `local_backtest/reports/local_backtest_20260306_083500.json`
+    - `net=11.392473`, `pf=1.925232`, `max_dd=31.566956%`, `trades=143`, `VERDICT=GO`
+    - 상위 차단: `regime_unknown=79618`, `trend_volume_block=71500`, `trend_setup_missing=22983`, `cost_gate_reject=15971`
+    - 최종 진입 차단 잔여: `reward_risk_block=20`, `score_quality_block=8`
+- 해석:
+  - `0 trade` 상태는 해소됐다.
+  - 핵심 병목은 더 이상 최종 RR/score 게이트가 아니라 전략 본체의 `regime_unknown`, `trend_volume_block`, `trend_setup_missing`, `cost_gate_reject` 쪽이다.
+  - 다음 튜닝은 진입 게이트 재설계가 아니라, 위 4개 상위 이유 중 하나씩만 줄이는 방향으로 좁혀서 봐야 한다.
+
+### Session Memory Update (2026-03-06 Adaptive Trend Volume Floor)
+- 사용자 지정 baseline:
+  - 1y 기준: `local_backtest/reports/local_backtest_20260305_204553.json`
+  - 3y 기준: `local_backtest/reports/local_backtest_20260305_205017.json`
+- baseline 공통 병목 재확인:
+  - `trend_volume_block`가 1y `21961`, 3y `71500`으로 매우 컸고, RR/score deadlock 해소 이후에도 상위권을 유지했다.
+  - 이번 턴은 큰 구조 변경 없이 `trend_volume_block`만 줄이는 방향으로 진행했다.
+- 적용한 수정:
+  - `v2/strategies/ra_2026_v1.py`
+    - `_adaptive_trend_volume_floor(...)` 헬퍼 추가.
+    - 강한 레짐(`regime_strength`), 높은 비용대비 기대움직임(`cost_edge_ratio`), 짧은 구간 미세 확장(`micro_range_ratio_10m`)이 확인되면 추세 진입의 `15m` 볼륨 하한을 소폭 완화하도록 변경.
+    - `breakout`과 `pullback`에 서로 다른 volume floor를 사용하고, `trend_volume_block` 사유 기록은 더 lenient한 `pullback` 기준으로 판정하도록 조정.
+    - `indicators`에 `volume_floor_breakout_15m`, `volume_floor_pullback_15m`, `micro_range_ratio_10m`를 추가.
+- 검증:
+  - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_085340.json`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_085804.json`
+- 최신 결과:
+  - 1y: `local_backtest/reports/local_backtest_20260306_085340.json`
+    - `net=15.068964`, `pf=3.326267`, `max_dd=24.795629%`, `trades=88`, `VERDICT=GO`
+    - baseline `204553` 대비:
+      - `trend_volume_block: 21961 -> 18479`
+      - `reward_risk_block: 1061 -> 8`
+      - `score_quality_block: 77 -> 2`
+      - `trades: 0 -> 88`
+  - 3y: `local_backtest/reports/local_backtest_20260306_085804.json`
+    - `net=12.987688`, `pf=1.973976`, `max_dd=32.868827%`, `trades=154`, `VERDICT=GO`
+    - baseline `205017` 대비:
+      - `trend_volume_block: 71500 -> 60424`
+      - `reward_risk_block: 3136 -> 17`
+      - `score_quality_block: 230 -> 5`
+      - `trades: 0 -> 154`
+- 해석:
+  - `trend_volume_block`는 유의미하게 줄었고, 특히 3y에서는 `net`, `pf`, `trades`가 모두 개선됐다.
+  - 다만 volume block 감소분 일부가 `trend_setup_missing`으로 이동했다. 즉 다음 병목은 `regime_unknown` 다음으로 `trend_setup_missing`을 봐야 한다.
+  - `cost_gate_reject`는 이번 턴에서 사실상 변하지 않았으므로, 다음 1회 패치는 `trend_setup_missing` 또는 `regime_unknown` 중 하나만 건드리는 게 맞다.
+
+### Session Memory Update (2026-03-06 Latest Trades Recheck + Regime Fallback)
+- 사용자 명시 기준 재확인:
+  - baseline files: `AGENTS.md`, `local_backtest/reports/local_backtest_20260305_204553.json`, `local_backtest/reports/local_backtest_20260305_205017.json`
+  - 먼저 최신 리포트의 `trades`를 숫자로 재확인했다.
+    - 최신 1y(당시): `local_backtest/reports/local_backtest_20260306_085340.json` -> `trades=88`
+    - 최신 3y(당시): `local_backtest/reports/local_backtest_20260306_085804.json` -> `trades=154`
+  - 따라서 현재 단계는 `entry deadlock`이 아니라 `entry structure 미세조정 단계`로 판정했다.
+- 우선순위 해석:
+  - `reward_risk_block`, `score_quality_block`은 더 이상 주 병목이 아니고,
+  - 다음 타깃은 사용자 우선순위대로 `regime_unknown -> trend_volume_block -> cost_gate_reject -> trend_setup_missing`.
+- 적용한 수정:
+  - `v2/strategies/ra_2026_v1.py`
+    - `_fallback_trend_bias(...)` 추가.
+    - 4h EMA 정렬 + 완만한 slope + 최소 ADX가 유지되는 구간은 `UNKNOWN`으로 버리지 않고 약한 추세 bias로 이어가도록 `raw_regime` fallback을 추가.
+    - 현재 trend regime 유지(`maintain_up/down`)에도 same-direction bias를 반영해 `UNKNOWN` 회귀를 줄였다.
+    - `indicators`에 `ema50_prev_4h`, `ema200_prev_4h`, `bias_regime_4h`를 추가했다.
+- 검증:
+  - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_093329.json`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_093807.json`
+- 최신 결과:
+  - 1y: `local_backtest/reports/local_backtest_20260306_093329.json`
+    - `trades=104`, `net=37.853967`, `pf=4.381408`, `max_dd=30.331774%`, `VERDICT=GO`
+    - 직전 최신(`085340`) 대비:
+      - `regime_unknown: 25185 -> 13862`
+      - `trend_volume_block: 18479 -> 23938`
+      - `cost_gate_reject: 5058 -> 7286`
+      - `trend_setup_missing: 10420 -> 12893`
+  - 3y: `local_backtest/reports/local_backtest_20260306_093807.json`
+    - `trades=158`, `net=13.309762`, `pf=1.984848`, `max_dd=33.600320%`, `VERDICT=GO`
+    - 직전 최신(`085804`) 대비:
+      - `regime_unknown: 79618 -> 46870`
+      - `trend_volume_block: 60424 -> 76022`
+      - `cost_gate_reject: 15971 -> 22330`
+      - `trend_setup_missing: 33653 -> 41076`
+- 해석:
+  - `regime_unknown`는 1y/3y 모두 크게 줄었고 `trades > 0`는 안정적으로 유지됐다.
+  - 하지만 `UNKNOWN`에서 빠진 구간 상당수가 `trend_volume_block`, `cost_gate_reject`, `trend_setup_missing`으로 이동했다.
+  - 즉 regime fallback 자체는 효과가 있었지만, 다음 1회 패치는 `trend_volume_block` 또는 `cost_gate_reject`를 직접 낮추는 쪽이어야 한다.
+  - 사용자 가이드대로 앞으로 1회 정도 더 봤는데도 상위 block 3개가 같이 안정화되지 않으면, `ra_2026_v1`을 더 단순한 단일 엔트리 체계로 자르는 재설계를 진지하게 고려해야 한다.
+
+### Session Memory Update (2026-03-06 Participation-Aware Trend Gate)
+- 사용자 요청:
+  - “한번 해봐. 무한 수정에 안 빠지게.”
+  - 따라서 이번 턴은 추가 1회만 수행하고, 결과 해석 후 더 이상 연속 튜닝하지 않기로 결정.
+- 적용한 수정:
+  - `v2/strategies/ra_2026_v1.py`
+    - `_trend_participation_ratio(...)` 추가:
+      - 현재 15m 볼륨비율 + 최근 3개 15m 평균 볼륨비율 + 10m 미세확장을 묶어 추세 참여도 신호를 계산.
+    - `_adaptive_trend_required_move_frac(...)` 추가:
+      - 강한 레짐/참여도에서 trend cost gate 요구치를 최대 약 10%까지만 완화.
+    - breakout/pullback volume gating이 last-bar 단일 비율이 아니라 `participation-aware` 신호를 사용하도록 변경.
+    - 결과적으로 `trend_volume_block`과 `cost_gate_reject`를 직접 낮추는 마지막 미세조정 패치로 사용했다.
+- 검증:
+  - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_112605.json`
+  - `python local_backtest/param_sweep.py --action gate --report local_backtest/reports/local_backtest_20260306_113040.json`
+- 최신 결과:
+  - 1y: `local_backtest/reports/local_backtest_20260306_112605.json`
+    - `trades=114`, `net=33.255027`, `pf=3.698020`, `max_dd=31.723166%`, `VERDICT=GO`
+    - 직전 최신(`093329`) 대비:
+      - `trend_volume_block: 23938 -> 17096`
+      - `cost_gate_reject: 7286 -> 6345`
+      - `regime_unknown: 13862 -> 13862`
+      - `trend_setup_missing: 12893 -> 20157`
+  - 3y: `local_backtest/reports/local_backtest_20260306_113040.json`
+    - `trades=160`, `net=13.439377`, `pf=1.988586`, `max_dd=34.216095%`, `VERDICT=GO`
+    - 직전 최신(`093807`) 대비:
+      - `trend_volume_block: 76022 -> 54682`
+      - `cost_gate_reject: 22330 -> 19298`
+      - `regime_unknown: 46870 -> 46870`
+      - `trend_setup_missing: 41076 -> 63846`
+- 결론:
+  - `trades > 0`는 1y/3y 모두 유지됐고, 사용자가 지정한 우선순위 중 `trend_volume_block`과 `cost_gate_reject`는 실제로 낮췄다.
+  - 대신 block가 `trend_setup_missing`으로 크게 이동했다.
+  - 따라서 “한 번 더 패치하면 더 좋아질 것”이라는 확신보다는, 현재 상태를 오늘의 결론본으로 삼고 다음 작업은
+    - `trend_setup_missing`를 직접 다루는 마지막 구조 조정,
+    - 또는 더 단순한 단일 엔트리 체계 재설계
+    중 하나로 명시적으로 선택하는 것이 맞다.
+  - 무한 수정 방지 기준상, 이 턴 이후 같은 방식의 미세 튜닝을 연속으로 더 하지 않는 것이 바람직하다.
+
+### Session Memory Update (2026-03-07 Single-Entry Redesign Attempt)
+- 사용자 요청:
+  - `ra_2026_v1`를 더 단순한 단일 엔트리 구조로 재설계.
+  - 무한 수정으로 들어가지 않도록 이번 턴 안에서 구조안의 성공/실패를 숫자로 판정.
+- 먼저 확인한 유지 계약:
+  - `RA2026V1` / `RA2026V1CandidateSelector` 이름과 메서드 표면은 유지해야 한다.
+  - 진입 decision의 `entry_price`, `score`, `sl_tp`, `execution`, `stop_distance_frac`, `regime`, `reason` 표면은 `v2/run.py`, clean-room risk/sizer, 로컬 백테스트가 직접 읽으므로 유지해야 한다.
+  - `logger` 기반 decision journal도 유지해야 백테스트가 strategy metadata를 수집한다.
+- 1차 시도:
+  - `v2/strategies/ra_2026_v1.py`
+    - breakout/pullback 이중 구조를 `continuation` 단일 엔트리로 통합하는 실험안을 작성.
+    - 1h/15m 정렬 + 최근 고저점 재회복 + participation 기반의 단일 continuation trigger로 단순화.
+  - 검증:
+    - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+    - `python -m pytest -q v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+    - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 1 30`
+    - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 3 30`
+  - 결과:
+    - 1y: console summary 기준 `net=24.76`, `pf=5.151`, `max_dd=22.34%`, `trades=76`
+      - top blocks: `trend_setup_missing=38162`, `regime_unknown=13878`, `cost_gate_reject=6329`, `trend_volume_block=2627`
+    - 3y: markdown 리포트 `local_backtest/reports/local_backtest_20260306_172310.md`
+      - `net=-6.12`, `pf=0.117`, `max_dd=20.31%`, `trades=85`
+      - top blocks: `trend_setup_missing=122183`, `regime_unknown=46838`, `cost_gate_reject=19298`, `trend_volume_block=7900`
+  - 판정:
+    - 단일 continuation 구조는 3y에서 즉시 실패. 무한 튜닝 없이 폐기.
+- 2차 시도(최종 단일 엔트리안):
+  - `v2/strategies/ra_2026_v1.py`
+    - 단일 엔트리를 `breakout-only` 구조로 재설계.
+    - pullback 계열 분기를 제거하고, 기존에 검증된 donchian breakout + 1h/15m 정렬 + participation-aware volume/cost gate만 남김.
+    - 외부 표면은 유지하되 진입 family는 단일 `breakout`으로 정리.
+  - `v2/tests/test_ra_2026_v1_247.py`
+    - runner metadata 검증을 단일 `breakout` family 기준으로 수정.
+  - `v2/config/config.yaml`
+    - continuation 전용 임시 파라미터는 제거하고 profile/base를 다시 breakout-only 기준으로 정리.
+  - 검증:
+    - `python -m ruff check v2/strategies/ra_2026_v1.py v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+    - `python -m pytest -q v2/tests/test_ra_2026_v1.py v2/tests/test_ra_2026_v1_247.py`
+    - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 1 30`
+    - `bash local_backtest/run_local_backtest.sh BTCUSDT,ETHUSDT 3 30`
+  - 결과:
+    - 1y: markdown 리포트 `local_backtest/reports/local_backtest_20260306_173830.md`
+      - `net=8.26`, `pf=2.242`, `max_dd=32.51%`, `trades=96`
+      - top blocks: `trend_setup_missing=19309`, `trend_volume_block=18949`, `regime_unknown=13878`, `cost_gate_reject=6329`
+    - 3y: markdown 리포트 `local_backtest/reports/local_backtest_20260306_174305.md`
+      - `net=5.42`, `pf=1.708`, `max_dd=36.08%`, `trades=112`
+      - top blocks: `trend_setup_missing=61436`, `trend_volume_block=60403`, `regime_unknown=46838`, `cost_gate_reject=19298`
+- 최종 판정:
+  - 단일 엔트리 재설계는 `trades > 0` 자체는 유지했지만, 직전 안정판(`112605` / `113040`) 대비 성능이 명확히 후퇴했다.
+  - 따라서 현재 working tree의 단일 breakout 안은 “실험용 구조 초안”이고, 운영 기준 권고안으로는 직전 안정판을 유지하는 것이 맞다.
+  - 이번 턴은 여기서 종료하고 더 이상의 미세 튜닝은 하지 않는다.
+- 추가 메모:
+  - 이번 신규 백테스트는 stdout에서 `REPORT_JSON=...` 경로를 출력했지만 실제로는 markdown(`.md`)만 남고 json 파일은 보이지 않았다.
+  - 숫자 판정은 console summary와 markdown 리포트 기준으로 수행했다. 이 report retention 불일치는 후속 점검이 필요하다.
+  - 실험 결과가 직전 안정판보다 명확히 후퇴했기 때문에, 이번 턴 종료 전 전략 코드는 다시 직전 안정 구조(dual entry breakout/pullback)로 복구했다.
+  - 따라서 현재 working tree 운영 권고 기준은 실험 리포트(`173830` / `174305`)가 아니라 직전 검증된 안정판 리포트(`112605` / `113040`)를 따른다.
+
+### Session Memory Update (2026-03-07 Live24 Readiness Hardening)
+- 사용자 요청:
+  - “내일 당장 실시간 24시간/7일동안 매매 가능한 상태” 기준으로, 전략 전체 재작성보다 실제 운영 가능 상태를 우선해서 개발.
+- 판단:
+  - 현재 기준에서 새 전략을 또 손대는 것은 오히려 리스크다.
+  - 따라서 전략 로직은 직전 안정판(`112605` / `113040`)으로 동결하고, 라이브 전용 보수 프로필 + readiness 표면 + 보수 runtime 기본값을 추가하는 방향이 맞다고 판단.
+- 적용한 수정:
+  - `v2/config/config.yaml`
+    - 새 프로필 `ra_2026_v1_live24` 추가.
+    - `inherits: ra_2026_v1`
+    - 보수 risk defaults:
+      - `max_leverage: 5.0`
+      - `max_exposure_pct: 0.10`
+      - `daily_loss_limit_pct: -0.015`
+      - `dd_limit_pct: -0.12`
+      - `exchange.default_symbol: BTCUSDT`
+  - `v2/control/api.py`
+    - profile별 runtime risk 기본값 주입 훅 `_profile_runtime_risk_overrides(...)` 추가.
+    - `ra_2026_v1_live24` 프로필은 controller 초기 risk state에서 다음 값을 기본으로 시드:
+      - `risk_score_min=0.60`
+      - `spread_max_pct=0.35`
+      - `margin_use_pct=0.10`
+      - `universe_symbols=[BTCUSDT]`
+      - `enable_watchdog=true`
+      - `watchdog_interval_sec=15`
+      - `lose_streak_n=2`
+      - `cooldown_hours=4`
+    - `_live_readiness_snapshot(...)` 추가:
+      - profile, mode, enabled symbols, margin use, leverage, daily/DD limit, auto risk circuit, scheduler tick, exchange private availability를 체크해 `ready/caution/blocked`로 요약.
+    - `/status`에 `live_readiness` 포함.
+    - 신규 HTTP endpoint `/readiness` 추가.
+  - `v2/tests/test_v2_config_loader.py`
+    - `ra_2026_v1_live24` profile load regression 추가.
+  - `v2/tests/test_control_api.py`
+    - `_build_app`, `_build_controller` helper가 profile 인자를 받을 수 있게 보강.
+    - `ra_2026_v1_live24`의 보수 runtime defaults + `/readiness` + `/status.live_readiness` 검증 추가.
+- 검증:
+  - `python -m ruff check v2/control/api.py v2/tests/test_control_api.py v2/tests/test_v2_config_loader.py`
+  - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py -k 'live24 or control_api_contract or ra_2026_v1_profile_loads or live24_profile'`
+  - `python -m v2.run --deploy-prep --profile ra_2026_v1_live24 --mode shadow --env testnet --keep-reports 30`
+- 결과:
+  - 새 라이브 프로필이 정상 로드되고 `deploy-prep` shadow smoke까지 통과했다.
+  - 내일 라이브 기준의 기본값이 과도한 `margin_use_pct=1.0` 상태로 시작하지 않도록 보수 기본값을 강제했다.
+  - 운영자는 `/status` 또는 `/readiness`만 보면 지금 설정이 24/7 라이브용으로 충분히 보수적인지 즉시 확인할 수 있다.
+
+### Session Memory Update (2026-03-07 Codex Skills Install)
+- 사용자 요청:
+  - `https://github.com/openai/skills/tree/main`가 24/7 트레이딩 프로그램 작업에 쓸모가 있는지 판단하고, 유용하면 설치.
+- 확인 사항:
+  - `openai/skills`는 트레이딩 런타임 기능 추가용 패키지가 아니라, Codex 작업 방식을 보강하는 작업용 skill 모음이다.
+  - 현재 GitHub 기준 설치 가능한 curated 목록은 존재했고, `.experimental` 경로는 `404`로 확인되어 현재 리포 기준에선 비활성/제거 상태로 보였다.
+- 설치한 skill:
+  - `security-best-practices`
+  - `security-threat-model`
+  - `jupyter-notebook`
+  - `sentry`
+- 운영 판단:
+  - 직접적인 수익/전략 개선 도구는 아니다.
+  - 대신 24/7 운영 관점에서 `security-*`는 노출면/인증/시크릿/제어면 검토에 유용하고, `sentry`는 prod 장애 추적에 직접적이며, `jupyter-notebook`는 로컬 백테스트/리포트 분석 정리에 유용하다.
+  - 따라서 “있으면 좋은 보조도구”로는 맞지만, 이것만 설치한다고 라이브 준비도가 올라가는 것은 아니다. 핵심은 여전히 runtime guardrail, auth, 모니터링, restart 정책, risk enforcement 쪽이다.
+- 메모:
+  - 설치 경로는 `~/.codex/skills/<skill-name>`.
+  - 새 skill 인식에는 Codex 재시작이 필요하다.
+
+### Session Memory Update (2026-03-07 Profit-First Strategy Track)
+- 사용자 요청:
+  - `ra_2026_v1` 운영판은 유지하되, “돈 크게 벌” 별도 `profit-first` 전략 트랙을 오늘 안에 만들고 실전 투입 가능 여부까지 판정.
+- 구현:
+  - 새 전략 파일 `v2/strategies/ra_2026_profit_v1.py` 추가.
+    - 전략 이름은 `ra_2026_profit_v1`.
+    - 내부 코어 로직은 `RA2026V1`를 재사용하고, 별도 candidate selector 이름도 분리해 로그/커널에서 새 전략명으로 보이게 함.
+  - `v2/clean_room/kernel.py`
+    - 단일 하드코딩을 걷어내고 `ra_2026_v1`, `ra_2026_profit_v1` 둘 다 selector/strategy로 빌드 가능하게 수정.
+  - `v2/run.py`
+    - 로컬 백테스트 전략 허용 목록에 `ra_2026_profit_v1` 추가.
+    - shadow journal의 `strategy` 필드가 실제 활성 전략명을 쓰도록 수정.
+  - `v2/config/config.yaml`
+    - `ra_2026_profit_v1` profile 추가.
+      - risk defaults:
+        - `max_leverage: 12.0`
+        - `max_exposure_pct: 0.45`
+        - `daily_loss_limit_pct: -0.05`
+        - `dd_limit_pct: -0.30`
+      - strategy params는 최종적으로 `ra_2026_v1` 안정판 signal set을 그대로 복제하고, profit-first는 `risk_per_trade_trend_pct=0.025`, `risk_per_trade_range_pct=0.006`, `max_effective_leverage=40.0` 쪽에서 size를 키우는 구조로 정리.
+    - `ra_2026_profit_v1_live` profile 추가.
+      - `inherits: ra_2026_profit_v1`
+      - live runtime risk defaults:
+        - `max_leverage: 8.0`
+        - `max_exposure_pct: 0.25`
+        - `daily_loss_limit_pct: -0.03`
+        - `dd_limit_pct: -0.18`
+        - `exchange.default_symbol: BTCUSDT`
+  - `v2/control/api.py`
+    - `ra_2026_profit_v1_live`용 runtime seed/readiness 추가:
+      - `risk_score_min=0.48`
+      - `spread_max_pct=0.45`
+      - `margin_use_pct=0.18`
+      - `universe_symbols=[BTCUSDT, ETHUSDT]`
+      - `lose_streak_n=2`
+      - `cooldown_hours=2`
+    - `/readiness`와 `/status.live_readiness`가 `ra_2026_profit_v1_live`도 인식하도록 확장.
+- 검증:
+  - `python -m ruff check v2/strategies/ra_2026_profit_v1.py v2/clean_room/kernel.py v2/run.py v2/control/api.py v2/tests/test_ra_2026_profit_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_run_smoke.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_profit_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_run_smoke.py`
+  - `python -m v2.run --deploy-prep --profile ra_2026_profit_v1_live --mode shadow --env testnet --keep-reports 30`
+- 백테스트 결과:
+  - 최종 1y profit-first strict run:
+    - `local_backtest/reports/local_backtest_20260307_131505.json`
+    - `net=61.428305`
+    - `pf=3.245665`
+    - `max_dd=47.847054%`
+    - `trades=76`
+  - 최종 3y profit-first strict run:
+    - `local_backtest/reports/local_backtest_20260307_131920.json`
+    - `net=-5.985496`
+    - `pf=0.206818`
+    - `max_dd=42.263962%`
+    - `trades=46`
+  - 3y top blocks는 여전히 `trend_setup_missing`, `trend_volume_block`, `regime_unknown`, `cost_gate_reject`가 상위고, aggressive sizing 이후 `peak_drawdown_kill_block`가 크게 증가.
+- 최종 판정:
+  - `profit-first` 후보는 “1년에서만 강한 연구용 트랙” 수준까지는 올라왔지만, 3년에서 손익과 PF가 붕괴해 아직 실전 승인 불가.
+  - 따라서 오늘 기준 운영 권고는 여전히 `ra_2026_v1_live24` 안정판이고, `ra_2026_profit_v1(_live)`는 research/shadow 전용으로 취급해야 한다.
+  - 다음 턴에서 profit-first를 계속 밀 거면, 더 미세한 진입 튜닝보다 `trend_setup_missing` 세분 계측 + symbol/time-window 편향 점검을 먼저 하고, 3년 음수 상태를 뒤집지 못하면 과감히 폐기하는 것이 맞다.
+
+### Session Memory Update (2026-03-07 Simple Strategy Redesign Attempt)
+- 단일 직렬형 단순 전략 실험은 1년 기준 끝까지 `trades=0` deadlock을 벗어나지 못해 폐기했다.
+- 관련 코드/프로필/테스트와 실험 산출물은 working tree에서 모두 삭제했다.
+- 다음 재설계는 단일 직렬 전략이 아니라 `2~3개 단순 알파 모듈` 병렬 구조로 가는 것이 낫다고 판단했다.
+
+### Session Memory Update (2026-03-08 Modular Alpha Verdict)
+- 사용자 의도:
+  - `ra_2026_v1_live24`/`ra_2026_profit_v1` 운영판은 더 건드리지 않고, BTC 전용 `균형형` 새 전략을 별도 트랙으로 만들되 `수정지옥`에 빠지지 않도록 명확한 합격/실패 판정을 내릴 것.
+- 구현 범위:
+  - 새 전략 `v2/strategies/ra_2026_alpha_v2.py` 추가.
+    - 구조: `alpha_breakout`, `alpha_pullback`, `alpha_expansion` 병렬 평가.
+    - 공통 규칙: `15m` 실행, `1h/4h` 컨텍스트, `single entry / single exit`, `TP=2.0R`, `time_stop=24 bars`, `stop_exit_cooldown_bars=12`.
+    - block reason 분해: `regime_missing`, `bias_missing`, `trigger_missing`, `volume_missing`, `cost_missing`.
+    - `alpha_id`, `entry_family`, `allow_reverse_exit=False`, `reward_risk_reference_r=2.0`를 candidate/decision에 태움.
+  - `v2/clean_room/contracts.py`
+    - `Candidate.alpha_id` 필드 추가.
+  - `v2/config/config.yaml`
+    - `ra_2026_alpha_v2`와 단독/2알파 조합 프로필 추가:
+      - `ra_2026_alpha_v2_breakout`
+      - `ra_2026_alpha_v2_pullback`
+      - `ra_2026_alpha_v2_expansion`
+      - `ra_2026_alpha_v2_breakout_pullback`
+      - `ra_2026_alpha_v2_breakout_expansion`
+      - `ra_2026_alpha_v2_pullback_expansion`
+  - `v2/run.py`
+    - local backtest가 `alpha_id`, `alpha_block_distribution`, `alpha_stats`, `window_slices_6m`를 summary에 남기도록 연결.
+    - `_OpenTrade.allow_reverse_exit`를 읽어 reverse exit 비활성 전략을 정확히 시뮬레이션하도록 수정.
+    - `_Kline15m`에 `volume` 필드 추가.
+    - CSV cache writer/reader, snapshot provider, interval aggregation이 모두 `volume`을 보존하도록 수정.
+    - stale cache가 `volume` 컬럼이 없으면 자동 recache하도록 수정.
+    - replay/local-backtest report filename stamp를 microsecond 단위로 바꿔 병렬 실행 시 파일명 충돌/덮어쓰기 버그를 제거.
+- 이번 턴에서 확인된 핵심 버그:
+  - `ra_2026_alpha_v2` unit test는 통과했는데 actual replay에서는 `insufficient_15m_data`로 0-trade가 나왔다.
+  - 원인은 전략 문제가 아니라 local-backtest kline schema에 `volume`이 없던 것.
+  - 이 버그 때문에 volume-aware 전략은 replay에서 항상 `volume_sma <= 0`가 되어 사실상 죽어 있었다.
+  - 즉 이후 volume-aware 전략 실험 전에는 `v2/run.py`의 `volume` plumbing이 이미 반영된 working tree인지 먼저 확인해야 한다.
+- 추가 회귀/검증:
+  - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py`
+  - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/clean_room/contracts.py v2/clean_room/kernel.py v2/run.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py`
+  - `v2/tests/test_v2_local_backtest.py`에는 volume cache/provider/aggregation 회귀와 `alpha_stats`/`window_slices_6m` 회귀가 추가되어 있다.
+- 최종 검증 숫자:
+  - 1y full combo: `local_backtest/reports/local_backtest_20260307_162400.json`
+    - `trades=240`, `net=5.563762`, `pf=2.497653`, `max_dd=7.238488%`
+  - 3y breakout-only: `local_backtest/reports/local_backtest_20260307_162719.json`
+    - `trades=446`, `net=5.527647`, `pf=2.287955`, `max_dd=4.700352%`
+  - 3y expansion-only: `local_backtest/reports/local_backtest_20260307_163653.json`
+    - `trades=517`, `net=11.027525`, `pf=2.629216`, `max_dd=5.957001%`
+  - 3y breakout+expansion: `local_backtest/reports/local_backtest_20260307_164809_562806.json`
+    - `trades=727`, `net=13.176972`, `pf=2.446980`, `max_dd=6.328160%`
+  - 3y full 3-alpha: `local_backtest/reports/local_backtest_20260307_165809_738481.json`
+    - `trades=841`, `net=9.841323`, `pf=2.043919`, `max_dd=9.014029%`
+  - 3y breakout+pullback: `local_backtest/reports/local_backtest_20260307_165809_754808.json`
+    - `trades=566`, `net=3.692187`, `pf=1.829487`, `max_dd=9.857795%`
+  - 1y breakout+expansion retest: `local_backtest/reports/local_backtest_20260307_170808_349795.json`
+    - `trades=201`, `net=5.696722`, `pf=3.187431`, `max_dd=6.328160%`
+  - 1y expansion-only final guardrail: `local_backtest/reports/local_backtest_20260307_172257_591546.json`
+    - `trades=140`, `net=3.442576`, `pf=2.886258`, `max_dd=5.956744%`
+- 전략적 해석:
+  - `pullback`는 거래 수만 늘리고 순이익을 깎는 모듈로 판정됐다.
+  - 최상위 조합은 `breakout+expansion`이지만, 1년과 3년 모두 operator acceptance line을 못 넘었다.
+    - 요구치: `1y net > 33.26`, `3y net > 13.44`
+    - 실제 최선: `1y net 5.70`, `3y net 13.18`
+  - 따라서 이건 “튜닝 부족”이 아니라 “전략군 자체의 수익 파워 한계”로 보는 것이 맞다.
+  - 더 손보면 최적화가 아니라 숫자 장난/수정지옥으로 들어간다고 판단했고, 의도적으로 여기서 중단했다.
+- 운영/연구 판정:
+  - `ra_2026_alpha_v2`는 구현 완료, 계측 완료, deadlock 해소까지는 성공.
+  - 하지만 실전 메인 전략으로는 실패이며 `live` 승인 금지.
+  - `ra_2026_v1_live24`와 `ra_2026_profit_v1`는 reference/archive로 남기되, 이번 modular-alpha 결과 때문에 다시 미세튜닝 트랙으로 되돌아가면 안 된다.
+  - 다음 새 컨텍스트에서 이어갈 경우, 동일 전략군 재튜닝이 아니라 “다른 전략 클래스”로 넘어가는 것이 맞다.
+- 다음 컨텍스트용 금지사항:
+  - `ra_2026_alpha_v2`를 더 미세조정하지 말 것.
+  - acceptance line을 낮춰서 억지 채택하지 말 것.
+  - 3년만 보고 `GO`라고 부르지 말 것.
+  - `breakout+expansion`이 가장 좋았다는 사실을 “채택 가능”으로 과장하지 말 것. 정확한 표현은 “이 전략군 내 최상위이지만 최종 기준 미달”이다.
+
+### Session Memory Update (2026-03-09 Failed Breakout Reversal Attempt)
+- 새 BTC-only 전략 `v2/strategies/ra_2026_fb_v1.py`를 추가했다.
+  - 구조: `15m` 실행, `1h/4h` 컨텍스트, `failed breakout -> channel reclaim -> wick rejection -> RSI/volume/cost gate`.
+  - 후보 메타: `alpha_id=failed_break_revert`, `entry_family=failed_breakout`.
+  - block reason: `regime_conflict`, `break_not_extended`, `reclaim_missing`, `rsi_not_extreme`, `wick_rejection_missing`, `volume_missing`, `cost_missing`.
+- clean-room/runtime 연결:
+  - `v2/clean_room/kernel.py`에 `ra_2026_fb_v1` selector 경로 추가.
+  - `v2/config/config.yaml`에 `ra_2026_fb_v1` 프로필 추가.
+  - `v2/run.py` local backtest에 `fb-fast-kill` research gate와 전략 전용 CLI override 추가:
+    - `--backtest-fb-failed-break-buffer-bps`
+    - `--backtest-fb-wick-ratio-min`
+    - `--backtest-fb-take-profit-r`
+    - `--backtest-fb-time-stop-bars`
+  - `local_backtest/param_sweep.py`가 위 4개 파라미터를 case 차원에서 넘길 수 있게 확장됐다.
+- 테스트 추가/갱신:
+  - 신규: `v2/tests/test_ra_2026_fb_v1.py`
+  - 갱신: `v2/tests/test_v2_config_loader.py`, `v2/tests/test_v2_run_smoke.py`, `v2/tests/test_clean_room_kernel.py`, `v2/tests/test_v2_local_backtest.py`, `v2/tests/test_local_backtest_param_sweep.py`
+- 검증:
+  - `python -m ruff check v2 v2/tests` 통과
+  - `python -m pytest -q` 전체 통과
+- 첫 baseline verdict:
+  - 고정 6개월 창 `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z`
+  - 리포트: `local_backtest/reports/local_backtest_20260308_194417_580622.json`
+  - 결과: `net=-6.014104`, `pf=0.559744`, `max_dd=19.869702%`, `trades=86`, `research_gate=KILL`
+  - slice_6m도 `KILL` (`net=-3.225266`, `pf=0.559744`, `max_dd=11.684968%`, `trades=86`)
+  - top blocks: `break_not_extended`, `insufficient_4h_data`, `reclaim_missing`, `rsi_not_extreme`
+- 해석:
+  - `ra_2026_fb_v1` 기본값은 거래는 발생했지만, 품질이 낮아 빠르게 음수로 기울었다.
+  - `mr_v1`처럼 0-trade dead branch는 아니지만, 현재 기본 설계로는 바로 `KILL`이다.
+  - 다음 턴에서 이 가족을 계속 볼 경우에도 “기본 설계가 이미 실패했다”는 전제를 유지해야 하며, 6개월 KILL을 무시한 장기 재런은 금지하는 것이 맞다.
+
+### Session Memory Update (2026-03-09 CBR Bounded Pass + LSR Baseline)
+- `ra_2026_cbr_v1`에 대해 6개월 fixed-window bounded participation pass를 메인 워크스페이스에서 재실행했다.
+  - 창: `2025-09-06T20:21:11Z ~ 2026-03-07T20:21:11Z`
+  - 기존 기본값보다 나아진 근접 케이스는 있었지만, fast-kill line은 여전히 못 넘겼다.
+  - 대표 근접 케이스 1: `local_backtest/reports/local_backtest_20260308_202946_728094.json`
+    - `net=0.045902`, `pf=1.853722`, `max_dd=0.997681%`, `trades=26`, `fee_to_trade_gross=92.035756%`, `research_gate=KILL`
+  - 대표 근접 케이스 2: `local_backtest/reports/local_backtest_20260308_203609_940750.json`
+    - `net=-0.002188`, `pf=1.706051`, `max_dd=1.292974%`, `trades=29`, `fee_to_trade_gross=100.376229%`, `research_gate=KILL`
+  - 해석:
+    - CBR는 `trade_count`는 살릴 수 있었지만, `fee_to_trade_gross`와 full-window net을 동시에 못 맞췄다.
+    - 따라서 메인 워크스페이스 기준 CBR는 여전히 `KILL`이며, 더 만지면 bounded tuning이 아니라 overfit 영역으로 들어간다고 판단한다.
+- 새 전략 클래스 `ra_2026_lsr_v1`를 추가했다.
+  - 파일: `v2/strategies/ra_2026_lsr_v1.py`
+  - 의도: BTC-only `liquidity sweep reclaim` 연구 브랜치. `15m` 실행, `1h/4h` 컨텍스트, `liquidity_sweep_reclaim` 알파 ID, `sweep_reclaim` entry family.
+  - 명시적 block reason: `trend_conflict`, `bias_missing`, `level_not_swept`, `reclaim_missing`, `wick_rejection_missing`, `rsi_not_extreme`, `volume_missing`, `cost_missing`.
+  - 연결:
+    - `v2/clean_room/kernel.py`에 strategy/selector 등록
+    - `v2/config/config.yaml`에 `ra_2026_lsr_v1` 프로필 추가
+    - `v2/run.py`에 `lsr-fast-kill` research gate 추가
+    - 테스트 추가/갱신:
+      - `v2/tests/test_ra_2026_lsr_v1.py`
+      - `v2/tests/test_v2_config_loader.py`
+      - `v2/tests/test_clean_room_kernel.py`
+      - `v2/tests/test_v2_run_smoke.py`
+      - `v2/tests/test_v2_local_backtest.py`
+- 검증:
+  - `python -m ruff check v2 v2/tests local_backtest/param_sweep.py` 통과
+  - `python -m pytest -q` 전체 통과
+- 첫 LSR baseline verdict:
+  - 리포트: `local_backtest/reports/local_backtest_20260308_204643_222929.json`
+  - 결과: `net=-0.046344`, `pf=0.0`, `max_dd=0.0%`, `trades=1`, `research_gate=KILL`
+  - slice_6m도 `KILL` (`net=-0.027808`, `pf=0.0`, `trades=1`)
+  - top blocks: `trend_conflict=14171`, `insufficient_4h_data=3293`
+  - 해석:
+    - 현재 LSR 기본값은 손익 이전에 `participation failure` 상태다.
+    - 즉 첫 수정 포인트는 fee나 TP가 아니라 `trend_conflict` / `side selection` / entry participation 재설계다.
+
+### Session Memory Update (2026-03-09 Session Funding Dislocation Baseline)
+- 새 멀티심볼 세션-디슬로케이션 전략 `v2/strategies/ra_2026_sfd_v1.py`를 추가했다.
+  - 구조: `BTCUSDT/ETHUSDT/SOLUSDT/BNBUSDT`, `15m` 실행 + `1h/4h` 컨텍스트, 내부 알파 `session_reclaim` / `session_drive`.
+  - 핵심 컨셉: 아시아 세션(`00:00-07:59 UTC`) 범위가 런던/뉴욕 세션에서 깨질 때, `sweep->reclaim` 또는 `break->retest`만 거래.
+  - 명시적 block reason: `outside_trade_session`, `asia_range_unavailable`, `asia_range_too_small`, `asia_range_too_large`, `reclaim_missing`, `drive_break_missing`, `retest_missing`, `wick_rejection_missing`, `volume_missing`, `crowding_conflict`, `cost_missing`.
+  - 런타임 전용 오버레이: `funding_rate + long_short_ratio -> crowd_state/crowd_fit_score`, extreme conflict는 차단하고 그 외는 점수 가감만 적용.
+- clean-room/runtime 연결:
+  - `v2/clean_room/kernel.py`에 `ra_2026_sfd_v1` strategy/selector 등록.
+  - `v2/config/config.yaml`에 `ra_2026_sfd_v1` 프로필 추가.
+    - `max_open_positions=2`
+    - `market_intervals=[15m,1h,4h]`
+    - `risk.max_exposure_pct=0.18`
+    - `risk.daily_loss_limit_pct=-0.03`
+    - `risk.dd_limit_pct=-0.15`
+  - `v2/run.py`에 `sfd-session-core` research gate, 포트폴리오 리플레이 연결, report `strategy_meta` 노출, CLI override 추가:
+    - `--backtest-sfd-reclaim-sweep-buffer-bps`
+    - `--backtest-sfd-reclaim-wick-ratio-min`
+    - `--backtest-sfd-drive-breakout-range-atr-min`
+    - `--backtest-sfd-take-profit-r`
+  - `local_backtest/param_sweep.py`에 SFD bounded sweep case surface를 추가했다.
+- 테스트 추가/갱신:
+  - 신규: `v2/tests/test_ra_2026_sfd_v1.py`
+  - 갱신: `v2/tests/test_clean_room_kernel.py`, `v2/tests/test_v2_config_loader.py`, `v2/tests/test_v2_run_smoke.py`, `v2/tests/test_v2_local_backtest.py`, `v2/tests/test_local_backtest_param_sweep.py`
+- 검증:
+  - `python -m ruff check v2/strategies/ra_2026_sfd_v1.py v2/clean_room/kernel.py v2/run.py local_backtest/param_sweep.py v2/tests/test_ra_2026_sfd_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py` 통과
+  - `python -m pytest -q v2/tests/test_ra_2026_sfd_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py` 통과
+  - `python -m pytest -q` 전체 통과
+- 첫 baseline verdict:
+  - 고정 6개월 창: `2025-09-09T00:00:00Z ~ 2026-03-08T23:59:59Z`
+  - 리포트: `local_backtest/reports/local_backtest_20260309_092355_664573.json`
+  - 결과: `total_net_profit=-0.952105`, `profit_factor=0.602144`, `max_dd=3.704072%`, `total_trades=19`, `research_gate=KILL`
+  - slice_6m도 `KILL` (`net=-0.791616`, `pf=0.602144`, `max_dd=2.943584%`, `trades=19`)
+  - alpha 분해:
+    - `session_reclaim`: `trades=12`, `net=-0.719439`, `pf=0.473278`
+    - `session_drive`: `trades=7`, `net=-0.072177`, `pf=0.884299`
+  - top blocks:
+    - `outside_trade_session`
+    - `asia_range_too_large`
+    - `insufficient_4h_data`
+    - reclaim 쪽은 `reclaim_missing`, drive 쪽은 `drive_break_missing`
+  - 포트폴리오 사용률:
+    - `portfolio_open_slots_usage={0:17252, 1:122, 2:2}`
+    - `capital_utilization.avg_pct=0.07435`
+- 해석:
+  - SFD v1은 새 정보축과 멀티심볼 구조까지 붙였지만, 첫 6개월 baseline에서 참여도와 기대값 둘 다 기준 미달이다.
+  - 계획대로 `6m fail -> branch KILL` 규칙을 적용했고, `1y/3y baseline`, `bounded sweep`, `shadow burn-in`은 진행하지 않았다.
+  - 다음 단계는 이 브랜치를 미세튜닝하는 것이 아니라, 세션 구조는 유지하더라도 `asia_range_too_large`와 참여도 문제를 완전히 다른 규칙으로 재정의한 새 클래스가 필요하다.
+
+### Session Memory Update (2026-03-10 Premium Funding Dislocation Baseline)
+- 새 멀티심볼 프리미엄-펀딩 디슬로케이션 전략 `v2/strategies/ra_2026_pfd_v1.py`를 추가했다.
+  - 구조: `BTCUSDT/ETHUSDT/SOLUSDT/BNBUSDT`, `15m` 실행 + `1h/4h` 컨텍스트, 단일 알파 `crowded_reversion`.
+  - 핵심 정보축: `premiumIndexKlines(15m)` + `fundingRate` + 기존 `OHLCV`.
+  - 명시적 block reason: `premium_history_unavailable`, `funding_history_unavailable`, `premium_not_extreme`, `funding_not_supportive`, `reclaim_missing`, `volume_missing`, `cost_missing`.
+- 데이터/리플레이 연결:
+  - `v2/run.py`에 premium/funding 다운로드, 별도 캐시, 스냅샷 주입, 포트폴리오 리플레이 연결을 추가했다.
+  - 새 캐시 파일:
+    - `premium_<symbol>_15m_<years>y.csv`
+    - `funding_<symbol>_<years>y.csv`
+  - 스냅샷 필드:
+    - `premium.close_15m`
+    - `premium.zscore_24h`
+    - `premium.zscore_3d`
+    - `funding.last`
+    - `funding.sum_24h`
+    - `funding.sum_3d`
+  - `v2/run.py`에 `pfd-crowding-core` research gate와 CLI override를 추가했다:
+    - `--backtest-pfd-premium-z-min`
+    - `--backtest-pfd-funding-24h-min`
+    - `--backtest-pfd-reclaim-buffer-atr`
+    - `--backtest-pfd-take-profit-r`
+- clean-room/runtime 연결:
+  - `v2/clean_room/kernel.py`에 `ra_2026_pfd_v1` strategy/selector 등록.
+  - `v2/config/config.yaml`에 `ra_2026_pfd_v1` 프로필 추가.
+    - `max_open_positions=2`
+    - `market_intervals=[15m,1h,4h]`
+    - `risk.max_exposure_pct=0.16`
+    - `risk.daily_loss_limit_pct=-0.03`
+    - `risk.dd_limit_pct=-0.15`
+  - `local_backtest/param_sweep.py`에 PFD bounded sweep 4축(`premium_z_min`, `funding_sum_24h_abs_min`, `reclaim_buffer_atr`, `take_profit_r`)과 PFD 전용 16-case 기본 sweep 고정을 추가했다.
+- 테스트 추가/갱신:
+  - 신규: `v2/tests/test_ra_2026_pfd_v1.py`
+  - 갱신: `v2/tests/test_clean_room_kernel.py`, `v2/tests/test_v2_config_loader.py`, `v2/tests/test_v2_run_smoke.py`, `v2/tests/test_v2_local_backtest.py`, `v2/tests/test_local_backtest_param_sweep.py`, `v2/tests/test_market_intervals_config.py`
+- 검증:
+  - `python -m ruff check v2/run.py v2/strategies/ra_2026_pfd_v1.py local_backtest/param_sweep.py v2/tests/test_ra_2026_pfd_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py` 통과
+  - `python -m pytest -q v2/tests/test_ra_2026_pfd_v1.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py v2/tests/test_local_backtest_param_sweep.py` 통과
+  - `python -m ruff check v2 v2/tests local_backtest/param_sweep.py` 통과
+  - `python -m pytest -q` 전체 통과
+- 첫 baseline verdict:
+  - 고정 6개월 창: `2025-09-10T00:00:00Z ~ 2026-03-10T00:00:00Z`
+  - 리포트: `local_backtest/reports/local_backtest_20260309_170435_038013.json`
+  - 결과: `total_net_profit=-0.690660`, `profit_factor=0.0`, `max_dd=2.523021%`, `total_trades=4`, `research_gate=KILL`
+  - slice_6m도 `KILL` (`net=-0.628588`, `pf=0.0`, `max_dd=2.095292%`, `trades=4`)
+  - alpha 분해:
+    - `crowded_reversion`: `trades=4`, `wins=0`, `losses=4`, `net=-0.628588`, `pf=0.0`
+  - top blocks:
+    - `premium_not_extreme=52748`
+    - `premium_history_unavailable=13116`
+    - `funding_not_supportive=3281`
+    - `reclaim_missing=247`
+  - 포트폴리오 사용률:
+    - `portfolio_open_slots_usage={0:17323, 1:26}`
+    - `capital_utilization.avg_pct=0.023845`
+- 해석:
+  - PFD v1은 새 정보축 자체는 백테스트 가능한 형태로 성공적으로 붙였지만, 첫 6개월 baseline에서 `crowding extreme` 충족 빈도와 참여도가 너무 낮다.
+  - 거래가 4건뿐이라 기대값 평가 이전에 `participation failure`에 가깝다.
+  - 계획대로 `6m fail -> branch KILL` 규칙을 적용했고, `1y/3y baseline`, `bounded sweep`, `shadow` 단계는 진행하지 않았다.
+  - 다음 단계는 같은 premium/funding 축을 유지하더라도 `premium_not_extreme` 과차단과 `premium_history_unavailable` 초기 구간 손실을 줄이는 방향이 아니라, crowding unwind를 다른 시장 구조와 결합한 완전히 새 클래스가 필요하다.
+
+### Session Memory Update (2026-03-11 Alpha Expansion Sweep + Backtest Isolation Fix)
+- `ra_2026_alpha_v2` 연구를 위해 로컬백테스트 튜닝 표면을 확장했다.
+  - `v2/run.py`에 alpha 전용 CLI/runtime override 8개를 추가했다:
+    - `--backtest-alpha-squeeze-percentile-max`
+    - `--backtest-alpha-expansion-buffer-bps`
+    - `--backtest-alpha-expansion-range-atr-min`
+    - `--backtest-alpha-min-volume-ratio`
+    - `--backtest-alpha-take-profit-r`
+    - `--backtest-alpha-time-stop-bars`
+    - `--backtest-alpha-trend-adx-min-4h`
+    - `--backtest-alpha-expected-move-cost-mult`
+  - `local_backtest/param_sweep.py`에도 동일한 alpha bounded sweep 축을 추가했다.
+- 첫 1y alpha sweep 결과:
+  - 리포트: `local_backtest/reports/alpha_expansion_sweep_20260311_20260310_173032.json`
+  - 초기 최상위 후보는 `alpha_expected_move_cost_mult=1.6`, `alpha_trend_adx_min_4h=14.0`, `alpha_take_profit_r=2.0`, `alpha_expansion_buffer_bps≈1.0~2.0`였지만 `fee_to_trade_gross_pct`가 `81%` 수준으로 여전히 높아 `GO`가 아니었다.
+- 두 번째 1y fee-focused sweep 결과:
+  - 리포트: `local_backtest/reports/alpha_expansion_fee_sweep_20260311_20260310_173645.json`
+  - 최상위 KEEP 후보:
+    - `alpha_squeeze_percentile_max=0.30`
+    - `alpha_expansion_buffer_bps=2.0`
+    - `alpha_expansion_range_atr_min=0.8` (`0.9`와 동급)
+    - `alpha_min_volume_ratio=1.0`
+    - `alpha_take_profit_r=2.0`
+    - `alpha_time_stop_bars=18`
+    - `alpha_trend_adx_min_4h=14.0`
+    - `alpha_expected_move_cost_mult=1.8`
+  - 1y 결과: `net=4.22`, `pf=2.263`, `max_dd=10.43%`, `trades=192`, `fee_to_trade_gross_pct=62.48%`
+- 연구 중 `ra_2026_alpha_v2_expansion` 프로필이 로컬백테스트 집계에서 `breakout/pullback` 거래까지 포함하는 이상 징후를 발견했다.
+  - 방어적 수정으로 `v2/run.py`에 `_local_backtest_profile_alpha_overrides(...)`를 추가해 alpha 전용 프로필일 경우 local-backtest runtime에서 `enabled_alphas`를 한 번 더 강제로 주입하도록 했다.
+  - 회귀 테스트를 `v2/tests/test_v2_local_backtest.py`에 추가했다.
+- 수정 후 재검증:
+  - 1y post-fix 리포트: `local_backtest/reports/alpha_expansion_candidate_20260311_1y_postfix.json`
+    - `alpha_counts={'alpha_expansion': 123}`
+    - `net=2.16`, `pf=2.481`, `max_dd=5.36%`, `trades=123`, `fee_to_trade_gross_pct=62.92%`
+  - 3y post-fix 리포트: `local_backtest/reports/alpha_expansion_candidate_20260311_3y_postfix.json`
+    - `alpha_counts={'alpha_expansion': 431}`
+    - `net=7.626346`, `pf=2.495909`, `max_dd=5.358405%`, `trades=431`, `fee_to_trade_gross_pct=63.16407%`
+    - 6개월 창 중 약한 구간은 `2023-09~2024-03`, `2025-03~2025-09`였지만 전체 3y는 비용 포함 후에도 양수/저DD를 유지했다.
+- 해석:
+  - 오늘 기준 가장 강한 실전 후보는 이제 `full alpha_v2`가 아니라 `expansion-only + cost_mult 1.8` 조합이다.
+  - `buffer 1.0 vs 2.0`, `range 0.8 vs 0.9` 차이는 사실상 미미했고, 병목은 `expected_move_cost_mult`였다.
+  - 다음 검증 우선순위는 이 post-fix 후보 기준으로 `shadow/live-candidate` 운영 검증이지, 새 alpha branch 추가가 아니다.
+
+### Session Memory Update (2026-03-11 Expansion Candidate Profiles)
+- `v2/config/config.yaml`에 다음 프로필을 추가했다:
+  - `ra_2026_alpha_v2_expansion_candidate`
+  - `ra_2026_alpha_v2_expansion_live_candidate`
+- `expansion_candidate`는 현재 최상위 튜닝 조합을 프로필로 고정한다:
+  - `enabled_alphas=[alpha_expansion]`
+  - `squeeze_percentile_threshold=0.30`
+  - `expansion_buffer_bps=2.0`
+  - `expansion_range_atr_min=0.8`
+  - `min_volume_ratio_15m=1.0`
+  - `take_profit_r=2.0`
+  - `time_stop_bars=18`
+  - `trend_adx_min_4h=14.0`
+  - `expected_move_cost_mult=1.8`
+- `expansion_live_candidate`는 위 전략 파라미터를 유지하고 운영 리스크만 더 보수적으로 줄인 프로필이다:
+  - `risk.max_leverage=5.0`
+  - `risk.max_exposure_pct=0.10`
+  - `risk.daily_loss_limit_pct=-0.015`
+  - `risk.dd_limit_pct=-0.12`
+- local-backtest 경로에서도 이 후보 프로필이 재현되도록 `v2/run.py`의 `_local_backtest_profile_alpha_overrides(...)`에 candidate/live-candidate 고정 override를 추가했다.
+- 검증:
+  - `python -m ruff check v2/run.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_local_backtest.py` 통과
+  - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_v2_local_backtest.py -k 'expansion_candidate or live_candidate or profile_alpha_overrides'` 통과
+  - `python -m v2.run --profile ra_2026_alpha_v2_expansion_candidate --mode shadow --env prod --local-backtest --backtest-offline ...` 1y 재현 결과:
+    - 리포트 `local_backtest/reports/alpha_expansion_profile_candidate_20260311_1y.json`
+    - `alpha_counts={'alpha_expansion': 123}`
+    - `net=2.16`, `pf=2.481`, `max_dd=5.36%`, `trades=123`
+  - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 5` 통과
+
+### Session Memory Update (2026-03-11 Candidate Launch Path)
+- `ra_2026_alpha_v2_expansion_live_candidate` 운영 경로를 문서/스크립트 기준 1급 시민으로 끌어올렸다.
+- 새 운영 스크립트 `v2/scripts/apply_alpha_expansion_live_candidate_risk.sh`를 추가했다.
+  - 기본 `BASE_URL`은 `http://127.0.0.1:8101`
+  - 30U 캐너리 운영에 필요한 `/set` 키들을 일괄 반영한다.
+  - 반영 후 `/risk`, `/readiness`, `/status`를 기본 검증한다.
+  - 실수로 원격 제어면을 두드리지 않도록 `localhost` 외 URL은 `--allow-remote` 없이는 거부한다.
+- `v2/docs/RUNBOOK.md`의 빠른 시작, 통합 실행, systemd 예시, preflight 예시를 `ra_2026_alpha_v2_expansion_live_candidate` 기준으로 갱신했다.
+- 정적 템플릿 `v2/systemd/v2-stack.service`의 `ExecStart` 예시도 `ra_2026_alpha_v2_expansion_live_candidate`로 맞췄다.
+- `v2/scripts/run_stack.sh`와 `v2/scripts/install_systemd_stack.sh` help/examples에 candidate launch 예시를 추가했다.
+- 검증:
+  - `bash -n v2/scripts/apply_alpha_expansion_live_candidate_risk.sh v2/scripts/install_systemd_stack.sh v2/scripts/run_stack.sh` 통과
+  - `python -m pytest -q v2/tests/test_apply_alpha_expansion_live_candidate_risk.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_local_backtest.py -k 'apply_alpha_expansion_live_candidate_risk or install_systemd_stack or expansion_candidate or live_candidate or profile_alpha_overrides'` 통과
+  - `bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/user/project/auto-trader --profile ra_2026_alpha_v2_expansion_live_candidate | rg -- '--profile ra_2026_alpha_v2_expansion_live_candidate'` 통과
+  - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 5` 재통과
+
+### Session Memory Update (2026-03-11 Expansion Followthrough Attempt)
+- `ra_2026_alpha_v2`의 `alpha_expansion`에 실험용 구조 필터 파라미터를 추가했다:
+  - `expansion_body_ratio_min`
+  - `expansion_close_location_min`
+- 필터 자체는 `v2/strategies/ra_2026_alpha_v2.py`에 optional hook으로 남겼지만, candidate/live-candidate 프로필과 local-backtest profile override에서는 활성화하지 않기로 결정했다.
+- 이유:
+  - `0.35 / 0.65` followthrough 필터를 candidate에 강제하면 1y가 `net 2.16 -> 1.04`, `trades 123 -> 99`, `pf 2.48 -> 2.13`으로 악화됐다.
+  - backtest-level score gate, stoploss streak cooldown, loss cooldown도 1y 성능 개선을 만들지 못했다.
+- 따라서 2026-03-11 현재 최고 후보는 여전히 기존 tuned candidate 조합이다:
+  - `squeeze_percentile_threshold=0.30`
+  - `expansion_buffer_bps=2.0`
+  - `expansion_range_atr_min=0.8`
+  - `min_volume_ratio_15m=1.0`
+  - `take_profit_r=2.0`
+  - `time_stop_bars=18`
+  - `trend_adx_min_4h=14.0`
+  - `expected_move_cost_mult=1.8`
+- 복구 검증:
+  - `python -m pytest -q v2/tests/test_v2_local_backtest.py v2/tests/test_ra_2026_alpha_v2.py -k 'profile_alpha_overrides or expansion'` 통과
+  - `python -m v2.run --profile ra_2026_alpha_v2_expansion_candidate --mode shadow --env prod --local-backtest ... --report-path local_backtest/reports/alpha_expansion_profile_candidate_20260311_1y_restored_v3.json` 결과 복구:
+    - `net=2.16`, `pf=2.481`, `max_dd=5.36%`, `trades=123`
+
+### Session Memory Update (2026-03-11 Expansion Followthrough Promotion)
+- followthrough 구조 필터를 더 좁혀 재탐색한 결과, `expansion_close_location_min=0.55` 단독은 1y 개선이 있었지만 3y `net/pf`가 밀려 승격하지 않았다.
+- 대신 `expansion_body_ratio_min=0.3` + `expansion_close_location_min=0.55` 조합은 1y/3y 균형이 가장 좋았다.
+  - 1y: `net=3.22`, `pf=3.019`, `max_dd=4.31%`, `trades=112`, `fee_to_trade_gross=50.44%`
+  - 3y: `net=6.60`, `pf=2.495`, `max_dd=4.39%`, `trades=386`, `fee_to_trade_gross=62.56%`
+- 기존 baseline 대비 판정:
+  - 순이익은 3y에서 `7.63 -> 6.60`으로 줄었지만,
+  - 1y 수익성, 양 창의 drawdown, 수수료 효율, 6개월 최악 slice의 `net/pf/dd`는 모두 개선됐다.
+- 따라서 repository 기준 후보 프로필을 다음 조합으로 승격했다:
+  - `ra_2026_alpha_v2_expansion_candidate`
+  - `ra_2026_alpha_v2_expansion_verified_candidate`
+  - 상속 live variants
+  - 공통 promoted params:
+    - `expansion_body_ratio_min=0.3`
+    - `expansion_close_location_min=0.55`
+- 관련 회귀:
+  - `python -m ruff check v2/run.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_config_loader.py` 통과
+  - `python -m pytest -q v2/tests/test_v2_config_loader.py -k 'expansion'` 통과
+  - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides or alpha_report_includes_runtime_params'` 통과
+
+### Session Memory Update (2026-03-11 Expansion Orthogonal Filters)
+- `alpha_expansion`에 두 개의 orthogonal optional hook을 추가했다:
+  - `expansion_width_expansion_min`
+  - `expansion_break_distance_atr_min`
+- 둘 다 기존 `_alpha_expansion()` 내부 값만 사용한다.
+  - `width_expansion_frac = (current_width - previous_width) / previous_width`
+  - `breakout_distance_atr = abs(close - donchian_channel) / atr_15m`
+- `v2.run` local-backtest CLI/report 경로도 확장했다:
+  - `--backtest-alpha-expansion-width-expansion-min`
+  - `--backtest-alpha-expansion-break-distance-atr-min`
+- focused validation passed:
+  - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/run.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_local_backtest.py`
+  - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_local_backtest.py -k 'expansion or alpha_report_includes_runtime_params'`
+- direct probe result on locked explicit candidate params (`body=0.30`, `close=0.55`, `range=0.80`, `expected_move_cost=1.80`) using base profile `ra_2026_alpha_v2_expansion`:
+  - baseline 1y: `net=1.94`, `pf=2.465`, `max_dd=5.82%`, `trades=112`
+  - `break_distance_atr_min=0.10` 1y: `net=1.98`, `pf=2.487`, `max_dd=5.71%`, `trades=111`
+  - baseline 3y: `net=5.84`, `pf=2.377`, `max_dd=5.82%`, `trades=386`
+  - `break_distance_atr_min=0.10` 3y: `net=6.08`, `pf=2.416`, `max_dd=5.71%`, `trades=378`
+- interpretation:
+  - `break_distance_atr_min=0.10` is a real but modest improvement on both 1y and 3y.
+  - `width_expansion_min >= 0.50` over-prunes too hard (`1y trades=33` or below), so it is not the primary promotion path.
+- current worktree caveat:
+  - during this turn, `v2/config/config.yaml` candidate profiles were found to already contain unexpected external edits (`0.25/0.45/0.7/width=0.05/cost=1.6` family).
+  - to avoid overwriting unknown operator changes, this turn did **not** auto-promote candidate profile YAML again; comparison was done with explicit CLI params on `ra_2026_alpha_v2_expansion`.
+
+### Session Memory Update (2026-03-11 Expansion Width/Break Promotion)
+- followthrough body/close/range/cost 축을 더 낮춰도 동일 성능 plateau가 길게 유지되는 것을 확인했고, 따라서 실제 병목은 구조 quality가 아니라 expansion trigger 강도(`width_expansion_frac`, `breakout_distance_atr`) 쪽이라는 결론을 얻었다.
+- 직접 1y probe 결과:
+  - baseline promoted plateau: `net=3.22`, `pf=3.019`, `max_dd=4.31%`, `trades=112`, `fee_to_trade_gross=50.44%`
+  - `expansion_width_expansion_min=0.05` 추가 시:
+    - 1y: `net=3.41`, `pf=3.159`, `max_dd=4.20%`, `trades=109`, `fee_to_trade_gross=47.97%`
+  - `expansion_width_expansion_min=0.10`은 1y `net=2.79`, `pf=2.901`로 악화됐다.
+- 3y 검증 결과:
+  - `expansion_width_expansion_min=0.05`, `expansion_break_distance_atr_min=0.0` 또는 `0.05` 모두 동일 성능
+  - 3y: `net=7.12`, `pf=2.583`, `max_dd=4.39%`, `trades=376`, `fee_to_trade_gross=60.13%`
+  - 6개월 worst slice도 개선: `worst_net=0.918`, `worst_pf=1.901`, `worst_dd=3.233`
+- 따라서 후보 프로필을 다시 승격했다.
+  - new promoted params:
+    - `expansion_body_ratio_min=0.25`
+    - `expansion_close_location_min=0.45`
+    - `expansion_range_atr_min=0.7`
+    - `expected_move_cost_mult=1.6`
+    - `expansion_width_expansion_min=0.05`
+    - `expansion_break_distance_atr_min`은 `0.0` 유지 (stricter `0.05`가 in-sample에서 추가 이득을 만들지 않아 minimal promotion 선택)
+- 관련 회귀:
+  - `python -m ruff check v2/run.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_config_loader.py` 통과
+  - `python -m pytest -q v2/tests/test_v2_config_loader.py -k 'expansion'` 통과
+  - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides or alpha_report_includes_runtime_params'` 통과
+
+### Session Memory Update (2026-03-11 EXP-06 Slice Validation)
+- `local_backtest/slice_validation.py`를 추가해 baseline vs `EXP-06` robustness 검증을 자동화했다.
+  - 비교 축:
+    - 연도별 3Y 분해
+    - 1Y/3Y `LONG/SHORT`
+    - 1Y/3Y `trend/chop`
+    - 1Y/3Y volatility bucket (`initial_risk_abs / quantity / entry_price` 프록시)
+    - fee/slippage stress (`fee_bps=5.0`, `slippage_bps=3.0`)
+    - `quality_score_v2_min` threshold sensitivity
+- 산출물:
+  - JSON: `output/research/alpha_expansion_slice_validation_20260311.json`
+  - Markdown: `output/research/alpha_expansion_slice_validation_20260311.md`
+- slice validation 핵심 결과:
+  - EXP-06 전체 3Y는 baseline 대비 개선:
+    - `net=7.956 -> 8.416`
+    - `pf=2.340 -> 2.499`
+    - `max_dd=7.70% -> 6.70%`
+    - `fee_to_trade_gross=68.40% -> 62.82%`
+  - 1Y는 net이 줄었지만 `pf / dd / fee / expectancy`는 개선:
+    - `net=3.002 -> 2.696`
+    - `pf=2.589 -> 2.673`
+    - `max_dd=6.33% -> 5.53%`
+    - `fee_to_trade_gross=60.95% -> 58.34%`
+  - 3Y year slices:
+    - `Year 1`은 명확 개선
+    - `Year 2`/`Year 3`는 net 감소 대신 `pf/expectancy` 또는 `dd/fee` 개선
+  - 구조적 약점:
+    - 1Y `trend` slice가 크게 악화 (`net=1.684 -> 0.440`, `pf=3.824 -> 1.878`)
+    - 1Y/3Y `SHORT` side가 baseline보다 약함
+    - 3Y `low_vol` bucket이 baseline보다 약함
+  - 구조적 강점:
+    - 3Y `trend`, `mid/high vol`, `LONG` quality, 비용 스트레스 내성이 baseline보다 우세
+    - stress 3Y에서 baseline은 음수(`net=-0.163`)로 무너졌지만 EXP-06은 양수 유지(`net=0.918`)
+- threshold sensitivity verdict:
+  - 1Y는 `0.68 -> 0.70 -> 0.72 -> 0.74`로 완만히 개선
+  - 3Y는 `0.70`이 최고 (`net=8.978`, `pf=2.531`, `max_dd=6.70%`)
+  - 현재 EXP-06 값 `0.72`는 나쁘지 않지만 최종 champion threshold로 고정할 plateau 중심값은 아님
+- 최종 판정:
+  - `candidate 유지, 추가 보완 후 재검증`
+  - 이유: EXP-06 구조는 robust하지만, 현재 `quality_score_v2_min=0.72`는 아직 최종값이 아니고 `1Y trend / SHORT / low_vol` 약점이 남아 있음
+- 검증:
+  - `python -m ruff check local_backtest/slice_validation.py` 통과
+  - `python -m local_backtest.slice_validation ...` 보고서 생성 성공
+  - `python -m pytest -q` 전체 회귀 통과
+
+### Session Memory Update (2026-03-11 Threshold Center Revalidation)
+- `quality_score_v2_min` 중심값만 재검증하기 위해 다음 검증용 프로필 alias를 추가했다.
+  - `ra_2026_alpha_v2_expansion_verified_q070`
+  - `ra_2026_alpha_v2_expansion_verified_q072`
+  - `ra_2026_alpha_v2_expansion_verified_q074`
+- `v2/run.py` local-backtest override 매핑과 `v2/tests/test_v2_local_backtest.py`도 함께 갱신했다.
+- 새 다중 비교 리포트 생성 스크립트:
+  - `local_backtest/threshold_center_validation.py`
+  - 산출물:
+    - JSON: `output/research/alpha_expansion_threshold_center_validation_20260311.json`
+    - Markdown: `output/research/alpha_expansion_threshold_center_validation_20260311.md`
+- 이번 턴은 `baseline`, `EXP-06 @ 0.70`, `EXP-06 @ 0.72`, `EXP-06 @ 0.74`를 동일 fixed window에서 다시 검증했다.
+  - 1Y fixed window: `2025-03-11T08:13:13Z ~ 2026-03-11T08:13:13Z`
+  - 3Y fixed window: `2023-03-12T08:13:13Z ~ 2026-03-11T08:13:13Z`
+  - stress model: `fee_bps=5.0`, `slippage_bps=3.0`, `funding_bps_8h=0.5`
+- 핵심 결과:
+  - 1Y overall:
+    - baseline: `net=3.002`, `pf=2.589`, `max_dd=6.33%`
+    - `0.70`: `net=2.620`, `pf=2.631`, `max_dd=5.75%`
+    - `0.72`: `net=2.696`, `pf=2.673`, `max_dd=5.53%`
+    - `0.74`: `net=2.747`, `pf=2.701`, `max_dd=5.53%`
+  - 3Y overall:
+    - baseline: `net=7.956`, `pf=2.340`, `max_dd=7.70%`
+    - `0.70`: `net=8.978`, `pf=2.531`, `max_dd=6.70%`
+    - `0.72`: `net=8.416`, `pf=2.499`, `max_dd=6.70%`
+    - `0.74`: `net=7.123`, `pf=2.393`, `max_dd=6.55%`
+  - 3Y stress:
+    - baseline: `net=-0.163`, `pf=1.647`, `max_dd=14.81%`
+    - `0.70`: `net=1.282`, `pf=1.756`, `max_dd=13.01%`
+    - `0.72`: `net=0.918`, `pf=1.726`, `max_dd=12.56%`
+    - `0.74`: `net=-0.052`, `pf=1.643`, `max_dd=14.13%`
+- 해석:
+  - `0.70`은 `1Y trend` 약화를 고치지는 못했다. 해당 slice는 `0.72`와 거의 동일하게 약했다.
+  - 하지만 `0.70`은 `3Y overall`, `3Y Year1`, `3Y low_vol`, `3Y chop`, `3Y stress`, `3Y long quality`에서 `0.72`보다 더 균형이 좋았다.
+  - `0.74`는 최근 1Y에는 강하지만 3Y/3Y stress에서 과도하게 밀려 중심 threshold 후보에서 제외했다.
+- 최종 판정:
+  - `0.70`을 새 champion candidate로 승격 가능
+  - 단, 이 verdict는 `1Y trend / SHORT / low_vol` 약점이 해결됐다는 뜻은 아니고, `0.72`보다 더 나은 중심 threshold라는 뜻이다.
+- 검증:
+  - `python -m ruff check local_backtest/threshold_center_validation.py local_backtest/slice_validation.py v2/run.py v2/tests/test_v2_local_backtest.py` 통과
+  - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides'` 통과
+  - `python -m local_backtest.threshold_center_validation ...` 보고서 생성 성공
+  - `python -m pytest -q` 전체 회귀 통과
+- 2026-03-11 Phase 2 exit-only 검증을 추가로 수행했다.
+  - 구조 원칙:
+    - champion candidate는 `EXP-06 @ quality_score_v2_min=0.70`
+    - entry gate / breakout score / regime filter는 그대로 유지
+    - exit만 최소 침습으로 실험
+  - 구현:
+    - `v2/strategies/ra_2026_alpha_v2.py`
+      - 새 exit 파라미터 추가:
+        - `progress_check_bars`
+        - `progress_min_mfe_r`
+        - `progress_extend_trigger_r`
+        - `progress_extend_bars`
+        - `quality_exit_score_threshold`
+        - `quality_exit_take_profit_r`
+        - `quality_exit_time_stop_bars`
+      - `quality_score_v2`를 `execution` 힌트로 내리고, quality-conditioned TP/time-stop 재매핑을 추가
+    - `v2/run.py`
+      - `_OpenTrade`에 progress/quality exit 상태를 저장
+      - `progress_time_stop` 조기 종료와 extension 기반 동적 `time_stop`을 시뮬레이터에 추가
+      - trade event에 `entry_quality_score_v2`, `quality_exit_applied`, progress 관련 메타를 기록
+    - 새 실험 프로필:
+      - `ra_2026_alpha_v2_expansion_champion_candidate`
+      - `ra_2026_alpha_v2_expansion_champion_exp07`
+      - `ra_2026_alpha_v2_expansion_champion_exp08`
+    - 새 비교 스크립트/리포트:
+      - `local_backtest/phase2_exit_validation.py`
+      - `output/research/alpha_expansion_phase2_exit_validation_20260311.{json,md}`
+  - EXP-07 정의:
+    - `progress_check_bars=6`
+    - `progress_min_mfe_r=0.35`
+    - `progress_extend_trigger_r=1.0`
+    - `progress_extend_bars=6`
+  - EXP-08 정의:
+    - `quality_exit_score_threshold=0.82`
+    - `quality_exit_take_profit_r=2.4`
+    - `quality_exit_time_stop_bars=24`
+  - 고정 검증 창:
+    - 1Y: `2025-03-11T08:13:13Z ~ 2026-03-11T08:13:13Z`
+    - 3Y: `2023-03-12T08:13:13Z ~ 2026-03-11T08:13:13Z`
+    - stress model: `fee_bps=5.0`, `slippage_bps=3.0`, `funding_bps_8h=0.5`
+  - 핵심 결과:
+    - 1Y overall
+      - champion: `net=2.620`, `pf=2.631`, `max_dd=5.75%`
+      - `EXP-07`: `net=2.399`, `pf=2.572`, `max_dd=6.05%`
+      - `EXP-08`: `net=0.885`, `pf=1.984`, `max_dd=7.02%`
+    - 3Y overall
+      - champion: `net=8.978`, `pf=2.531`, `max_dd=6.70%`
+      - `EXP-07`: `net=9.359`, `pf=2.570`, `max_dd=6.09%`
+      - `EXP-08`: `net=6.816`, `pf=2.311`, `max_dd=9.01%`
+    - 3Y stress
+      - champion: `net=1.282`, `pf=1.756`, `max_dd=13.01%`
+      - `EXP-07`: `net=0.885`, `pf=1.729`, `max_dd=13.85%`
+      - `EXP-08`: `net=-0.508`, `pf=1.599`, `max_dd=19.23%`
+    - 1Y trend slice
+      - champion: `net=0.441`, `pf=1.879`
+      - `EXP-07`: `net=0.358`, `pf=1.716`
+      - `EXP-08`: `net=-0.143`, `pf=0.710`
+  - 해석:
+    - `EXP-07`은 exit 축이 완전 plateau는 아니라는 신호를 줬다. 3Y overall은 좋아졌지만, 핵심 목표였던 최근 1Y trend slice 회복에는 실패했고 stress robustness도 champion보다 약해졌다.
+    - `EXP-07`의 `progress_time_stop` 발동 비중은 1Y/3Y 모두 약 `1.50%`로 너무 낮아서 영향력이 작았다.
+    - `EXP-08`은 `quality_exit_applied`가 1Y/3Y 모두 약 `89%`에 달해 사실상 거의 전체 trade의 exit를 바꿔버렸고, 1Y/3Y/stress 모두 악화됐다.
+  - 최종 판정:
+    - `추가 보완 필요`
+    - `EXP-07` 계열은 추가 재설계 가치가 남아 있지만, `EXP-08` 현재 형태는 폐기 대상
+  - 검증:
+    - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/run.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_local_backtest.py local_backtest/phase2_exit_validation.py` 통과
+    - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_local_backtest.py -k 'expansion or progress_time_stop or profile_alpha_overrides or quality_conditioned_exit or extends_time_stop'` 통과
+    - `PYTHONPATH=. python local_backtest/phase2_exit_validation.py ...` 리포트 생성 성공
+- 2026-03-11 Phase 2.5 selective-extension validation completed for `alpha_expansion` without changing entry/regime/threshold logic.
+  - 새 실험 프로필 추가:
+    - `ra_2026_alpha_v2_expansion_champion_exp07a`
+      - proved-trend hold extension only
+      - `selective_extension_proof_bars=6`
+      - `selective_extension_min_mfe_r=0.75`
+      - `selective_extension_min_regime_strength=0.55`
+      - `selective_extension_min_bias_strength=0.55`
+      - `selective_extension_time_stop_bars=26`
+    - `ra_2026_alpha_v2_expansion_champion_exp07b`
+      - hold extension + TP extension + BE protection
+      - same proof/context as `EXP-07A`
+      - `selective_extension_time_stop_bars=24`
+      - `selective_extension_take_profit_r=2.35`
+      - `selective_extension_move_stop_to_be_at_r=0.75`
+    - `ra_2026_alpha_v2_expansion_champion_exp07c`
+      - stricter extension-only validation
+      - `selective_extension_proof_bars=6`
+      - `selective_extension_min_mfe_r=1.0`
+      - `selective_extension_min_regime_strength=0.60`
+      - `selective_extension_min_bias_strength=0.60`
+      - `selective_extension_min_quality_score_v2=0.78`
+      - `selective_extension_time_stop_bars=24`
+  - 런타임 변경:
+    - `v2/strategies/ra_2026_alpha_v2.py` execution hints에 selective extension 파라미터와 `entry_regime_strength` / `entry_bias_strength` 전달 추가
+    - `v2/run.py` local backtest simulator에 `selective_extension` activation 훅 추가
+    - activation 시 `time_stop` / optional TP / optional BE protection을 선택적으로 조정하고 trade event에 activation/TP/protection diagnostics 기록
+  - 고정 검증 창:
+    - 1Y: `2025-03-11T08:13:13Z ~ 2026-03-11T08:13:13Z`
+    - 3Y: `2023-03-12T08:13:13Z ~ 2026-03-11T08:13:13Z`
+    - stress model: `fee_bps=5.0`, `slippage_bps=3.0`, `funding_bps_8h=0.5`
+  - 핵심 결과:
+    - 1Y overall
+      - champion: `net=2.620`, `pf=2.631`, `max_dd=5.75%`
+      - `EXP-07A`: `net=1.935`, `pf=2.386`, `max_dd=7.02%`
+      - `EXP-07B`: `net=2.000`, `pf=2.409`, `max_dd=7.02%`
+      - `EXP-07C`: `net=2.440`, `pf=2.570`, `max_dd=5.75%`
+    - 1Y trend slice
+      - champion: `net=0.441`, `pf=1.879`
+      - `EXP-07A`: `net=-0.210`, `pf=0.586`
+      - `EXP-07B`: `net=-0.148`, `pf=0.709`
+      - `EXP-07C`: `net=0.273`, `pf=1.548`
+    - 3Y overall
+      - champion: `net=8.978`, `pf=2.531`, `max_dd=6.70%`
+      - `EXP-07A`: `net=8.483`, `pf=2.478`, `max_dd=7.02%`
+      - `EXP-07B`: `net=8.284`, `pf=2.464`, `max_dd=7.02%`
+      - `EXP-07C`: `net=8.936`, `pf=2.523`, `max_dd=6.67%`
+    - 3Y stress
+      - champion: `net=1.282`, `pf=1.756`, `max_dd=13.01%`
+      - `EXP-07A`: `net=0.890`, `pf=1.722`, `max_dd=14.76%`
+      - `EXP-07B`: `net=0.642`, `pf=1.700`, `max_dd=14.55%`
+      - `EXP-07C`: `net=1.251`, `pf=1.752`, `max_dd=13.47%`
+  - diagnostics:
+    - selective extension activation rate was too small to repair the weak recent trend slice:
+      - 1Y: `EXP-07A/B=2.26%`, `EXP-07C=1.50%`
+      - 3Y: `EXP-07A/B=4.05%`, `EXP-07C=2.77%`
+    - `EXP-07B` TP/protection was applied on exactly the same small subset and still did not improve `TP rate`
+  - 최종 판정:
+    - `EXP-06 @ 0.70 유지가 더 적절`
+    - current selective-extension exit variants are not champion replacements
+  - 산출물:
+    - `local_backtest/phase25_exit_validation.py`
+    - `output/research/alpha_expansion_phase25_exit_validation_20260311.{json,md}`
+  - 검증:
+    - `python -m ruff check v2/run.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_local_backtest.py local_backtest/phase25_exit_validation.py` 통과
+    - focused `pytest` 통과
+    - full fixed-window backtests for baseline/champion/EXP-07A/B/C normal+stress completed successfully
+
+- 2026-03-12 운영 하드닝 진단 세션:
+  - 전략 연구는 종료하고 `EXP-06 @ quality_score_v2_min=0.70`을 champion candidate로 유지하기로 확정.
+  - 코드베이스 운영 점검 결과, 가장 큰 병목은 `전략`이 아니라 `운영 상태 정합성`으로 판정:
+    - `EngineStateStore.startup_reconcile(...)`와 `UserStreamManager`는 구현되어 있으나 실제 runtime boot/control 경로에 wiring되어 있지 않음.
+    - 현재 boot/restart 시 full exchange snapshot 기반 상태 정합성 복구가 없고, `state uncertainty`일 때 신규 진입 차단도 없음.
+    - `run_stack.sh`는 PID 파일만 기록하고 single-instance lock은 없어 수동 중복 실행 위험이 남아 있음.
+    - live submit path는 `newClientOrderId`를 랜덤 생성하지만 `intent_id -> client_order_id` 영속 매핑이 없어 idempotent submit이 아님.
+    - `/readiness`는 일부 legacy live profile spec만 포함하고 있어 현재 alpha live candidate의 실제 운영 준비도 판단 기준이 불완전함.
+  - 운영 하드닝 우선순위는 다음 3단계로 정리:
+    - Phase A: `startup reconcile + uncertainty gate`, `live user stream wiring`, `single-instance lock`, `submit idempotency shell`
+    - Phase B: `restart recovery policy`, `ws freshness/stale-data gate`, `health/readiness 확장`, `structured runtime logging`
+    - Phase C: `graceful shutdown persistence`, `deployment gate checklist 자동화`, `paper/live separation 강화`
+  - 현재 verdict:
+    - `hardening 진행 필요`
+    - 이유: flatten/cooldown/status는 이미 강하지만, 24시간 실거래 핵심인 reconcile, uncertainty, duplicate-prevention, idempotency가 아직 비어 있음.
+  - 산출물:
+    - `output/research/ops_hardening_diagnosis_20260312.md`
+- 2026-03-12 Phase A 운영 하드닝 구현 세션:
+  - 전략 로직은 건드리지 않고 운영 안정성 1차 구현을 실제 코드에 반영.
+  - `A3 single-instance lock`:
+    - `v2/scripts/run_stack.sh`에 `STACK_LOCK_FILE` 기반 `flock -n` 단일 실행 락 추가.
+    - 중복 실행 시 즉시 `another stack instance is already running` 에러로 종료.
+    - `PYTHON_BIN` override를 추가해 스크립트 락 회귀 테스트를 안정적으로 수행할 수 있게 함.
+    - 회귀 테스트: `v2/tests/test_run_stack_lock.py`
+  - `A1 startup reconcile + uncertainty gate`:
+    - `RuntimeController` boot 시 live mode에서 실제 exchange snapshot(`open_orders/positions/balances`) 기반 `startup_reconcile` 수행.
+    - reconcile 실패나 timeout 시 `state_uncertain=true`, `startup_reconcile_ok=false`, `safe_mode` 진입으로 신규 진입 차단.
+    - `/status`에 `state_uncertain`, `state_uncertain_reason`, `startup_reconcile_ok`, `last_reconcile_at` 필드 추가.
+    - `_run_cycle_once_locked()`는 uncertainty 상태에서 kernel 실행 대신 `blocked/state_uncertain` 반환.
+    - 회귀 테스트:
+      - reconcile 성공 시 exchange position이 local state로 복구되는지
+      - reconcile 실패 시 uncertainty + safe_mode 전환되는지
+      - uncertainty 상태에서 신규 진입이 kernel 호출 전에 차단되는지
+  - `A2 live user stream wiring + reconnect/resync`:
+    - control HTTP app lifespan에 live user stream start/stop wiring 추가.
+    - `on_event -> state_store.apply_exchange_event`, `on_resync -> startup_reconcile 기반 resync`, `on_disconnect -> state_uncertain` 연결.
+    - `UserStreamManager`에 disconnect callback support를 추가해 reconnect/resync 직전 상태 불확실성을 명시적으로 표기.
+    - 회귀 테스트:
+      - fake user stream manager로 disconnect -> uncertainty -> resync clear -> ACCOUNT_UPDATE 반영 흐름 검증
+      - resync failure 시 uncertainty 재진입 검증
+      - existing reconnect/resync unit test에 disconnect callback assertion 추가
+  - `A4 submit idempotency shell`:
+    - `RuntimeStorage`에 `submission_intents` registry 추가 (`intent_id -> client_order_id/status/order_id`).
+    - `BinanceLiveExecutionService`가 execution-layer에서 deterministic `intent_id`를 만들고 최근 intent는 재제출 없이 `live_order_reused:<STATUS>`로 재사용.
+    - `build_default_kernel()` live executor에 runtime storage를 전달하도록 수정.
+    - 회귀 테스트: 같은 candidate/size/context로 `execute()`를 두 번 호출해도 REST submit은 1회만 발생하는지 검증.
+  - 검증:
+    - `bash -n v2/scripts/run_stack.sh` 통과
+    - `python -m ruff check v2/control/api.py v2/exchange/user_ws.py v2/run.py v2/storage/models.py v2/clean_room/defaults.py v2/clean_room/kernel.py v2/tests/test_run_stack_lock.py v2/tests/test_control_api.py v2/tests/test_live_execution_service.py v2/tests/test_exchange_user_stream.py` 통과
+    - focused `pytest` 통과
+    - full `python -m pytest -q` 통과
+- 2026-03-12 Phase A.5 sanity pass 세션:
+  - 점검 범위는 세 가지로 제한:
+    - single-instance bypass audit
+    - idempotency correctness audit
+    - uncertainty action policy audit
+  - single-instance 보강:
+    - `run_stack.sh` 락만으로는 `python -m v2.run --control-http ...` 및 direct `_boot` 경로를 막지 못한다는 점을 확인.
+    - `v2/run.py`에 live runtime 공용 락 `_live_runtime_lock()` 추가 (`V2_RUNTIME_LOCK_FILE` override 지원).
+    - `_serve_control_http()`와 direct `_boot()` 경로 모두 동일 락을 사용하도록 수정해 systemd/run_stack/direct control/direct boot를 같은 보호막 아래로 통합.
+  - idempotency 정확도 보강:
+    - 기존 `intent_id`는 tick 정보가 없어 짧은 시간 내 동일 파라미터 신규 진입까지 dedupe할 위험이 있었음.
+    - `TradeKernel`에 runtime tick 추적/설정 훅을 추가하고, `BinanceLiveExecutionService` intent hash에 `context.tick` 포함.
+    - 같은 cycle 재호출은 dedupe, 다음 cycle 정상 신규 intent는 허용되도록 교정.
+    - expiry window 경과 후 같은 intent 재시도도 정상 허용되는 회귀 추가.
+  - uncertainty 정책 보강:
+    - 기존 구현은 신규 진입만 `state_uncertain`에서 차단하고 `flatten`은 허용하고 있었음.
+    - recovery 경로를 명시적으로 열기 위해 `RuntimeController.reconcile_now()` + `POST /reconcile` 추가.
+    - uncertainty 상태에서도 manual reconcile로 상태 복구 가능하고, `close_position()` 경로는 reduce-only flatten을 계속 허용함을 테스트로 고정.
+  - 추가 회귀:
+    - `v2/tests/test_v2_run_smoke.py`: live runtime lock 재진입 차단
+    - `v2/tests/test_live_execution_service.py`: distinct tick intent 허용, idempotency window expiry 후 재허용
+    - `v2/tests/test_control_api.py`: uncertainty 상태 manual reconcile 허용, flatten/reduce-only recovery 허용
+  - 검증:
+    - touched-file `ruff` 통과
+    - targeted `pytest` 통과
+    - `bash -n v2/scripts/run_stack.sh` 통과
+    - full `python -m pytest -q` 통과
+- 2026-03-12 Phase B 운영 하드닝 세션:
+  - `B2 websocket freshness / stale-data gate` 구현:
+    - `RuntimeController`에 freshness 추적/게이트를 확장하고 `last_user_ws_event_at`, `last_private_stream_ok_at`, `last_market_data_at`, user/market stale age를 `/status`에 노출.
+    - live cycle은 `state_uncertain`와 별도로 `user_ws_stale`, `market_data_stale`, `recovery_required`를 각각 차단 사유로 처리.
+    - `build_default_kernel(..., market_data_observer=...)`와 control runtime market-data observer를 연결해 실거래 cycle이 실제 market data freshness를 갱신하도록 구성.
+    - stale 해소 경로는 market-data observer/probe와 user-stream `private_ok` callback으로 자동 해제되도록 유지.
+  - `B3 health / readiness 확장` 구현:
+    - `RuntimeController`에 `_healthz_snapshot()` / `_readyz_snapshot()` 추가.
+    - `create_control_http_app()`에 `/healthz`(항상 200, liveness + ready detail), `/readyz`(ready면 200, 아니면 503) 추가.
+    - readiness 게이트는 `single_instance`, `state_uncertain`, `startup_reconcile_ok`, `last_reconcile_at` age, user ws freshness, market data freshness, paused/safe_mode, private auth를 함께 평가.
+    - `ra_2026_alpha_v2_expansion_live_candidate` readiness spec을 운영 기준에 포함.
+  - `B1 restart recovery policy` 구현:
+    - `v2/run.py`의 dirty runtime marker를 control runtime/boot 경로에 적용한 상태에서, controller가 `dirty_restart_detected`를 받으면 `recovery_required`로 시작하도록 연결.
+    - dirty restart 상태에서는 `/readyz`가 fail이며 신규 진입이 차단되고, `POST /reconcile` 성공 시에만 recovery gate가 해제되도록 유지.
+  - `B4 structured runtime logging` 구현:
+    - runtime entrypoint는 JSON logging init을 사용하고, controller는 `boot/reconcile/uncertainty/stale/user_stream/ready/risk_trip/flatten_requested/runtime_start/runtime_stop/panic` 이벤트를 구조화 로그로 기록.
+    - live execution layer는 `order_intent`, `order_intent_deduped`, `order_intent_submit_failed`, `order_intent_submitted`를 intent/client_order_id/symbol/side와 함께 기록.
+    - user stream manager는 `on_private_ok` callback을 추가해 `resync`/`keepalive` 성공을 freshness와 로그에 반영 가능하게 확장.
+  - 회귀 테스트 확장:
+    - stale market data -> 신규 진입 차단 -> fresh data 후 unblock
+    - stale user stream -> 신규 진입 차단 -> private_ok 후 unblock
+    - stale 상태에서도 flatten / reconcile 허용
+    - dirty restart -> `/readyz` fail -> manual reconcile 후 `/readyz` pass
+    - `/healthz` / `/readyz` healthy vs uncertainty vs stale 분기
+    - structured log record 필드 존재(`event/mode/profile/state_uncertain/safe_mode`)
+    - `setup_logging` 재호출 시 handler duplication이 없는지 smoke test 추가
+    - user stream reconnect/resync unit test에 `on_private_ok` source 검증 추가
+  - 검증:
+    - touched-file `python -m ruff check ...` 통과
+    - focused `python -m pytest -q v2/tests/test_control_api.py v2/tests/test_exchange_user_stream.py v2/tests/test_v2_run_smoke.py v2/tests/test_live_execution_service.py` 통과
+    - full `python -m pytest -q` 통과
+- 2026-03-12 Phase C 운영 마감 세션:
+  - `C1 graceful shutdown persistence + crash recovery policy`:
+    - `v2/run.py` dirty marker가 runtime state file까지 함께 남기도록 확장했고, clean/dirty shutdown 상태와 마지막 runtime snapshot을 JSON으로 기록.
+    - `RuntimeController`는 `shutdown_state` / `runtime_boot` marker를 저장하고 dirty restart 시 `recovery_required`를 유지한 채 시작한다.
+    - manual `POST /reconcile` 성공 시 startup reconcile + submission recovery + bracket recovery를 함께 수행하고, recovery 성공 전에는 `/readyz`가 false를 유지한다.
+  - `C2 SUBMIT_ERROR 이후 exchange-query 기반 확정 복구`:
+    - `BinanceLiveExecutionService`가 ambiguous submit error/timeout 이후 `origClientOrderId`로 `/fapi/v1/order`를 조회한다.
+    - order found면 `live_order_recovered_after_submit_error`로 `SUBMITTED` 확정, not found/query failure면 `REVIEW_REQUIRED`로 남기고 신규 진입을 차단하는 보수 정책을 적용했다.
+    - `RuntimeStorage`에는 `client_order_id -> submission_intent` 조회/상태 변경 헬퍼를 추가했다.
+  - `C3 deployment gate / preflight automation`:
+    - `python -m v2.run --runtime-preflight` 경로를 추가해 runtime banner, readyz/readiness, localhost bind, uncertainty/recovery/stale clean 상태, private auth, paper/live separation을 한 번에 평가하도록 했다.
+    - `v2/scripts/deploy_prep.sh`는 기존 preflight 뒤에 runtime preflight를 자동 실행한다.
+  - `C4 paper/live separation 강화`:
+    - startup banner와 `/status`에 `profile / mode / env / live_trading_enabled`를 강제 노출하고, 운영 표면에서 `실거래 활성` vs `모의/테스트 또는 비실거래` 문구를 함께 보여주도록 정리했다.
+  - `C5 market data freshness source failure 세분화`:
+    - `market_data_state`에 source-level `last_market_data_source_ok_at`, `last_market_data_source_fail_at`, `last_market_data_source_error`를 추가했다.
+    - `/status`, `/readyz`, `/readiness`, runtime preflight는 `observer stale`와 `source stale/error`를 구분해 표기한다.
+  - 회귀/신규 테스트:
+    - `v2/tests/test_v2_run_smoke.py`: runtime banner, clean/dirty shutdown state file, runtime preflight good/bad gate
+    - `v2/tests/test_live_execution_service.py`: submit timeout 후 order recovered / not found -> review required
+    - `v2/tests/test_control_api.py`: submit recovery gate, ambiguous submit failure -> uncertainty, manual reconcile -> bracket recovery, status runtime identity surface
+  - 검증:
+    - `python -m py_compile v2/run.py v2/control/api.py v2/clean_room/defaults.py v2/storage/models.py` 통과
+    - touched-file `python -m ruff check ...` 통과
+    - `bash -n v2/scripts/deploy_prep.sh` 통과
+    - focused `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_live_execution_service.py v2/tests/test_control_api.py` 통과
+    - full `python -m pytest -q` 통과
+- 2026-03-12 Shadow 운영 검증 준비 세션:
+  - 전략 변경 없이 shadow rehearsal 산출물만 정리했다.
+  - `v2/docs/SHADOW_REHEARSAL_RUNBOOK.md`를 추가해 다음 네 축을 한 문서로 고정:
+    - shadow 표준 실행 명령
+    - failure-injection / recovery rehearsal 절차
+    - operator runbook
+    - pre-canary gate checklist
+  - `v2/docs/RUNBOOK.md` 상단에 shadow rehearsal 문서 링크와 대상 profile 고정 문구를 추가했다.
+  - 실제 shadow smoke를 `ra_2026_alpha_v2_expansion_live_candidate`, `mode=shadow`, `env=testnet`, `control-http-host=127.0.0.1`, `port=8121/8122`로 두 번 실행해 확인했다.
+    - `/healthz` 200
+    - `/readyz` 200 with `ready=true`
+    - `/status`에서 `profile/mode/env/live_trading_enabled` 노출 확인
+    - `POST /start` 및 `POST /scheduler/tick` 성공 확인
+    - tick 결과는 `missing_market`이었고 `last_error=null`인 control-path smoke로 기록
+  - shadow smoke 중 testnet private auth가 없는 환경에서는 `/status.binance.private_error=balance_auth_failed` warn/fallback이 뜰 수 있음을 재확인했고, pre-canary gate에서는 이를 허용하지 않도록 문서에 명시했다.
+  - 검증:
+    - 문서 변경 후 full `python -m pytest -q` 재통과
+- 2026-03-12 끊김 복구 세션:
+  - 중간에 끊긴 워킹트리 기준으로 먼저 `ruff`/targeted `pytest`를 재실행해 현재 깨진 지점을 다시 확인했다.
+  - `v2/run.py`의 `_build_local_backtest_portfolio_rows(...)`가 `unsupported_strategy` stub + 죽은 코드 상태로 남아 있던 것을 실제 포트폴리오 row builder로 복구했다.
+    - `_HistoricalPortfolioSnapshotProvider` 기반 multi-symbol snapshot replay를 사용한다.
+    - 각 tick마다 symbol별 `strategy.decide(...)`를 다시 모아 `ranked_candidates`, compact `decisions`, `no_candidate_multi` reason, progress logging을 채운다.
+  - `ra_2026_alpha_v2_expansion_live_candidate` 프로필의 기본 리스크 오버라이드(`margin_use_pct=0.10`)에 맞게 `v2/tests/test_control_api.py` 기대값을 교정했다.
+    - `capital_snapshot.budget_usdt`와 kernel `fallback_notional`은 base margin budget이 아니라 effective margin budget 기준으로 검증하도록 정리했다.
+  - 포트폴리오 builder 회귀를 막기 위해 `v2/tests/test_v2_local_backtest.py`에 focused regression test를 추가했다.
+  - 검증:
+    - `python -m ruff check v2/run.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py v2/tests/test_clean_room_kernel.py v2/tests/test_v2_run_smoke.py v2/tests/test_v2_local_backtest.py -k 'control_api or clean_room_kernel or v2_run_smoke or build_local_backtest_portfolio_rows_emits_ranked_candidates'` 통과
+- 2026-03-12 stale local-backtest test 정리 세션:
+  - 전체 `pytest` 실패 원인이던 stale test 2개를 정리했다.
+    - 삭제: `v2/tests/test_v2_local_backtest.py`의 `ra_2026_sfd_v1`, `ra_2026_pfd_v1` profile load 기반 report/strategy_meta 테스트 2개
+    - 대체: 기존 alpha report 테스트에 `legacy strategy_meta가 더 이상 summary에 나타나지 않는다`는 검증을 추가
+  - alpha-only 방향 유지 차원에서 `v2/run.py`에 남아 있던 old profile name 직접 참조를 최소 범위로 제거했다.
+    - removed profile명을 직접 적은 local-backtest help text/dispatch 조건 정리
+    - dead `pfd` premium/funding preload branch 제거
+    - legacy portfolio replay dispatch set을 비워 현재 champion candidate 경로와 분리
+  - old profile/config 자체는 복구하지 않았다.
+  - 검증:
+    - `python -m ruff check v2/run.py v2/tests/test_v2_local_backtest.py` 통과
+    - `python -m pytest -q` 전체 통과

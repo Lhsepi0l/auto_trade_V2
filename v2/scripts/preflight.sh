@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 cd "$REPO_ROOT"
 
 PROJECT=auto-trader
-PROFILE="normal"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="shadow"
 ENVIRONMENT="testnet"
 CONFIG_PATH="config/config.yaml"
@@ -24,7 +24,7 @@ Usage:
   bash v2/scripts/preflight.sh [options]
 
 Options:
-  --profile <normal|conservative|aggressive>
+  --profile <ra_2026_alpha_v2_expansion_live_candidate>
   --mode <shadow|live>
   --env <testnet|prod>
   --config <path>
@@ -35,8 +35,8 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/preflight.sh --profile normal --mode shadow --env testnet
-  bash v2/scripts/preflight.sh --profile normal --mode live --env prod --report-file reports/readiness.md
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/readiness.md
 EOF
 }
 

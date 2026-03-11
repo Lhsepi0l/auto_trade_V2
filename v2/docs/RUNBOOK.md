@@ -9,17 +9,33 @@
 
 ## 2. 빠른 시작
 
+### Shadow 운영 리허설
+- shadow 운영 절차, failure-injection 리허설, operator checklist, pre-canary gate는 [SHADOW_REHEARSAL_RUNBOOK.md](./SHADOW_REHEARSAL_RUNBOOK.md)를 기준으로 진행합니다.
+- 현재 shadow 검증 대상 profile은 `ra_2026_alpha_v2_expansion_live_candidate` 하나로 고정합니다.
+
 ### 기본 실행
 ```bash
 # 테스트넷 Shadow (키 불필요)
-python -m v2.run --profile normal --mode shadow --env testnet
+python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
 
 # 운영 Prod Live (BINANCE_API_KEY, BINANCE_API_SECRET 필요)
-python -m v2.run --profile normal --mode live --env prod
+python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod
 
 # 배포 준비(원커맨드: preflight + runtime smoke)
-python -m v2.run --deploy-prep --profile normal --mode shadow --env testnet --keep-reports 30
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
 ```
+
+### Alpha Expansion Live Candidate 런칭
+현재 검증 후보는 `ra_2026_alpha_v2_expansion_live_candidate` 입니다.
+
+```bash
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
+python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
+python -m v2.discord_bot.bot
+```
+
+- 이전 보수 운영판 `ra_2026_alpha_v2_expansion_live_candidate`는 fallback profile 로만 유지합니다.
+- 새 후보는 `alpha_expansion` 단일 모듈과 30U 캐너리 리스크 전제로 운영합니다.
 
 ### 종료
 - 수동 중지는 `Ctrl+C`로 프로세스를 종료합니다.
@@ -32,10 +48,57 @@ python -m v2.run --deploy-prep --profile normal --mode shadow --env testnet --ke
 - `--control-http`를 사용하면 Discord 패널 호환 제어 API(`http://<host>:8101`)를 띄웁니다.
 - `--report-dir`, `--report-path`는 리플레이 보고서 생성에만 사용합니다.
 
+### 로컬 3년 백테스트 (BTC/ETH)
+```bash
+# 로컬에서 3년치 BTC/ETH 히스토리(15m 실행축 + 10m/30m/1h/4h 컨텍스트)를 받아 전략 리플레이 + 손익 리포트 생성
+python -m v2.run \
+  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --mode shadow \
+  --env prod \
+  --local-backtest \
+  --backtest-symbols BTCUSDT,ETHUSDT \
+  --backtest-years 3 \
+  --backtest-initial-capital 30 \
+  --backtest-fee-bps 4.0 \
+  --backtest-slippage-bps 2.0 \
+  --backtest-funding-bps-8h 0.5 \
+  --report-dir v2/reports
+```
+
+- 결과: `--report-dir` 아래에
+  - `local_backtest_YYYYMMDD_HHMMSS.md` (한눈에 보는 요약 리포트)
+  - `local_backtest_YYYYMMDD_HHMMSS.json` (총 손익/손실/승률/최대낙폭 포함)
+  가 생성됩니다.
+- 동일 심볼/기간 재실행 시 `--report-dir/_cache/`의 캔들 캐시를 우선 재사용해 다운로드 시간을 줄입니다.
+- `backtest_*.csv`, `backtest_*.sqlite3` 임시 파일은 실행 종료 시 자동 정리됩니다.
+- 비용 모델 기본값: 수수료 `4 bps`(편도), 슬리피지 `2 bps`(편도), 펀딩 `0.5 bps / 8h`.
+- 백테스트 포지션 사이징은 고정 레버리지 `30x`를 적용합니다.
+- 초기 자본은 총 `30 USDT` 고정이며, 다중 심볼 실행 시 심볼 수로 균등 분할해 시뮬레이션합니다.
+
+### 로컬 파라미터 스윕 (1년+3년 동시)
+```bash
+# 빠른 기본 모드: 1년 전체 스캔 -> 상위 케이스만 3년 재검증
+python local_backtest/param_sweep.py \
+  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --symbols BTCUSDT,ETHUSDT
+```
+
+- 출력:
+  - `local_backtest/reports/sweep_summary_YYYYMMDD_HHMMSS.json`
+  - `local_backtest/reports/sweep_summary_YYYYMMDD_HHMMSS.csv`
+- 기본은 빠른 2단계 방식입니다:
+  - 1단계: `--years` (기본 `1`) 전체 케이스 탐색
+  - 2단계: 상위 `--preselect-top-k` (기본 `6`)만 `--verify-years` (기본 `3`) 재검증
+- 기본값은 과도한 과최적화를 줄이기 위해 `max_trade_margin_loss_fraction < 30` 탐색을 차단합니다.
+- 필요 시 `--allow-risky-loss-cap`을 명시하면 해당 구간도 탐색할 수 있습니다(실전 괴리 리스크 주의).
+- 통합 액션:
+  - 게이트 판정: `python local_backtest/param_sweep.py --action gate --report <json>`
+  - 리포트 스코어보드: `python local_backtest/param_sweep.py --action score --score-limit 20`
+
 ### Discord Bot (v2 패키지)
 ```bash
 # 1) v2 제어 API 실행 (Discord 패널 호환)
-python -m v2.run --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
+python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
 
 # 2) Discord bot 실행 (같은 .env 사용)
 python -m v2.discord_bot.bot
@@ -44,7 +107,7 @@ python -m v2.discord_bot.bot
 ### 통합 실행(원커맨드)
 ```bash
 # control API + Discord bot 동시 실행
-bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 ```
 
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
@@ -54,10 +117,10 @@ bash v2/scripts/run_stack.sh --mode live --env prod --env-file .env --host 127.0
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash
 # dry-run으로 유닛 내용 확인
-bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2
+bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate
 
 # 실제 설치/기동
-bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 
 # 상태/로그 확인
 sudo systemctl status v2-stack.service --no-pager
@@ -69,6 +132,20 @@ sudo journalctl -u v2-stack.service -f
 
 - `TRADER_API_BASE_URL` 기본값은 `http://127.0.0.1:8101` 입니다.
 - Discord 토큰은 `DISCORD_BOT_TOKEN`(또는 하위호환 `DISCORD_TOKEN`)을 사용합니다.
+
+### `ra_2026_alpha_v2_expansion_live_candidate` 30U 캐너리 런칭 후 리스크 재설정
+`/risk` 값은 런타임 저장소에서 복구될 수 있으므로, systemd 재기동 직후 아래 값을 한 번씩 다시 고정합니다.
+
+```bash
+bash v2/scripts/apply_alpha_expansion_live_candidate_risk.sh
+```
+
+```bash
+curl -s http://127.0.0.1:8101/risk
+curl -s http://127.0.0.1:8101/readiness
+curl -s http://127.0.0.1:8101/status
+ss -ltnp | rg 8101
+```
 
 ## 3. 구성 구성요소
 - 실행 진입점: `v2/run.py`
@@ -132,7 +209,7 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 - `.env`에서 다음 값이 모두 현재 사용 환경에 맞는지 확인: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `DISCORD_WEBHOOK_URL`
 - `python -m ruff check v2 v2/tests`
 - `python -m pytest -q v2/tests`
-- `v2/scripts/preflight.sh --mode shadow --env testnet --profile normal` 실행(또는 `--mode live --env prod`)
+- `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_live_candidate` 실행(또는 `--mode live --env prod`)
 
 ### 실행 중 모니터링
 - 출력에 `v2 boot completed`가 보이고 프로세스가 지속 실행되는지 확인
@@ -170,8 +247,8 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 자동 점검 리포트를 생성합니다.
 
 ```bash
-bash v2/scripts/preflight.sh --profile normal --mode shadow --env testnet
-bash v2/scripts/preflight.sh --profile normal --mode live --env prod --report-file reports/preflight_prod_$(date -u +%Y%m%d_%H%M%S).md --keep-reports 30
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/preflight_prod_$(date -u +%Y%m%d_%H%M%S).md --keep-reports 30
 ```
 
 리포트에는 다음 항목이 포함됩니다.

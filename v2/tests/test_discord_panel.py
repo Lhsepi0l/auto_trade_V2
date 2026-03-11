@@ -9,6 +9,7 @@ import discord
 import pytest
 
 from v2.discord_bot.services.api_client import APIError
+from v2.discord_bot.services.formatting import format_status_payload
 from v2.discord_bot.ui_labels import (
     ADVANCED_PANEL_BUTTON_LABELS,
     EXEC_MODE_SELECT_PLACEHOLDER,
@@ -496,6 +497,100 @@ async def test_tick_once_humanizes_no_entry_reason(monkeypatch: pytest.MonkeyPat
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any("돈치안 진입 조건 미충족" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_humanizes_portfolio_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "blocked",
+                    "last_error": None,
+                    "last_decision_reason": "portfolio_cap_reached",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {"usdt_balance": {"available": 10.0, "wallet": 10.0}},
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("포트폴리오 최대 동시포지션 수에 도달해 신규 진입을 보류합니다." in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_shows_portfolio_slots_and_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "blocked",
+                    "last_error": None,
+                    "last_decision_reason": "portfolio_cap_reached",
+                    "portfolio": {
+                        "slots_used": 2,
+                        "slots_total": 2,
+                        "blocked_reasons": {
+                            "portfolio_cap_reached": 1,
+                            "portfolio_bucket_cap": 2,
+                        },
+                    },
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {"usdt_balance": {"available": 10.0, "wallet": 10.0}},
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("포트폴리오 슬롯: 2/2" in m for m in it.followup.messages)
+    assert any("포트폴리오 차단:" in m for m in it.followup.messages)
+    assert any("같은 버킷 포지션이 이미 있어 이번 후보는 보류합니다.:2" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+def test_status_formatter_humanizes_portfolio_block_counts() -> None:
+    rendered = format_status_payload(
+        {
+            "engine_state": {"state": "RUNNING"},
+            "binance": {},
+            "pnl": {},
+            "scheduler": {
+                "last_action": "blocked",
+                "last_decision_reason": "portfolio_cap_reached",
+                "portfolio": {
+                    "slots_used": 2,
+                    "slots_total": 2,
+                    "blocked_reasons": {
+                        "portfolio_cap_reached": 1,
+                        "portfolio_bucket_cap": 2,
+                    },
+                },
+            },
+        }
+    )
+
+    assert "포트폴리오 슬롯: 2/2" in rendered
+    assert "포트폴리오 차단:" in rendered
+    assert "포트폴리오 최대 동시포지션 수에 도달해 신규 진입을 보류합니다.:1" in rendered
+    assert "같은 버킷 포지션이 이미 있어 후보를 보류합니다.:2" in rendered
 
 
 @pytest.mark.unit

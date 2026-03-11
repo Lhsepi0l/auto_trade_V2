@@ -1,0 +1,15 @@
+# Secrets and local runtime artifacts
+.env
+data/
+logs/
+v2/logs/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local backtest generated outputs
+local_backtest/reports/*
+!local_backtest/reports/.gitkeep

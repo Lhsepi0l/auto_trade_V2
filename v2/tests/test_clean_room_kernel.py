@@ -69,7 +69,10 @@ def test_no_candidate_returns_no_candidate(tmp_path) -> None:  # type: ignore[no
         sizer=FixedNotionalSizer(),
         executor=ExecutionCounting(),
         config=TradeKernelConfig(
-            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            default_symbol="BTCUSDT",
+            dry_run=True,
         ),
     )
 
@@ -82,12 +85,7 @@ def test_ops_paused_blocks_execution(tmp_path) -> None:  # type: ignore[no-untyp
     store.apply_ops_mode(paused=True, reason="test")
 
     selector = FixedCandidateSelector(
-        candidate=Candidate(
-            symbol="BTCUSDT",
-            side="BUY",
-            score=1.0,
-            entry_price=100.0,
-        )
+        candidate=Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
     )
     executor = ExecutionCounting()
     kernel = TradeKernel(
@@ -97,7 +95,10 @@ def test_ops_paused_blocks_execution(tmp_path) -> None:  # type: ignore[no-untyp
         sizer=FixedNotionalSizer(),
         executor=executor,
         config=TradeKernelConfig(
-            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            default_symbol="BTCUSDT",
+            dry_run=True,
         ),
     )
 
@@ -124,7 +125,10 @@ def test_position_open_blocks_same_symbol_when_reentry_disabled(tmp_path) -> Non
         sizer=FixedNotionalSizer(),
         executor=executor,
         config=TradeKernelConfig(
-            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            default_symbol="BTCUSDT",
+            dry_run=True,
         ),
     )
 
@@ -154,7 +158,10 @@ def test_position_open_allows_other_symbol_scan_when_reentry_disabled(
         sizer=FixedNotionalSizer(),
         executor=executor,
         config=TradeKernelConfig(
-            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            default_symbol="BTCUSDT",
+            dry_run=True,
         ),
     )
 
@@ -166,12 +173,7 @@ def test_position_open_allows_other_symbol_scan_when_reentry_disabled(
 def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-untyped-def]
     store = _state_store(tmp_path)
     selector = FixedCandidateSelector(
-        candidate=Candidate(
-            symbol="BTCUSDT",
-            side="BUY",
-            score=1.0,
-            entry_price=100.0,
-        )
+        candidate=Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
     )
     executor = ExecutionCounting()
 
@@ -182,7 +184,10 @@ def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-unty
         sizer=FixedNotionalSizer(),
         executor=executor,
         config=TradeKernelConfig(
-            mode="shadow", profile="normal", default_symbol="BTCUSDT", dry_run=True
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            default_symbol="BTCUSDT",
+            dry_run=True,
         ),
     )
 
@@ -192,7 +197,7 @@ def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-unty
 
 
 def test_default_kernel_runs_shadow_as_dry_run(tmp_path) -> None:
-    cfg = load_effective_config(profile="normal", mode="shadow")
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow")
     cfg.behavior.exchange.default_symbol = "BTCUSDT"
     store = _state_store(tmp_path)
 
@@ -208,8 +213,8 @@ def test_default_kernel_runs_shadow_as_dry_run(tmp_path) -> None:
     assert result.state in {"no_candidate", "dry_run", "executed", "risk_rejected"}
 
 
-def test_default_kernel_uses_strategy_pack_v1_selector(tmp_path) -> None:
-    cfg = load_effective_config(profile="normal", mode="shadow")
+def test_default_kernel_uses_alpha_selector_for_default_profile(tmp_path) -> None:
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow")
     cfg.behavior.exchange.default_symbol = "BTCUSDT"
     store = _state_store(tmp_path)
 
@@ -221,7 +226,7 @@ def test_default_kernel_uses_strategy_pack_v1_selector(tmp_path) -> None:
         dry_run=True,
     )
 
-    assert kernel._selector.__class__.__name__ == "StrategyPackV1CandidateSelector"
+    assert kernel._selector.__class__.__name__ == "RA2026AlphaV2CandidateSelector"
 
 
 def test_overheat_fetcher_uses_requested_symbol_and_symbol_cache() -> None:
@@ -248,8 +253,5 @@ def test_overheat_fetcher_uses_requested_symbol_and_symbol_cache() -> None:
     assert first == (0.001, 1.6)
     assert second == (0.0, 1.0)
     assert third == first
-
-    btc_premium_calls = rest.calls.count("/fapi/v1/premiumIndex:BTCUSDT")
-    eth_premium_calls = rest.calls.count("/fapi/v1/premiumIndex:ETHUSDT")
-    assert btc_premium_calls == 1
-    assert eth_premium_calls == 1
+    assert rest.calls.count("/fapi/v1/premiumIndex:BTCUSDT") == 1
+    assert rest.calls.count("/fapi/v1/premiumIndex:ETHUSDT") == 1

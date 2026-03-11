@@ -8,6 +8,8 @@ from .contracts import (
     ExecutionService,
     KernelContext,
     KernelCycleResult,
+    PortfolioCycleResult,
+    RankedCandidateSelector,
     RiskDecision,
     RiskGate,
     SizePlan,
@@ -17,11 +19,20 @@ from .contracts import (
 from .defaults import (
     AlwaysAllowedRiskGate,
     BinanceLiveExecutionService,
+    DynamicNotionalSizer,
     FixedNotionalSizer,
+    LiveRuntimeRiskGate,
     NoopCandidateSelector,
     ReplaySafeExecutionService,
+    RiskAwareSizer,
 )
 from .kernel import TradeKernel, TradeKernelConfig, build_default_kernel
+from .portfolio import (
+    PortfolioRoutingConfig,
+    PortfolioRoutingResult,
+    portfolio_bucket_for_symbol,
+    route_ranked_candidates,
+)
 
 __all__ = [
     "Candidate",
@@ -31,6 +42,8 @@ __all__ = [
     "ExecutionService",
     "KernelContext",
     "KernelCycleResult",
+    "PortfolioCycleResult",
+    "RankedCandidateSelector",
     "RiskDecision",
     "RiskGate",
     "Sizer",
@@ -40,8 +53,15 @@ __all__ = [
     "TradeKernelConfig",
     "AlwaysAllowedRiskGate",
     "BinanceLiveExecutionService",
+    "DynamicNotionalSizer",
     "FixedNotionalSizer",
+    "LiveRuntimeRiskGate",
     "NoopCandidateSelector",
     "ReplaySafeExecutionService",
+    "RiskAwareSizer",
     "build_default_kernel",
+    "PortfolioRoutingConfig",
+    "PortfolioRoutingResult",
+    "portfolio_bucket_for_symbol",
+    "route_ranked_candidates",
 ]

@@ -31,27 +31,47 @@ base:
     stop_loss_pct: 0.01
     trailing_enabled: false
   strategies:
-    - name: strategy_pack_v1
+    - name: ra_2026_alpha_v2
       enabled: true
-      params:
-        entry_mode: pullback
-        mean_reversion_enabled: false
-        supertrend_atr_period: 10
-        supertrend_multiplier: 3.0
-        adx_period: 14
-        adx_threshold: 18
-        donchian_period: 20
-        donchian_anti_fake: 0.2
-        atr_period: 14
-        bb_period: 20
-        bb_std: 2.0
-        rsi_period: 14
-        ema200_gating: true
-        supertrend_flip_limit: 3
-        overheat_funding_threshold: 0.0006
-        overheat_ratio_long: 1.45
-        overheat_ratio_short: 0.65
-        overheat_cache_ttl: 30
+      params: &ra_2026_alpha_v2_params
+        supported_symbols: [BTCUSDT]
+        enabled_alphas: [alpha_breakout, alpha_pullback, alpha_expansion]
+        ema_fast_4h: 50
+        ema_slow_4h: 200
+        adx_period_4h: 14
+        trend_adx_min_4h: 14.0
+        ema_bias_period_1h: 34
+        rsi_period_1h: 14
+        bias_rsi_long_min_1h: 50.0
+        bias_rsi_short_max_1h: 50.0
+        atr_period_15m: 14
+        ema_pullback_period_15m: 20
+        donchian_period_15m: 20
+        bb_period_15m: 20
+        bb_std_15m: 2.0
+        volume_sma_period_15m: 20
+        swing_lookback_15m: 8
+        breakout_buffer_bps: 3.0
+        expansion_buffer_bps: 2.0
+        min_volume_ratio_15m: 1.0
+        squeeze_lookback_15m: 48
+        squeeze_percentile_threshold: 0.40
+        pullback_touch_atr_mult: 0.40
+        expansion_range_atr_min: 1.0
+        taker_fee: 0.0006
+        slippage_bps: 2.0
+        max_spread_bps: 8.0
+        backtest_spread_bps_fallback: 1.5
+        min_expected_move_floor: 0.0006
+        expected_move_cost_mult: 2.0
+        stop_atr_mult: 1.5
+        min_stop_distance_frac: 0.0020
+        take_profit_r: 2.0
+        time_stop_bars: 24
+        stop_exit_cooldown_bars: 12
+        profit_exit_cooldown_bars: 0
+        risk_per_trade_pct: 0.012
+        max_effective_leverage: 10.0
   storage:
     sqlite_path: data/v2_runtime.sqlite3
     journal_table: runtime_journal
@@ -63,80 +83,341 @@ base:
     provider: none
 
 profiles:
-  conservative:
+  ra_2026_alpha_v2:
     risk:
-      max_leverage: 2.0
-      max_exposure_pct: 0.10
-      daily_loss_limit_pct: -0.01
-      dd_limit_pct: -0.08
-    tpsl:
-      take_profit_pct: 0.015
-      stop_loss_pct: 0.008
-
-  normal:
-    inherits: conservative
+      max_leverage: 8.0
+      max_exposure_pct: 0.18
+      daily_loss_limit_pct: -0.03
+      dd_limit_pct: -0.18
+    exchange:
+      default_symbol: BTCUSDT
+      market_intervals: [15m, 1h, 4h]
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          supported_symbols: [BTCUSDT]
+          enabled_alphas: [alpha_breakout, alpha_pullback, alpha_expansion]
+          ema_fast_4h: 50
+          ema_slow_4h: 200
+          adx_period_4h: 14
+          trend_adx_min_4h: 14.0
+          ema_bias_period_1h: 34
+          rsi_period_1h: 14
+          bias_rsi_long_min_1h: 50.0
+          bias_rsi_short_max_1h: 50.0
+          atr_period_15m: 14
+          ema_pullback_period_15m: 20
+          donchian_period_15m: 20
+          bb_period_15m: 20
+          bb_std_15m: 2.0
+          volume_sma_period_15m: 20
+          swing_lookback_15m: 8
+          breakout_buffer_bps: 3.0
+          expansion_buffer_bps: 2.0
+          min_volume_ratio_15m: 1.0
+          squeeze_lookback_15m: 48
+          squeeze_percentile_threshold: 0.40
+          pullback_touch_atr_mult: 0.40
+          expansion_range_atr_min: 1.0
+          taker_fee: 0.0006
+          slippage_bps: 2.0
+          max_spread_bps: 8.0
+          backtest_spread_bps_fallback: 1.5
+          min_expected_move_floor: 0.0006
+          expected_move_cost_mult: 2.0
+          stop_atr_mult: 1.5
+          min_stop_distance_frac: 0.0020
+          take_profit_r: 2.0
+          time_stop_bars: 24
+          stop_exit_cooldown_bars: 12
+          profit_exit_cooldown_bars: 0
+          risk_per_trade_pct: 0.012
+          max_effective_leverage: 10.0
+  ra_2026_alpha_v2_breakout:
+    inherits: ra_2026_alpha_v2
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_breakout]
+  ra_2026_alpha_v2_pullback:
+    inherits: ra_2026_alpha_v2
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_pullback]
+  ra_2026_alpha_v2_expansion:
+    inherits: ra_2026_alpha_v2
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+  ra_2026_alpha_v2_expansion_verified_candidate:
+    inherits: ra_2026_alpha_v2_expansion
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+  ra_2026_alpha_v2_expansion_verified_q070:
+    inherits: ra_2026_alpha_v2_expansion_verified_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+  ra_2026_alpha_v2_expansion_verified_q072:
+    inherits: ra_2026_alpha_v2_expansion_verified_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.72
+  ra_2026_alpha_v2_expansion_verified_q074:
+    inherits: ra_2026_alpha_v2_expansion_verified_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.74
+  ra_2026_alpha_v2_expansion_champion_candidate:
+    inherits: ra_2026_alpha_v2_expansion_verified_q070
+  ra_2026_alpha_v2_expansion_champion_exp07:
+    inherits: ra_2026_alpha_v2_expansion_champion_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+          progress_check_bars: 6
+          progress_min_mfe_r: 0.35
+          progress_extend_trigger_r: 1.0
+          progress_extend_bars: 6
+  ra_2026_alpha_v2_expansion_champion_exp08:
+    inherits: ra_2026_alpha_v2_expansion_champion_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+          quality_exit_score_threshold: 0.82
+          quality_exit_take_profit_r: 2.4
+          quality_exit_time_stop_bars: 24
+  ra_2026_alpha_v2_expansion_champion_exp07a:
+    inherits: ra_2026_alpha_v2_expansion_champion_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+          selective_extension_proof_bars: 6
+          selective_extension_min_mfe_r: 0.75
+          selective_extension_min_regime_strength: 0.55
+          selective_extension_min_bias_strength: 0.55
+          selective_extension_time_stop_bars: 26
+  ra_2026_alpha_v2_expansion_champion_exp07b:
+    inherits: ra_2026_alpha_v2_expansion_champion_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+          selective_extension_proof_bars: 6
+          selective_extension_min_mfe_r: 0.75
+          selective_extension_min_regime_strength: 0.55
+          selective_extension_min_bias_strength: 0.55
+          selective_extension_time_stop_bars: 24
+          selective_extension_take_profit_r: 2.35
+          selective_extension_move_stop_to_be_at_r: 0.75
+  ra_2026_alpha_v2_expansion_champion_exp07c:
+    inherits: ra_2026_alpha_v2_expansion_champion_candidate
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+          expansion_quality_score_v2_min: 0.70
+          selective_extension_proof_bars: 6
+          selective_extension_min_mfe_r: 1.0
+          selective_extension_min_regime_strength: 0.60
+          selective_extension_min_bias_strength: 0.60
+          selective_extension_min_quality_score_v2: 0.78
+          selective_extension_time_stop_bars: 24
+  ra_2026_alpha_v2_expansion_candidate:
+    inherits: ra_2026_alpha_v2_expansion
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_expansion]
+          squeeze_percentile_threshold: 0.30
+          expansion_buffer_bps: 2.0
+          expansion_range_atr_min: 0.7
+          expansion_body_ratio_min: 0.25
+          expansion_close_location_min: 0.45
+          expansion_width_expansion_min: 0.05
+          min_volume_ratio_15m: 1.0
+          take_profit_r: 2.0
+          time_stop_bars: 18
+          trend_adx_min_4h: 14.0
+          expected_move_cost_mult: 1.6
+  ra_2026_alpha_v2_expansion_live_verified_candidate:
+    inherits: ra_2026_alpha_v2_expansion_verified_candidate
     risk:
       max_leverage: 5.0
-      max_exposure_pct: 0.20
-      daily_loss_limit_pct: -0.02
-      dd_limit_pct: -0.15
-    tpsl:
-      take_profit_pct: 0.020
-      stop_loss_pct: 0.010
-    strategies:
-      - name: strategy_pack_v1
-        enabled: true
-        params:
-          entry_mode: donchian
-          mean_reversion_enabled: true
-          supertrend_atr_period: 10
-          supertrend_multiplier: 3.0
-          adx_period: 14
-          adx_threshold: 10
-          donchian_period: 11
-          donchian_anti_fake: 0.0
-          atr_period: 14
-          bb_period: 20
-          bb_std: 2.0
-          rsi_period: 14
-          ema200_gating: false
-          supertrend_flip_limit: 5
-          overheat_funding_threshold: 0.0012
-          overheat_ratio_long: 1.8
-          overheat_ratio_short: 0.55
-          overheat_cache_ttl: 30
-
-  aggressive:
-    inherits: normal
-    scheduler:
-      tick_seconds: 15
+      max_exposure_pct: 0.10
+      daily_loss_limit_pct: -0.015
+      dd_limit_pct: -0.12
+  ra_2026_alpha_v2_expansion_live_candidate:
+    inherits: ra_2026_alpha_v2_expansion_candidate
     risk:
-      max_leverage: 12.0
-      max_exposure_pct: 0.35
-      daily_loss_limit_pct: -0.05
-      dd_limit_pct: -0.25
-    tpsl:
-      take_profit_pct: 0.030
-      stop_loss_pct: 0.015
+      max_leverage: 5.0
+      max_exposure_pct: 0.10
+      daily_loss_limit_pct: -0.015
+      dd_limit_pct: -0.12
+  ra_2026_alpha_v2_breakout_pullback:
+    inherits: ra_2026_alpha_v2
     strategies:
-      - name: strategy_pack_v1
+      - name: ra_2026_alpha_v2
         enabled: true
         params:
-          entry_mode: donchian
-          mean_reversion_enabled: true
-          supertrend_atr_period: 10
-          supertrend_multiplier: 2.5
-          adx_period: 14
-          adx_threshold: 8
-          donchian_period: 8
-          donchian_anti_fake: 0.0
-          atr_period: 14
-          bb_period: 20
-          bb_std: 2.0
-          rsi_period: 14
-          ema200_gating: false
-          supertrend_flip_limit: 6
-          overheat_funding_threshold: 0.0015
-          overheat_ratio_long: 2.0
-          overheat_ratio_short: 0.5
-          overheat_cache_ttl: 30
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_breakout, alpha_pullback]
+  ra_2026_alpha_v2_breakout_expansion:
+    inherits: ra_2026_alpha_v2
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_breakout, alpha_expansion]
+  ra_2026_alpha_v2_pullback_expansion:
+    inherits: ra_2026_alpha_v2
+    strategies:
+      - name: ra_2026_alpha_v2
+        enabled: true
+        params:
+          <<: *ra_2026_alpha_v2_params
+          enabled_alphas: [alpha_pullback, alpha_expansion]

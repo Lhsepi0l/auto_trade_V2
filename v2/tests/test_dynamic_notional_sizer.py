@@ -5,7 +5,7 @@ from v2.clean_room.defaults import DynamicNotionalSizer
 
 
 def _context() -> KernelContext:
-    return KernelContext(mode="live", profile="normal", symbol="BTCUSDT", tick=1, dry_run=False)
+    return KernelContext(mode="live", profile="ra_2026_alpha_v2_expansion_live_candidate", symbol="BTCUSDT", tick=1, dry_run=False)
 
 
 def test_dynamic_notional_sizer_updates_default_leverage_on_runtime_change() -> None:

@@ -56,6 +56,13 @@ def _coerce_float(value: JSONValue, *, default: float = 0.0) -> float:
         return default
 
 
+def _coerce_int(value: JSONValue, *, default: int = 0) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _as_str_list(value: JSONValue) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
@@ -111,6 +118,9 @@ REASON_HINT_MAP: dict[str, str] = {
     "vol_shock_close": "변동성 급등 구간이라 포지션 종료를 보류합니다.",
     "profit_hold": "익절 신호가 살아있어 대기 상태입니다.",
     "same_symbol": "현재 보유 심볼과 동일한 심볼은 중복 진입할 수 없습니다.",
+    "portfolio_symbol_open": "포트폴리오에 동일 심볼 포지션이 있어 추가 진입하지 않습니다.",
+    "portfolio_bucket_cap": "같은 버킷 포지션이 이미 있어 이번 후보는 보류합니다.",
+    "portfolio_cap_reached": "포트폴리오 최대 동시포지션 수에 도달해 신규 진입을 보류합니다.",
     "gap_below_threshold": "점수 차이가 기준치보다 작아 대기합니다.",
     "rebalance_to_better_candidate": "더 나은 후보가 나와 재평가해 이동합니다.",
     "close_symbol_missing": "종료할 심볼 정보를 찾을 수 없습니다.",
@@ -347,19 +357,39 @@ def _build_last_result(
 def _build_tick_once_message(payload: JSONPayload) -> str:
     sched = payload.get("snapshot") if isinstance(payload, dict) else {}
     sched_map = _as_dict(sched)
+    portfolio = _as_dict(sched_map.get("portfolio"))
 
     last_action = _normalize_last_action(str(sched_map.get("last_action") or "-"))
     last_error = str(sched_map.get("last_error") or "")
     last_decision = _normalize_last_decision(str(sched_map.get("last_decision_reason") or "-"))
+    slots_used = _coerce_int(portfolio.get("slots_used"), default=-1)
+    slots_total = _coerce_int(portfolio.get("slots_total"), default=-1)
+    portfolio_lines: list[str] = []
+    if slots_total > 0 and slots_used >= 0:
+        portfolio_lines.append(f"포트폴리오 슬롯: {slots_used}/{slots_total}")
+    blocked_reasons = portfolio.get("blocked_reasons")
+    if isinstance(blocked_reasons, dict):
+        blocked_items = [
+            (str(key), _coerce_int(value))
+            for key, value in blocked_reasons.items()
+            if _coerce_int(value) > 0
+        ]
+        blocked_items.sort(key=lambda item: (-item[1], item[0]))
+        if blocked_items:
+            preview = ", ".join(
+                f"{_reason_to_human_readable(key)}:{count}" for key, count in blocked_items[:3]
+            )
+            portfolio_lines.append(f"포트폴리오 차단: {preview}")
+    portfolio_suffix = "\n" + "\n".join(portfolio_lines) if portfolio_lines else ""
 
     if last_error:
         reason = _reason_to_human_readable(last_error)
-        return f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}"
+        return f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}{portfolio_suffix}"
 
     if last_action == "no_candidate":
         decision_reason = last_decision if last_decision != "-" else "no_candidate"
         reason = _reason_to_human_readable(decision_reason)
-        return f"즉시 판단: {last_action}\n결과: 대기 - 사유: {reason}"
+        return f"즉시 판단: {last_action}\n결과: 대기 - 사유: {reason}{portfolio_suffix}"
 
     mapped_reason = ""
     if last_decision != "-" and last_decision != last_action:
@@ -373,9 +403,9 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
                 break
 
     if mapped_reason:
-        return f"즉시 판단: {last_action}\n사유: {mapped_reason}"
+        return f"즉시 판단: {last_action}\n사유: {mapped_reason}{portfolio_suffix}"
 
-    return f"즉시 판단 실행 완료: {last_action}"
+    return f"즉시 판단 실행 완료: {last_action}{portfolio_suffix}"
 
 
 def _format_tick_runtime_error(err: RuntimeError) -> str:

@@ -173,6 +173,9 @@ def _reason_to_kor(raw_reason: JSONValue) -> str:
         "vol_shock_close": "변동성 급등으로 청산 판단이 보류되었습니다.",
         "profit_hold": "익절 트리거 미달로 포지션을 유지합니다.",
         "same_symbol": "현재 보유 심볼과 후보 심볼이 같아 중복 진입을 생략합니다.",
+        "portfolio_symbol_open": "포트폴리오에 동일 심볼 포지션이 있어 추가 진입을 생략합니다.",
+        "portfolio_bucket_cap": "같은 버킷 포지션이 이미 있어 후보를 보류합니다.",
+        "portfolio_cap_reached": "포트폴리오 최대 동시포지션 수에 도달해 신규 진입을 보류합니다.",
         "gap_below_threshold": "점수 차이가 기준치 이하라 판단을 생략합니다.",
         "rebalance_to_better_candidate": "더 유리한 후보로 리밸런싱 예정입니다.",
         "close_symbol_missing": "종료 심볼 정보를 찾을 수 없습니다.",
@@ -226,7 +229,13 @@ def _format_top_counts(counts: JSONPayload, *, limit: int = 6) -> str:
             key=lambda x: x[1],
             reverse=True,
         )
-        return ", ".join(f"{k}:{v}" for k, v in sorted_items[:limit])
+        rendered: list[str] = []
+        for key, value in sorted_items[:limit]:
+            label = str(key)
+            if label.startswith("portfolio_"):
+                label = _reason_to_kor(label)
+            rendered.append(f"{label}:{value}")
+        return ", ".join(rendered)
     except (TypeError, ValueError):
         return str(counts)
 
@@ -465,6 +474,7 @@ def format_status_payload(payload: JSONPayload) -> str:
 
     last_action = str(sched.get("last_action") or "-")
     last_error = payload.get("last_error")
+    portfolio = _as_dict(sched.get("portfolio"))
 
     lines: list[str] = []
     lines.append("[상태 알림]")
@@ -474,6 +484,10 @@ def format_status_payload(payload: JSONPayload) -> str:
     else:
         side_label = f" [{pos_side}]" if pos_side != "-" else ""
         lines.append(f"현재 포지션: {pos_symbol}{side_label} (수량 {pos_qty})")
+    slots_used = _coerce_int(portfolio.get("slots_used"))
+    slots_total = _coerce_int(portfolio.get("slots_total"))
+    if slots_total > 0:
+        lines.append(f"포트폴리오 슬롯: {slots_used}/{slots_total}")
 
     lines.append(
         "손익 요약: "
@@ -487,6 +501,10 @@ def format_status_payload(payload: JSONPayload) -> str:
         lines.append("이번 결정: -")
     else:
         lines.append(f"이번 결정: {decision_code} -> {decision_human}")
+        blocked_reasons = _as_dict(portfolio.get("blocked_reasons"))
+        blocked_text = _format_top_counts(blocked_reasons)
+        if blocked_text != "-":
+            lines.append(f"포트폴리오 차단: {blocked_text}")
         if decision_code.startswith("profit_hold"):
             arm = summary.get("trail_arm_pnl_pct")
             dist = summary.get("trail_distance_pnl_pct")

@@ -63,17 +63,23 @@ class UserStreamManager:
         self._max_event_ms = 0
         self._on_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None
         self._on_resync: Callable[[ResyncSnapshot], Awaitable[None] | None] | None = None
+        self._on_disconnect: Callable[[str], Awaitable[None] | None] | None = None
+        self._on_private_ok: Callable[[str], Awaitable[None] | None] | None = None
 
     def start(
         self,
         *,
         on_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
         on_resync: Callable[[ResyncSnapshot], Awaitable[None] | None] | None = None,
+        on_disconnect: Callable[[str], Awaitable[None] | None] | None = None,
+        on_private_ok: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> None:
         if self._task is not None and not self._task.done():
             return
         self._on_event = on_event
         self._on_resync = on_resync
+        self._on_disconnect = on_disconnect
+        self._on_private_ok = on_private_ok
         self._stop.clear()
         self._task = asyncio.create_task(self._run_forever(), name="v2_user_stream")
 
@@ -127,6 +133,8 @@ class UserStreamManager:
         )
         if self._on_resync is not None:
             await _maybe_await(self._on_resync(snapshot))
+        if self._on_private_ok is not None:
+            await _maybe_await(self._on_private_ok("resync"))
 
     async def _keepalive_loop(self) -> None:
         while not self._stop.is_set():
@@ -136,6 +144,8 @@ class UserStreamManager:
                 return
             try:
                 await self.rest.keepalive_listen_key(listen_key=listen_key)
+                if self._on_private_ok is not None:
+                    await _maybe_await(self._on_private_ok("keepalive"))
             except Exception:
                 self._listen_key = None
                 ws = self._active_ws
@@ -169,6 +179,7 @@ class UserStreamManager:
     async def _run_forever(self) -> None:
         attempt = 1
         while not self._stop.is_set():
+            disconnect_reason = "user_stream_disconnected"
             try:
                 if self._listen_key is None:
                     self._listen_key = await self.rest.create_listen_key()
@@ -202,6 +213,7 @@ class UserStreamManager:
                             continue
 
                         if str(msg.get("e") or "") == "listenKeyExpired":
+                            disconnect_reason = "listen_key_expired"
                             self._listen_key = None
                             break
 
@@ -211,8 +223,8 @@ class UserStreamManager:
                     await self._drain_events(force=True)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                disconnect_reason = f"user_stream_error:{type(exc).__name__}"
             finally:
                 try:
                     await self._drain_events(force=True)
@@ -226,6 +238,8 @@ class UserStreamManager:
                     except asyncio.CancelledError:
                         pass
                     self._keepalive_task = None
+                if not self._stop.is_set() and self._on_disconnect is not None:
+                    await _maybe_await(self._on_disconnect(disconnect_reason))
 
             if self._stop.is_set():
                 break
@@ -259,9 +273,13 @@ class ShadowUserStreamManager:
         *,
         on_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
         on_resync: Callable[[ResyncSnapshot], Awaitable[None] | None] | None = None,
+        on_disconnect: Callable[[str], Awaitable[None] | None] | None = None,
+        on_private_ok: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> None:
         _ = on_event
         _ = on_resync
+        _ = on_disconnect
+        _ = on_private_ok
 
     async def stop(self) -> None:
         return

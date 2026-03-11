@@ -1,0 +1,29 @@
+version: 1
+policy:
+  active_experiment_limit: 1
+  default_scan_family: crowding_plus_liquidity
+  max_salvage_attempts: 1
+  implementation_gate: scan_gate_keep_only
+experiments:
+- experiment_id: rr_2026_scan_001
+  hypothesis: premium/funding crowding 과 intraday liquidity sweep, session location
+    이 동시에 맞물릴 때 비용 차감 후에도 의미 있는 후보 이벤트가 충분히 발생한다.
+  data_axes:
+  - ohlcv
+  - premium_index
+  - funding_rate
+  universe:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  window:
+    start_utc: '2025-09-10T00:00:00Z'
+    end_utc: '2026-03-10T00:00:00Z'
+  scan_family: crowding_plus_liquidity
+  status: killed_pre_implementation
+  kill_reason: candidate_events,events_per_symbol_min
+  best_report_path: /home/user/project/auto-trader/local_backtest/reports/scan_rr_2026_scan_001.json
+  salvage_attempts_used: 0
+  notes: 첫 evidence-first scan 결과가 killed_pre_implementation으로 종료됨. 새 전략
+    클래스 구현 금지. 다음 단계는 새 scan family 정의 또는 가설 탐색 종료.

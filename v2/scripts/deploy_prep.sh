@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 
-PROFILE="normal"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="shadow"
 ENVIRONMENT="testnet"
 CONFIG_PATH="config/config.yaml"
@@ -19,7 +19,7 @@ Usage:
   bash v2/scripts/deploy_prep.sh [options]
 
 Options:
-  --profile <normal|conservative|aggressive>
+  --profile <ra_2026_alpha_v2_expansion_live_candidate>
   --mode <shadow|live>
   --env <testnet|prod>
   --config <path>
@@ -28,8 +28,8 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/deploy_prep.sh --profile normal --mode shadow --env testnet
-  bash v2/scripts/deploy_prep.sh --profile normal --mode live --env prod --keep-reports 30
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --keep-reports 30
 EOF
 }
 
@@ -77,6 +77,11 @@ if [[ "$CONFIG_PATH" == v2/* ]]; then
     CONFIG_PATH="${CONFIG_PATH#v2/}"
 fi
 
+RUNTIME_PREFLIGHT_CONFIG="$CONFIG_PATH"
+if [[ "$RUNTIME_PREFLIGHT_CONFIG" != /* ]]; then
+    RUNTIME_PREFLIGHT_CONFIG="v2/${RUNTIME_PREFLIGHT_CONFIG}"
+fi
+
 PREFLIGHT_CMD=(
     bash "v2/scripts/preflight.sh"
     --profile "$PROFILE"
@@ -92,6 +97,17 @@ fi
 
 echo "[deploy-prep] running preflight"
 "${PREFLIGHT_CMD[@]}"
+
+echo "[deploy-prep] running runtime preflight"
+python -m v2.run \
+  --profile "$PROFILE" \
+  --mode "$MODE" \
+  --env "$ENVIRONMENT" \
+  --env-file .env \
+  --config "$RUNTIME_PREFLIGHT_CONFIG" \
+  --runtime-preflight \
+  --control-http-host 127.0.0.1 \
+  --control-http-port 8101
 
 echo "[deploy-prep] running runtime smoke"
 python -m v2.run --profile "$PROFILE" --mode shadow --env testnet --env-file .env
