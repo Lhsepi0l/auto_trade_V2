@@ -12,6 +12,7 @@ ENVIRONMENT="testnet"
 CONFIG_PATH="config/config.yaml"
 REPORT_DIR="v2/reports"
 KEEP_REPORTS=""
+TEST_SCOPE="runtime"
 
 usage() {
     cat <<'EOF'
@@ -25,11 +26,13 @@ Options:
   --config <path>
   --report-dir <path>
   --keep-reports <n>
+  --test-scope <runtime|full>
   --help
 
 Examples:
   bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
   bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --keep-reports 30
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
 EOF
 }
 
@@ -57,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --keep-reports)
             KEEP_REPORTS="$2"
+            shift 2
+            ;;
+        --test-scope)
+            TEST_SCOPE="$2"
             shift 2
             ;;
         --help|-h)
@@ -89,6 +96,7 @@ PREFLIGHT_CMD=(
     --env "$ENVIRONMENT"
     --config "$CONFIG_PATH"
     --report-dir "$REPORT_DIR"
+    --test-scope "$TEST_SCOPE"
 )
 
 if [[ -n "$KEEP_REPORTS" ]]; then

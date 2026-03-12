@@ -1970,3 +1970,21 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 Raspberry Pi 운영 검증 경량화:
+  - 운영 Pi에서는 local-backtest/연구용 테스트가 기본 배포 검증 경로를 흔들 필요가 없다고 결론 내리고 `preflight/deploy-prep` 테스트 스코프를 `runtime|full`로 분리했다.
+  - 기본값은 `runtime`으로 바꿨고, runtime 묶음은 다음만 포함한다:
+    - `test_v2_config_loader.py`
+    - `test_v2_env_and_notify.py`
+    - `test_v2_run_smoke.py`
+    - `test_control_api.py`
+    - `test_live_execution_service.py`
+    - `test_exchange_user_stream.py`
+    - `test_tpsl_brackets.py`
+    - `test_discord_panel.py`
+  - 전체 연구/백테스트 테스트는 워크스테이션에서만 `--test-scope full` 또는 직접 `python -m pytest -q`로 돌리는 운영 모델로 정리했다.
+  - `v2.run --deploy-prep`도 같은 `--test-scope` 옵션을 그대로 전달하도록 연결했다.
+  - 검증:
+    - `python -m ruff check v2 v2/tests local_backtest` 통과
+    - `bash -n v2/scripts/preflight.sh v2/scripts/deploy_prep.sh` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과

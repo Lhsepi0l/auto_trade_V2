@@ -16,7 +16,19 @@ REPORT_DIR="reports"
 KEEP_REPORTS=""
 REPORT_PATH=""
 TIME_DRIFT_MS=5000
+TEST_SCOPE="runtime"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+
+RUNTIME_PYTEST_TARGETS=(
+    "v2/tests/test_v2_config_loader.py"
+    "v2/tests/test_v2_env_and_notify.py"
+    "v2/tests/test_v2_run_smoke.py"
+    "v2/tests/test_control_api.py"
+    "v2/tests/test_live_execution_service.py"
+    "v2/tests/test_exchange_user_stream.py"
+    "v2/tests/test_tpsl_brackets.py"
+    "v2/tests/test_discord_panel.py"
+)
 
 usage() {
     cat <<'EOF'
@@ -32,11 +44,13 @@ Options:
   --report-file <path>
   --keep-reports <n>
   --time-drift-ms <ms>
+  --test-scope <runtime|full>
   --help
 
 Examples:
   bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
   bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/readiness.md
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
 EOF
 }
 
@@ -74,6 +88,10 @@ while [[ $# -gt 0 ]]; do
             TIME_DRIFT_MS="$2"
             shift 2
             ;;
+        --test-scope)
+            TEST_SCOPE="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -93,6 +111,11 @@ fi
 
 if [[ "$ENVIRONMENT" != "testnet" && "$ENVIRONMENT" != "prod" ]]; then
     echo "--env must be testnet or prod"
+    exit 1
+fi
+
+if [[ "$TEST_SCOPE" != "runtime" && "$TEST_SCOPE" != "full" ]]; then
+    echo "--test-scope must be runtime or full"
     exit 1
 fi
 
@@ -155,6 +178,7 @@ cat <<EOF > "$REPORT_PATH"
 - Profile: ${PROFILE}
 - Mode: ${MODE}
 - Environment: ${ENVIRONMENT}
+- Test Scope: ${TEST_SCOPE}
 - Config: ${CONFIG_PATH}
 - Report: ${REPORT_PATH}
 
@@ -236,6 +260,41 @@ run_python_check() {
     return 1
 }
 
+run_pytest_suite() {
+    local scope="$1"
+    local tmp_out
+    tmp_out="$(mktemp)"
+
+    {
+        echo "scope=${scope}"
+        if [[ "$scope" == "runtime" ]]; then
+            printf "targets=%s\n" "${RUNTIME_PYTEST_TARGETS[*]}"
+            (
+                cd "$PROJECT_ROOT"
+                python -m pytest -q "${RUNTIME_PYTEST_TARGETS[@]}"
+            )
+        else
+            echo "targets=v2/tests"
+            (
+                cd "$PROJECT_ROOT"
+                python -m pytest -q v2/tests
+            )
+        fi
+    } > "$tmp_out" 2>&1
+    local rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        append_result "3) pytest (${scope})" "PASS" "$tmp_out"
+        rm -f "$tmp_out"
+        return 0
+    fi
+
+    append_result "3) pytest (${scope})" "FAIL" "$tmp_out"
+    rm -f "$tmp_out"
+    FAILED=1
+    return 1
+}
+
 echo "[step] secrets policy"
 SECRETS_CHECK=$(cat <<'PY'
 from pathlib import Path
@@ -264,8 +323,8 @@ if [[ "$FAILED" -ne 0 ]]; then
     exit 1
 fi
 
-echo "[step] tests"
-run_shell_check "3) pytest v2/tests" bash -lc "cd '$PROJECT_ROOT' && python -m pytest -q v2/tests" || true
+echo "[step] tests (${TEST_SCOPE})"
+run_pytest_suite "$TEST_SCOPE" || true
 if [[ "$FAILED" -ne 0 ]]; then
     echo "preflight stopped: tests failed"
     finalize_report FAILED

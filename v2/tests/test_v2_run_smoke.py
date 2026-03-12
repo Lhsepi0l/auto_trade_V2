@@ -9,6 +9,7 @@ from v2.config.loader import load_effective_config
 from v2.exchange import BinanceRESTClient
 from v2.run import (
     _build_control_balance_rest_client,
+    _build_parser,
     _configure_runtime_logging,
     _dirty_runtime_marker,
     _evaluate_runtime_preflight,
@@ -156,3 +157,15 @@ def test_runtime_preflight_reports_good_and_bad_gate() -> None:
 
     assert good["ok"] is True
     assert bad["ok"] is False
+
+
+def test_deploy_prep_parser_defaults_to_runtime_test_scope() -> None:
+    parser = _build_parser()
+    args = parser.parse_args([])
+    assert args.test_scope == "runtime"
+
+
+def test_deploy_prep_parser_accepts_full_test_scope() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["--test-scope", "full"])
+    assert args.test_scope == "full"

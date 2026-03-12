@@ -21,8 +21,11 @@ python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode shad
 # 운영 Prod Live (BINANCE_API_KEY, BINANCE_API_SECRET 필요)
 python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod
 
-# 배포 준비(원커맨드: preflight + runtime smoke)
+# 배포 준비(원커맨드: preflight + runtime smoke, 기본은 server-minimal runtime 테스트)
 python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
+
+# 워크스테이션에서 전체 테스트까지 포함한 full 게이트
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30 --test-scope full
 ```
 
 ### Alpha Expansion Live Candidate 런칭
@@ -133,6 +136,29 @@ sudo journalctl -u v2-stack.service -f
 - `TRADER_API_BASE_URL` 기본값은 `http://127.0.0.1:8101` 입니다.
 - Discord 토큰은 `DISCORD_BOT_TOKEN`(또는 하위호환 `DISCORD_TOKEN`)을 사용합니다.
 
+### Raspberry Pi 최소 검증
+운영 Pi에서는 `local_backtest`/연구용 테스트를 기본 검증 경로에 넣지 않습니다.
+
+```bash
+# 기본 server-minimal 경로
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
+
+# 필요한 경우에만 워크스테이션에서 전체 테스트
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30 --test-scope full
+```
+
+runtime 테스트 묶음은 아래만 포함합니다.
+- `v2/tests/test_v2_config_loader.py`
+- `v2/tests/test_v2_env_and_notify.py`
+- `v2/tests/test_v2_run_smoke.py`
+- `v2/tests/test_control_api.py`
+- `v2/tests/test_live_execution_service.py`
+- `v2/tests/test_exchange_user_stream.py`
+- `v2/tests/test_tpsl_brackets.py`
+- `v2/tests/test_discord_panel.py`
+
 ### `ra_2026_alpha_v2_expansion_live_candidate` 30U 캐너리 런칭 후 리스크 재설정
 `/risk` 값은 런타임 저장소에서 복구될 수 있으므로, systemd 재기동 직후 아래 값을 한 번씩 다시 고정합니다.
 
@@ -208,8 +234,9 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 - `v2/config/config.yaml`만 변경했는지 확인
 - `.env`에서 다음 값이 모두 현재 사용 환경에 맞는지 확인: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `DISCORD_WEBHOOK_URL`
 - `python -m ruff check v2 v2/tests`
-- `python -m pytest -q v2/tests`
-- `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_live_candidate` 실행(또는 `--mode live --env prod`)
+- 서버(Pi): `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_v2_env_and_notify.py v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_live_execution_service.py v2/tests/test_exchange_user_stream.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py`
+- 워크스테이션(선택): `python -m pytest -q v2/tests`
+- `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_live_candidate` 실행(또는 `--mode live --env prod`, full suite가 필요하면 `--test-scope full`)
 
 ### 실행 중 모니터링
 - 출력에 `v2 boot completed`가 보이고 프로세스가 지속 실행되는지 확인
@@ -249,11 +276,12 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 ```bash
 bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
 bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/preflight_prod_$(date -u +%Y%m%d_%H%M%S).md --keep-reports 30
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
 ```
 
 리포트에는 다음 항목이 포함됩니다.
 - ruff 검사
-- tests/v2 실행 결과
+- runtime 또는 full pytest 실행 결과
 - config validation
 - ping/time sync 확인
 - 점검 요약과 권고 조치

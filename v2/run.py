@@ -644,6 +644,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--keep-reports", type=int, default=None, help="retention count for deploy-prep reports"
     )
+    parser.add_argument(
+        "--test-scope",
+        choices=["runtime", "full"],
+        default="runtime",
+        help="test scope for deploy-prep/preflight (runtime=server-minimal, full=workstation full suite)",
+    )
     return parser
 
 
@@ -8894,6 +8900,8 @@ def _run_deploy_prep(args: argparse.Namespace) -> int:
         str(args.config if args.config else "config/config.yaml"),
         "--report-dir",
         str(args.report_dir),
+        "--test-scope",
+        str(args.test_scope),
     ]
     if args.keep_reports is not None:
         cmd.extend(["--keep-reports", str(max(int(args.keep_reports), 0))])
