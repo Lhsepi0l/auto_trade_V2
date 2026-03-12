@@ -55,4 +55,4 @@ select = ["E", "F", "I", "B", "BLE"]
 ignore = ["E501", "B008", "BLE001"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["v2"]
+known-first-party = ["v2", "local_backtest"]

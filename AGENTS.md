@@ -1945,3 +1945,11 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
     - readiness 결과는 `ready=true`, overall=`caution`이며 caution 원인은 `mode=shadow` 경고와 private exchange check의 `fallback` 경고뿐이었다.
+- 2026-03-12 Raspberry Pi ruff 편차 대응:
+  - Raspberry Pi fresh install 환경에서 `python -m ruff check v2/tests/test_local_backtest_param_sweep.py`가 `I001`을 내는 편차를 확인했다.
+  - 원인은 `local_backtest` import가 환경에 따라 third-party처럼 분류되는 모호성으로 판단했고, `pyproject.toml`의 Ruff isort `known-first-party`에 `local_backtest`를 명시해 고정했다.
+  - 검증:
+    - `python -m ruff check v2 v2/tests local_backtest` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
