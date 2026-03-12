@@ -1962,3 +1962,11 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m ruff check pyproject.toml local_backtest v2/tests/test_local_backtest_param_sweep.py` 통과
     - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
+- 2026-03-12 Raspberry Pi pytest import 경로 고정:
+  - 일부 Pi 환경에서 editable install 이후에도 `v2/tests/test_local_backtest_param_sweep.py` 수집 시 `local_backtest.param_sweep` import 실패가 지속되는 사례를 확인했다.
+  - 테스트 수집이 설치 메타데이터 상태에 덜 의존하도록 `v2/tests/__init__.py`에서 repo root를 `sys.path` 선두에 고정 추가했다.
+  - 검증:
+    - `python -m ruff check v2 v2/tests local_backtest` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
