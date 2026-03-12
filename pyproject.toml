@@ -45,7 +45,7 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["v2*"]
+include = ["v2*", "local_backtest*"]
 
 [tool.ruff]
 line-length = 100

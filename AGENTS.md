@@ -1953,3 +1953,12 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 Raspberry Pi local_backtest import 복구:
+  - Raspberry Pi Python 3.13 환경에서 `v2/tests/test_local_backtest_param_sweep.py` 수집 시 `ModuleNotFoundError: No module named 'local_backtest'`가 재현됐다.
+  - 원인은 `local_backtest/`가 명시 패키지가 아니고 setuptools package discovery에도 포함되지 않아 editable install 환경에서 import 보장이 없던 점이다.
+  - 조치:
+    - `local_backtest/__init__.py` 추가
+    - `pyproject.toml` package discovery include를 `["v2*", "local_backtest*"]`로 확장
+  - 검증:
+    - `python -m ruff check pyproject.toml local_backtest v2/tests/test_local_backtest_param_sweep.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py` 통과
