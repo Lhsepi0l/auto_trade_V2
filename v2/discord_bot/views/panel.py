@@ -12,6 +12,7 @@ from typing import Literal
 
 import discord
 
+from v2.common.operator_labels import humanize_action_token, humanize_reason_token
 from v2.discord_bot.services.api_client import APIError
 from v2.discord_bot.services.contracts import TraderAPI
 from v2.discord_bot.services.discord_utils import is_admin as _is_admin
@@ -320,7 +321,14 @@ def _reason_to_human_readable(raw_reason: str) -> str:
     if reason in REASON_HINT_MAP:
         return REASON_HINT_MAP[reason]
 
-    return reason
+    return humanize_reason_token(reason)
+
+
+def _action_to_human_readable(raw_action: str | None) -> str:
+    action = str(raw_action or "").strip()
+    if not action:
+        return "-"
+    return humanize_action_token(action)
 
 
 def _normalize_last_action(raw: str | None) -> str:
@@ -342,7 +350,7 @@ def _build_last_result(
 ) -> tuple[str, str]:
     if last_error:
         human = _reason_to_human_readable(last_error)
-        return "BLOCKED", f"사유: {human}"
+        return "차단", f"사유: {human}"
 
     decision = _normalize_last_decision(last_decision)
     if last_action == "-" and decision != "-":
@@ -350,7 +358,7 @@ def _build_last_result(
 
     action = _normalize_last_action(last_action)
     if action != "-":
-        return "OK", str(last_action)
+        return "정상", _action_to_human_readable(last_action)
     return "-", "-"
 
 
@@ -360,6 +368,7 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
     portfolio = _as_dict(sched_map.get("portfolio"))
 
     last_action = _normalize_last_action(str(sched_map.get("last_action") or "-"))
+    action_display = _action_to_human_readable(last_action)
     last_error = str(sched_map.get("last_error") or "")
     last_decision = _normalize_last_decision(str(sched_map.get("last_decision_reason") or "-"))
     slots_used = _coerce_int(portfolio.get("slots_used"), default=-1)
@@ -384,12 +393,12 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
 
     if last_error:
         reason = _reason_to_human_readable(last_error)
-        return f"즉시 판단: {last_action}\n결과: BLOCKED - 사유: {reason}{portfolio_suffix}"
+        return f"즉시 판단: {action_display}\n결과: 차단 - 사유: {reason}{portfolio_suffix}"
 
     if last_action == "no_candidate":
         decision_reason = last_decision if last_decision != "-" else "no_candidate"
         reason = _reason_to_human_readable(decision_reason)
-        return f"즉시 판단: {last_action}\n결과: 대기 - 사유: {reason}{portfolio_suffix}"
+        return f"즉시 판단: {action_display}\n결과: 대기 - 사유: {reason}{portfolio_suffix}"
 
     mapped_reason = ""
     if last_decision != "-" and last_decision != last_action:
@@ -403,9 +412,9 @@ def _build_tick_once_message(payload: JSONPayload) -> str:
                 break
 
     if mapped_reason:
-        return f"즉시 판단: {last_action}\n사유: {mapped_reason}{portfolio_suffix}"
+        return f"즉시 판단: {action_display}\n사유: {mapped_reason}{portfolio_suffix}"
 
-    return f"즉시 판단 실행 완료: {last_action}{portfolio_suffix}"
+    return f"즉시 판단 실행 완료: {action_display}{portfolio_suffix}"
 
 
 def _format_tick_runtime_error(err: RuntimeError) -> str:
@@ -554,6 +563,7 @@ def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, 
 
     sched = _as_dict(payload.get("scheduler"))
     last_action = _normalize_last_action(str(sched.get("last_action") or "-"))
+    action_display = _action_to_human_readable(last_action)
     last_decision = str(sched.get("last_decision_reason") or "-")
     last_error = sched.get("last_error")
     last_status, last_reason = _build_last_result(
@@ -580,7 +590,7 @@ def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, 
         next_decision,
         margin_line,
         expect_line,
-        f"마지막 판단: {last_action}\n마지막 결과: {last_result}",
+        f"마지막 판단: {action_display}\n마지막 결과: {last_result}",
         interval_line,
     )
 

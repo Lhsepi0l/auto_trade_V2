@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from v2.clean_room.contracts import KernelCycleResult
 from v2.common.async_bridge import run_async_blocking
+from v2.common.operator_labels import humanize_action_token, humanize_reason_token
 from v2.config.loader import EffectiveConfig
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
@@ -2501,12 +2502,8 @@ class RuntimeController:
             "KILLED": "강제중지",
         }.get(state_raw, state_raw)
         live_trading_enabled = self.cfg.mode == "live" and str(self.cfg.env) == "prod"
-        last_action = self._translate_status_token(
-            str(self._last_cycle.get("last_action") or "-"), _ACTION_LABELS_KO
-        )
-        reason = self._translate_status_token(
-            str(self._last_cycle.get("last_decision_reason") or "-"), _REASON_LABELS_KO
-        )
+        last_action = humanize_action_token(str(self._last_cycle.get("last_action") or "-"))
+        reason = humanize_reason_token(str(self._last_cycle.get("last_decision_reason") or "-"))
         portfolio_summary = self._portfolio_slot_summary()
         position_summary, pnl_summary = self._status_pnl_summary()
         return (

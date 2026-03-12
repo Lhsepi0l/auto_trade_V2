@@ -2030,3 +2030,18 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_control_api.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 operator-facing Korean label pass:
+  - 실운영 패널/상태 알림에서 `즉시 판단: no_candidate`, `사유=regime_adx_rising_missing` 같은 내부 토큰이 그대로 노출되어 운영 가독성이 떨어지는 사례를 확인했다.
+  - 조치:
+    - `v2/common/operator_labels.py`를 추가해 action/reason 공용 한글 라벨 헬퍼를 만들었다.
+    - `v2/control/api.py` 상태 알림 요약은 이제 `마지막판단=대기`, `사유=레짐 ADX 상승 추세 조건 미충족`처럼 operator-facing 한국어 문구를 사용한다.
+    - `v2/discord_bot/views/panel.py` 즉시 판단 응답은 이제 `즉시 판단: 대기`, `결과: 대기 - 사유: ...`, `결과: 차단 - 사유: ...` 형태로 한국어 액션/사유를 출력한다.
+    - `v2/discord_bot/services/formatting.py` 상태 카드/리포트도 같은 공용 라벨을 써서 `이번 결정`, `최근 액션` 문구가 한글 기준으로 정렬되도록 맞췄다.
+  - 회귀:
+    - `v2/tests/test_control_api.py`에 전략 블록 사유(`regime_adx_rising_missing`) 한국어 표시 테스트 추가
+    - `v2/tests/test_discord_panel.py`에 즉시 판단 action/reason 한국어화와 상태 formatter 한국어화 테스트 추가
+  - 검증:
+    - `python -m ruff check v2/common/operator_labels.py v2/control/api.py v2/discord_bot/views/panel.py v2/discord_bot/services/formatting.py v2/tests/test_discord_panel.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_discord_panel.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과

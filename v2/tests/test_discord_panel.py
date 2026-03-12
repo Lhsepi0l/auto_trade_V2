@@ -347,7 +347,7 @@ async def test_build_embed_shows_failure_reason() -> None:
     }
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
-    assert "BLOCKED - 사유:" in text
+    assert "차단 - 사유:" in text
     assert "현재 증거금 32.0000 USDT" in text
 
 
@@ -371,7 +371,7 @@ async def test_build_embed_shows_human_reason_for_known_code() -> None:
     }
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
-    assert "BLOCKED - 사유:" in text
+    assert "차단 - 사유:" in text
     assert "변동성 급등 구간이라 신규 진입이 보류됩니다." in text
 
 
@@ -394,7 +394,7 @@ async def test_tick_once_shows_human_reason_in_followup(monkeypatch: pytest.Monk
 
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
-    assert any("즉시 판단: hold" in m and "BLOCKED - 사유:" in m for m in it.followup.messages)
+    assert any("즉시 판단: 대기" in m and "차단 - 사유:" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit
@@ -436,7 +436,7 @@ async def test_tick_once_retries_once_when_tick_busy(monkeypatch: pytest.MonkeyP
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
 
     assert api.tick_scheduler_now.await_count == 2
-    assert any("즉시 판단: no_candidate" in m for m in it.followup.messages)
+    assert any("즉시 판단: 대기" in m for m in it.followup.messages)
 
 
 @pytest.mark.unit
@@ -465,7 +465,9 @@ async def test_tick_once_shows_no_candidate_korean_reason(monkeypatch: pytest.Mo
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any(
-        "결과: 대기 - 사유:" in m and "현재 진입 후보가 없습니다." in m
+        "즉시 판단: 대기" in m
+        and "결과: 대기 - 사유:" in m
+        and "현재 진입 후보가 없습니다." in m
         for m in it.followup.messages
     )
     assert any("실시간 잔고:" in m and "123.4500" in m for m in it.followup.messages)
@@ -497,6 +499,37 @@ async def test_tick_once_humanizes_no_entry_reason(monkeypatch: pytest.MonkeyPat
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
     assert any("돈치안 진입 조건 미충족" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_humanizes_strategy_block_reason_and_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(
+            return_value={
+                "snapshot": {
+                    "last_action": "no_candidate",
+                    "last_error": None,
+                    "last_decision_reason": "regime_adx_rising_missing",
+                },
+            }
+        ),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "binance": {"usdt_balance": {"available": 10.0, "wallet": 10.0}},
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any(
+        "즉시 판단: 대기" in m and "레짐 ADX 상승 추세 조건 미충족" in m
+        for m in it.followup.messages
+    )
 
 
 @pytest.mark.unit
@@ -591,6 +624,25 @@ def test_status_formatter_humanizes_portfolio_block_counts() -> None:
     assert "포트폴리오 차단:" in rendered
     assert "포트폴리오 최대 동시포지션 수에 도달해 신규 진입을 보류합니다.:1" in rendered
     assert "같은 버킷 포지션이 이미 있어 후보를 보류합니다.:2" in rendered
+
+
+@pytest.mark.unit
+def test_status_formatter_humanizes_strategy_reason_and_action() -> None:
+    rendered = format_status_payload(
+        {
+            "engine_state": {"state": "RUNNING"},
+            "binance": {},
+            "pnl": {},
+            "scheduler": {
+                "last_action": "no_candidate",
+                "last_decision_reason": "regime_adx_rising_missing",
+                "portfolio": {"slots_used": 0, "slots_total": 1},
+            },
+        }
+    )
+
+    assert "이번 결정: 대기 -> 레짐 ADX 상승 추세 조건 미충족" in rendered
+    assert "최근 액션: 대기" in rendered
 
 
 @pytest.mark.unit

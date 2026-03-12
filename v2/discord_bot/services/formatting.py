@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from v2.common.operator_labels import humanize_action_token, humanize_reason_token
 from v2.discord_bot.services.error_guidance import error_guidance
 
 _SCORING_TIMEFRAME_ORDER = ("10m", "15m", "30m", "1h", "4h")
@@ -198,7 +199,7 @@ def _reason_to_kor(raw_reason: JSONValue) -> str:
     for key in reason_map:
         if reason.startswith(key):
             return reason_map[key]
-    return reason
+    return humanize_reason_token(reason)
 
 
 def _format_scoring_weights(weights: JSONPayload) -> str:
@@ -473,6 +474,7 @@ def format_status_payload(payload: JSONPayload) -> str:
     decision_human = _reason_to_kor(decision_raw)
 
     last_action = str(sched.get("last_action") or "-")
+    last_action_human = humanize_action_token(last_action)
     last_error = payload.get("last_error")
     portfolio = _as_dict(sched.get("portfolio"))
 
@@ -500,7 +502,7 @@ def format_status_payload(payload: JSONPayload) -> str:
     if decision_code == "-":
         lines.append("이번 결정: -")
     else:
-        lines.append(f"이번 결정: {decision_code} -> {decision_human}")
+        lines.append(f"이번 결정: {last_action_human} -> {decision_human}")
         blocked_reasons = _as_dict(portfolio.get("blocked_reasons"))
         blocked_text = _format_top_counts(blocked_reasons)
         if blocked_text != "-":
@@ -581,7 +583,7 @@ def format_status_payload(payload: JSONPayload) -> str:
     if candidate_symbol != "-" and candidate_scores != "-":
         lines.append(f"후보 TF 점수: {candidate_scores}")
 
-    lines.append(f"최근 액션: {last_action}")
+    lines.append(f"최근 액션: {last_action_human}")
 
     if enabled_symbols:
         lines.append(f"운영 심볼: {', '.join(enabled_symbols)}")
