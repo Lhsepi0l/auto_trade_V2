@@ -157,3 +157,33 @@ async def test_user_stream_reorders_events_and_reconnects_with_resync() -> None:
     assert disconnect_reasons
     assert "resync" in private_ok_sources
     assert "keepalive" in private_ok_sources
+
+
+@pytest.mark.asyncio
+async def test_user_stream_emits_ws_alive_private_ok_without_account_events() -> None:
+    rest = _FakeREST()
+    connect = _ConnectFactory(streams=[[]], delay_sec=5.0)
+    private_ok_sources: list[str] = []
+
+    async def _on_private_ok(source: str) -> None:
+        private_ok_sources.append(source)
+
+    svc = UserStreamManager(
+        env="testnet",
+        rest=rest,
+        ws_connect=connect,
+        keepalive_interval_sec=60,
+        liveness_ping_interval_sec=0.2,
+        reconnect_min_sec=0.01,
+        reconnect_max_sec=0.02,
+        connection_ttl_sec=60,
+        reorder_window_ms=250,
+    )
+    svc.start(on_private_ok=_on_private_ok)
+
+    await _wait_until(lambda: "resync" in private_ok_sources)
+    await _wait_until(lambda: "ws_alive" in private_ok_sources)
+    await svc.stop()
+
+    assert "resync" in private_ok_sources
+    assert "ws_alive" in private_ok_sources

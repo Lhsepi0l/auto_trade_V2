@@ -2802,7 +2802,8 @@ class RuntimeController:
     async def _handle_user_stream_private_ok(self, source: str) -> None:
         self._last_private_stream_ok_at = _utcnow_iso()
         self._update_stale_transitions()
-        self._log_event("user_stream_private_ok", source=source)
+        if str(source or "") != "ws_alive":
+            self._log_event("user_stream_private_ok", source=source)
 
     async def start_live_services(self) -> None:
         if self.cfg.mode != "live" or self.user_stream_manager is None or self._user_stream_started:
@@ -2815,6 +2816,7 @@ class RuntimeController:
             on_disconnect=self._handle_user_stream_disconnect,
             on_private_ok=self._handle_user_stream_private_ok,
         )
+        await asyncio.to_thread(self._maybe_probe_market_data)
         self._update_stale_transitions()
 
     async def stop_live_services(self) -> None:

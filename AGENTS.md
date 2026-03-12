@@ -2002,3 +2002,18 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_v2_discord_bot_smoke.py v2/tests/test_discord_bot_config.py v2/tests/test_run_stack_lock.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 live startup freshness 복구:
+  - Raspberry Pi 실운영에서 `/reconcile` 이후에도 `즉시 판단`이 `blocked/user_ws_stale`로 계속 차단되는 원인을 확인했다.
+  - 핵심 원인은 `user_ws_stale_sec=120초`에 비해 Binance user stream keepalive가 `30분`이어서, 실제 계정 이벤트가 없는 정상 계정도 연결 직후 2분 뒤 stale로 떨어지던 점이었다.
+  - 조치:
+    - `v2/exchange/user_ws.py`에 throttled `ws_alive` private-ok heartbeat를 추가해, 계정 이벤트가 없어도 활성 websocket 연결이 freshness를 유지하도록 보강했다.
+    - `v2/control/api.py`는 `ws_alive` heartbeat는 상태 갱신만 하고 별도 로그 spam은 남기지 않도록 정리했다.
+    - `v2/control/api.py` `start_live_services()`에서 startup 시점에 `market_data`를 1회 prime 하도록 바꿔, 첫 scheduler tick 전에도 `/readyz`가 market-data unseen 때문에 false로 남지 않게 했다.
+  - 회귀:
+    - `v2/tests/test_exchange_user_stream.py`에 idle private stream에서도 `ws_alive` heartbeat가 발생하는 테스트 추가
+    - `v2/tests/test_control_api.py`에 live startup이 first tick 전에 market data를 prime 하는 테스트 추가
+  - 검증:
+    - `python -m ruff check v2/exchange/user_ws.py v2/control/api.py v2/tests/test_exchange_user_stream.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_exchange_user_stream.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과

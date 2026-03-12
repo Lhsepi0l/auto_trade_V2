@@ -2686,6 +2686,67 @@ def test_live_user_stream_disconnect_resync_and_event_flow_update_state(tmp_path
     assert manager.stopped is True
 
 
+def test_start_live_services_primes_market_data_before_first_tick(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _ReconREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _FakeUserStreamManager:
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+
+        def start(  # type: ignore[no-untyped-def]
+            self, *, on_event=None, on_resync=None, on_disconnect=None, on_private_ok=None
+        ):
+            _ = on_event
+            _ = on_resync
+            _ = on_disconnect
+            _ = on_private_ok
+            self.started = True
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    manager = _FakeUserStreamManager()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_ReconREST(),
+        user_stream_manager=manager,
+        market_data_state={
+            "last_market_data_at": None,
+            "last_market_symbol_count": 0,
+            "last_market_data_source_ok_at": None,
+            "last_market_data_source_fail_at": None,
+            "last_market_data_source_error": None,
+        },
+    )
+
+    def _prime_market_data() -> None:
+        controller._market_data_state["last_market_data_at"] = datetime.now(timezone.utc).isoformat()
+        controller._market_data_state["last_market_data_source_ok_at"] = controller._market_data_state[
+            "last_market_data_at"
+        ]
+        controller._market_data_state["last_market_symbol_count"] = 1
+
+    controller._maybe_probe_market_data = _prime_market_data  # type: ignore[method-assign]
+
+    try:
+        asyncio.run(controller.start_live_services())
+        readyz = controller._readyz_snapshot()
+        assert manager.started is True
+        assert readyz["last_market_data_at"] is not None
+        assert readyz["last_market_data_source_ok_at"] is not None
+    finally:
+        asyncio.run(controller.stop_live_services())
+
+
 def test_live_user_stream_resync_failure_sets_uncertainty(tmp_path) -> None:  # type: ignore[no-untyped-def]
     class _ReconREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:

@@ -42,6 +42,7 @@ class UserStreamManager:
     env: EnvName
     rest: UserStreamREST
     keepalive_interval_sec: int = 30 * 60
+    liveness_ping_interval_sec: float = 30.0
     reconnect_min_sec: float = 1.0
     reconnect_max_sec: float = 30.0
     connection_ttl_sec: int = 23 * 60 * 60
@@ -178,6 +179,10 @@ class UserStreamManager:
 
     async def _run_forever(self) -> None:
         attempt = 1
+        heartbeat_interval_sec = max(
+            1.0,
+            min(float(self.keepalive_interval_sec), float(self.liveness_ping_interval_sec)),
+        )
         while not self._stop.is_set():
             disconnect_reason = "user_stream_disconnected"
             try:
@@ -191,6 +196,7 @@ class UserStreamManager:
                 async with self._ws_connect(ws_url, ping_interval=20, ping_timeout=20, close_timeout=5) as ws:
                     self._active_ws = ws
                     await self._resync()
+                    last_private_ok_monotonic = time.monotonic()
                     attempt = 1
                     while not self._stop.is_set():
                         if (time.monotonic() - connected_at) >= self.connection_ttl_sec:
@@ -199,9 +205,23 @@ class UserStreamManager:
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except TimeoutError:
+                            now = time.monotonic()
+                            if (
+                                self._on_private_ok is not None
+                                and (now - last_private_ok_monotonic) >= heartbeat_interval_sec
+                            ):
+                                await _maybe_await(self._on_private_ok("ws_alive"))
+                                last_private_ok_monotonic = now
                             await self._drain_events(force=False)
                             continue
                         except asyncio.TimeoutError:
+                            now = time.monotonic()
+                            if (
+                                self._on_private_ok is not None
+                                and (now - last_private_ok_monotonic) >= heartbeat_interval_sec
+                            ):
+                                await _maybe_await(self._on_private_ok("ws_alive"))
+                                last_private_ok_monotonic = now
                             await self._drain_events(force=False)
                             continue
 
@@ -217,6 +237,7 @@ class UserStreamManager:
                             self._listen_key = None
                             break
 
+                        last_private_ok_monotonic = time.monotonic()
                         self._buffer_event(msg)
                         await self._drain_events(force=False)
 
