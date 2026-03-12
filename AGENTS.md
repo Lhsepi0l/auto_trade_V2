@@ -1988,3 +1988,17 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `bash -n v2/scripts/preflight.sh v2/scripts/deploy_prep.sh` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 Discord panel ConnectError 방지:
+  - `/panel` / `/status`에서 `RuntimeError: network_error: ConnectError`가 반복되는 운영 사례를 기준으로, root cause 후보를 stale `TRADER_API_BASE_URL`과 `localhost`/`0.0.0.0` 해석 불일치로 좁혔다.
+  - 조치:
+    - `v2/scripts/run_stack.sh`가 이제 control-http 경로에서 현재 `--host/--port` 로컬 control API 주소를 `TRADER_API_BASE_URL`로 강제 export한다.
+    - `v2/discord_bot/config.py`는 `TRADER_API_BASE_URL`의 `localhost` / `0.0.0.0` / `::` 계열 호스트를 `127.0.0.1`로 정규화한다.
+  - 회귀:
+    - `v2/tests/test_discord_bot_config.py`에 base URL 정규화 테스트 추가
+    - `v2/tests/test_run_stack_lock.py`에 stale env override 보호 테스트 추가
+  - 검증:
+    - `python -m ruff check v2/discord_bot/config.py v2/tests/test_discord_bot_config.py v2/tests/test_run_stack_lock.py` 통과
+    - `bash -n v2/scripts/run_stack.sh` 통과
+    - `python -m pytest -q v2/tests/test_v2_discord_bot_smoke.py v2/tests/test_discord_bot_config.py v2/tests/test_run_stack_lock.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과

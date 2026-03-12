@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field
+from urllib.parse import urlsplit, urlunsplit
+
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +33,30 @@ class DiscordBotSettings(BaseSettings):
     trader_api_retry_backoff: float = Field(default=0.25)
 
     discord_guild_id: int = Field(default=0)
+
+    @field_validator("trader_api_base_url", mode="before")
+    @classmethod
+    def _normalize_local_trader_api_base_url(cls, value: object) -> object:
+        text = str(value).strip()
+        if not text:
+            return value
+        parsed = urlsplit(text)
+        host = (parsed.hostname or "").strip().lower()
+        if host not in {"localhost", "0.0.0.0", "::", "[::]"}:
+            return text
+
+        port = parsed.port
+        default_port = 443 if parsed.scheme == "https" else 80
+        normalized_netloc = f"127.0.0.1:{port or default_port}"
+        return urlunsplit(
+            (
+                parsed.scheme or "http",
+                normalized_netloc,
+                parsed.path,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
 
 
 def load_settings() -> DiscordBotSettings:

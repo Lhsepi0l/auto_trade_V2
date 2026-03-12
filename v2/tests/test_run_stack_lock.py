@@ -86,3 +86,79 @@ def test_run_stack_rejects_duplicate_instance(tmp_path) -> None:  # type: ignore
         except subprocess.TimeoutExpired:
             first.kill()
             first.wait(timeout=3.0)
+
+
+def test_run_stack_overrides_trader_api_base_url_for_bot(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo_root = Path(__file__).resolve().parents[2]
+    fake_python = tmp_path / "fake_python.py"
+    control_started = tmp_path / "control.started"
+    bot_base_url = tmp_path / "bot.base_url"
+    lock_path = tmp_path / "stack.lock"
+
+    fake_python.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env python3
+            import os
+            import pathlib
+            import signal
+            import sys
+            import time
+
+            if sys.argv[1:3] == ["-m", "v2.discord_bot.bot"]:
+                pathlib.Path({str(bot_base_url)!r}).write_text(
+                    os.environ.get("TRADER_API_BASE_URL", ""),
+                    encoding="utf-8",
+                )
+            else:
+                pathlib.Path({str(control_started)!r}).write_text("started", encoding="utf-8")
+
+            def _handle(_signum, _frame):
+                raise SystemExit(0)
+
+            signal.signal(signal.SIGTERM, _handle)
+            signal.signal(signal.SIGINT, _handle)
+
+            while True:
+                time.sleep(0.1)
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = str(fake_python)
+    env["STACK_LOCK_FILE"] = str(lock_path)
+    env["TRADER_API_BASE_URL"] = "http://localhost:9999"
+
+    proc = subprocess.Popen(  # noqa: S603
+        [
+            "bash",
+            "v2/scripts/run_stack.sh",
+            "--mode",
+            "live",
+            "--env",
+            "prod",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8101",
+        ],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_file(control_started)
+        _wait_for_file(bot_base_url)
+        assert bot_base_url.read_text(encoding="utf-8") == "http://127.0.0.1:8101"
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3.0)

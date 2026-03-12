@@ -116,6 +116,7 @@ bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
 - 로그 파일: `v2/logs/control_api.log`, `v2/logs/discord_bot.log`
 - 기본 `TRADER_API_BASE_URL`은 `http://127.0.0.1:<port>`로 자동 설정됩니다.
+- `run_stack.sh` / systemd 경로에서는 `.env`에 남아 있는 stale `TRADER_API_BASE_URL`보다 현재 `--host/--port` 로컬 control API 주소를 우선 사용합니다.
 
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash

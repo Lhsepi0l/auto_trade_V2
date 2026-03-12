@@ -173,8 +173,8 @@ for _ in {1..5}; do
     sleep 0.1
 done
 
-if [[ -z "${TRADER_API_BASE_URL:-}" ]]; then
-    export TRADER_API_BASE_URL="http://127.0.0.1:${CONTROL_PORT}"
+if [[ "$CONTROL_HTTP_MODE" == "control-http" ]]; then
+    export TRADER_API_BASE_URL="http://${CONTROL_HOST}:${CONTROL_PORT}"
 fi
 
 "$PYTHON_BIN" -m v2.discord_bot.bot >"$BOT_LOG" 2>&1 &
