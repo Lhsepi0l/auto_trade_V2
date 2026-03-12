@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from v2.clean_room.contracts import Candidate, CandidateSelector, KernelContext
-from v2.strategies.base import DesiredPosition, StrategyPlugin
 from v2.strategies.alpha_shared import (
     _Bar,
     _clamp_score,
@@ -22,6 +21,7 @@ from v2.strategies.alpha_shared import (
     expected_move_gate,
     rsi,
 )
+from v2.strategies.base import DesiredPosition, StrategyPlugin
 
 AlphaId = Literal["alpha_breakout", "alpha_pullback", "alpha_expansion"]
 RegimeName = Literal["TREND_UP", "TREND_DOWN", "UNKNOWN"]

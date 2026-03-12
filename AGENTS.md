@@ -15,8 +15,8 @@ Core code lives in `v2/`, which is the active runtime package.
 - `pip install -e ".[dev]"`: install package with test/lint dependencies.
 - `python -m ruff check v2 v2/tests`: lint and import-order checks.
 - `python -m pytest -q`: run all tests (configured to use `v2/tests`).
-- `python -m v2.run --profile ra_2026_v1 --mode shadow --env testnet`: run locally in shadow mode.
-- `python -m v2.run --deploy-prep --profile ra_2026_v1 --mode shadow --env testnet --keep-reports 30`: run preflight plus smoke checks.
+- `python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet`: run locally in shadow mode.
+- `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30`: run preflight plus smoke checks.
 
 ## Coding Style & Naming Conventions
 Use Python 3.10+ conventions with 4-space indentation and type hints on public interfaces.
@@ -149,12 +149,10 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - For Pi health checks before live runtime, continue quick guardrail probes (`free -h`, `vcgencmd measure_temp`, `vcgencmd get_throttled`, `uptime`) and require `throttled=0x0` with thermal headroom.
 
 ### Next Planned Direction
-- Freeze all existing strategy branches (`strict`, `portfolio_v1`, `mr_v1`, `fb_v1`, `cbr_v1`, `lsr_v1`, `sfd_v1`, `pfd_v1`) as historical evidence only.
-- Keep the repository on `research_reset_v1`: `experiment template -> opportunity scan -> strategy implementation only if scan_gate=KEEP`.
-- Allow only one active experiment at a time through `research/registry.yaml`; no parallel strategy builds.
-- Use `crowding_plus_liquidity` as the current reference scan family, not as an implied strategy name.
-- If a scan ends in `killed_pre_implementation`, define a new scan family or end hypothesis search; do not rescue it with immediate strategy coding.
-- Block `shadow/live/Discord/status` expansion for any new research branch until the new process has produced `6m KEEP`, `1y KEEP`, and then `3y confirm`.
+- Keep the repository in `alpha-only` final state around `ra_2026_alpha_v2`; do not reintroduce removed legacy or experimental strategy/profile surfaces.
+- Treat removed research branches, `research_reset_v1`, and old experimental aliases as historical evidence only in `AGENTS.md` / generated reports, not as runnable repo paths.
+- Keep active operational profiles limited to `ra_2026_alpha_v2_expansion`, `ra_2026_alpha_v2_expansion_verified_candidate`, `ra_2026_alpha_v2_expansion_verified_q070`, `ra_2026_alpha_v2_expansion_candidate`, `ra_2026_alpha_v2_expansion_live_candidate`, and `ra_2026_alpha_v2_expansion_champion_candidate`.
+- Preserve control/runtime hardening, readiness/preflight, and runbook paths; future edits should default to operator-safety and minimal surface expansion.
 
 ### Session References (2026-02 latest)
 - Primary deep-work session: `ses_3758d5f45ffeQWNqxcFXrLc8nP` (entry suppression -> live execution rejects -> bracket precision -> status/panel fixes end-to-end).
@@ -1905,3 +1903,45 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m ruff check v2/run.py v2/tests/test_v2_local_backtest.py` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-12 alpha-only 최종 정리 1패스:
+  - local-backtest 표면에 남아 있던 제거된 old strategy/profile 잔재만 최소 범위로 정리했다.
+    - `local_backtest/param_sweep.py`의 `ra_2026_pfd_v1` 전용 bounded-sweep 분기 제거
+    - `v2/tests/test_local_backtest_param_sweep.py`의 `ra_2026_pfd_v1` stale 테스트 2개 삭제
+    - `v2/run.py`의 dead local-backtest help/research branch에서 `ra_2026_mr_v1`, `ra_2026_lsr_v1`, `ra_2026_cbr_v1`, `ra_2026_fb_v1` 표면 제거
+  - local-backtest 기본값을 현재 운영 alpha 기준으로 맞췄다.
+    - `local_backtest/run_local_backtest.sh` 기본 `PROFILE`
+    - `local_backtest/param_sweep.py` parser 기본 `--profile`
+    - 둘 다 `ra_2026_alpha_v2_expansion_live_candidate` 기준으로 정렬
+  - 검증:
+    - touched-file `ruff` 통과
+    - full `python -m pytest -q` 통과
+    - old profile/strategy 잔재는 runtime/config/script 기준으로 제거 완료
+- 2026-03-12 alpha-only 최종 정리 2패스:
+  - config 상속 체인을 flatten 해 현재 운영 profile 의존도를 줄였다.
+    - `ra_2026_alpha_v2_expansion_champion_candidate`는 이제 `ra_2026_alpha_v2`를 직접 상속하고 `EXP-06 @ quality_score_v2_min=0.70` 의미를 직접 가진다.
+    - `ra_2026_alpha_v2_expansion_live_candidate`도 `ra_2026_alpha_v2`를 직접 상속하고 기존 `candidate` 의미 + live risk 값을 직접 가진다.
+  - 종료된 실험 alias와 연구 재현 표면을 삭제했다.
+    - `v2/config/config.yaml`의 단일/조합 alpha alias, `verified_q072/q074`, `champion_exp07/08/a/b/c`, `live_verified_candidate` 제거
+    - `v2/run.py`의 `_local_backtest_profile_alpha_overrides(...)`를 현재 유지 profile만 남도록 축소
+    - `v2/tests/test_v2_local_backtest.py`, `v2/tests/test_v2_config_loader.py`의 실험 alias 검증 제거
+    - `local_backtest` 연구 재현 스크립트와 `research-reset` 파일 묶음 삭제
+  - alpha-only 최종 구조는 다음만 남도록 정리됐다.
+    - `ra_2026_alpha_v2`
+    - `ra_2026_alpha_v2_expansion`
+    - `ra_2026_alpha_v2_expansion_verified_candidate`
+    - `ra_2026_alpha_v2_expansion_verified_q070`
+    - `ra_2026_alpha_v2_expansion_candidate`
+    - `ra_2026_alpha_v2_expansion_live_candidate`
+    - `ra_2026_alpha_v2_expansion_champion_candidate`
+  - 검증:
+    - `2A` 후 `ruff` + full `python -m pytest -q` 통과
+    - `2B` 후 `ruff` + full `python -m pytest -q` 통과
+    - 실험 alias `rg` 잔재는 `AGENTS.md` / history 기록만 남고 runtime/config/tests/research 표면에서는 제거 완료
+- 2026-03-12 live-candidate 최종 검증:
+  - alpha-only 정리 직후 repo-wide `ruff`를 다시 돌려 `v2/strategies/ra_2026_alpha_v2.py` import 정렬 1건이 남아 있던 것을 정리했다.
+  - 로직 변경 없이 lint-clean 상태만 복구했다.
+  - 검증:
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+    - readiness 결과는 `ready=true`, overall=`caution`이며 caution 원인은 `mode=shadow` 경고와 private exchange check의 `fallback` 경고뿐이었다.
