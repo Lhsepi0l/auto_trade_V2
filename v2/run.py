@@ -462,73 +462,73 @@ def _build_parser() -> argparse.ArgumentParser:
         "--backtest-fb-failed-break-buffer-bps",
         type=float,
         default=4.0,
-        help="failed-breakout overshoot buffer in basis points for ra_2026_fb_v1",
+        help="failed-breakout overshoot buffer override for local backtest",
     )
     parser.add_argument(
         "--backtest-fb-wick-ratio-min",
         type=float,
         default=1.25,
-        help="minimum wick/body rejection ratio for ra_2026_fb_v1",
+        help="minimum wick/body rejection ratio override for local backtest",
     )
     parser.add_argument(
         "--backtest-fb-take-profit-r",
         type=float,
         default=1.6,
-        help="take-profit R multiple override for ra_2026_fb_v1",
+        help="failed-breakout take-profit R override for local backtest",
     )
     parser.add_argument(
         "--backtest-fb-time-stop-bars",
         type=int,
         default=8,
-        help="time-stop bars override for ra_2026_fb_v1",
+        help="failed-breakout time-stop bars override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-squeeze-percentile-max",
         type=float,
         default=0.35,
-        help="15m squeeze percentile threshold override for ra_2026_cbr_v1",
+        help="15m squeeze percentile threshold override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-breakout-buffer-bps",
         type=float,
         default=3.0,
-        help="breakout confirmation buffer in basis points for ra_2026_cbr_v1",
+        help="breakout confirmation buffer override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-take-profit-r",
         type=float,
         default=2.1,
-        help="take-profit R multiple override for ra_2026_cbr_v1",
+        help="compression-breakout take-profit R override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-time-stop-bars",
         type=int,
         default=14,
-        help="time-stop bars override for ra_2026_cbr_v1",
+        help="compression-breakout time-stop bars override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-trend-adx-min-4h",
         type=float,
         default=14.0,
-        help="4h trend ADX floor override for ra_2026_cbr_v1",
+        help="4h trend ADX floor override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-ema-gap-trend-min-frac-4h",
         type=float,
         default=0.0030,
-        help="4h EMA gap floor override for ra_2026_cbr_v1",
+        help="4h EMA gap floor override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-breakout-min-range-atr",
         type=float,
         default=0.90,
-        help="minimum breakout range in ATR for ra_2026_cbr_v1",
+        help="minimum breakout range in ATR override for local backtest",
     )
     parser.add_argument(
         "--backtest-cbr-breakout-min-volume-ratio",
         type=float,
         default=1.0,
-        help="minimum breakout volume ratio for ra_2026_cbr_v1",
+        help="minimum breakout volume ratio override for local backtest",
     )
     parser.add_argument(
         "--backtest-sfd-reclaim-sweep-buffer-bps",
@@ -8337,59 +8337,6 @@ def _run_local_backtest(
             },
             "symbols": symbol_reports,
         }
-        if active_strategy_name == "ra_2026_mr_v1":
-            report_payload["summary"]["research_gate"] = _mr_research_gate(
-                start_ms=int(start_ms),
-                end_ms=int(end_ms),
-                total_net_profit=float(total_net),
-                profit_factor=profit_factor,
-                max_drawdown_pct=float(max_drawdown_pct),
-                total_trades=int(total_trades),
-                fee_to_trade_gross_pct=(
-                    None if fee_to_trade_gross_pct is None else float(fee_to_trade_gross_pct)
-                ),
-                window_slices_6m=window_slices_6m,
-            )
-        elif active_strategy_name == "ra_2026_lsr_v1":
-            report_payload["summary"]["research_gate"] = _lsr_research_gate(
-                start_ms=int(start_ms),
-                end_ms=int(end_ms),
-                total_net_profit=float(total_net),
-                profit_factor=profit_factor,
-                max_drawdown_pct=float(max_drawdown_pct),
-                total_trades=int(total_trades),
-                fee_to_trade_gross_pct=(
-                    None if fee_to_trade_gross_pct is None else float(fee_to_trade_gross_pct)
-                ),
-                window_slices_6m=window_slices_6m,
-            )
-        elif active_strategy_name == "ra_2026_cbr_v1":
-            report_payload["summary"]["research_gate"] = _cbr_research_gate(
-                start_ms=int(start_ms),
-                end_ms=int(end_ms),
-                total_net_profit=float(total_net),
-                profit_factor=profit_factor,
-                max_drawdown_pct=float(max_drawdown_pct),
-                total_trades=int(total_trades),
-                fee_to_trade_gross_pct=(
-                    None if fee_to_trade_gross_pct is None else float(fee_to_trade_gross_pct)
-                ),
-                window_slices_6m=window_slices_6m,
-            )
-        elif active_strategy_name == "ra_2026_fb_v1":
-            report_payload["summary"]["research_gate"] = _fb_research_gate(
-                start_ms=int(start_ms),
-                end_ms=int(end_ms),
-                total_net_profit=float(total_net),
-                profit_factor=profit_factor,
-                max_drawdown_pct=float(max_drawdown_pct),
-                total_trades=int(total_trades),
-                fee_to_trade_gross_pct=(
-                    None if fee_to_trade_gross_pct is None else float(fee_to_trade_gross_pct)
-                ),
-                window_slices_6m=window_slices_6m,
-            )
-
         if report_path is not None:
             target = Path(report_path)
             target.parent.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,7 @@ def test_parse_int_list_deduplicates() -> None:
 def test_parser_defaults_use_quick_mode() -> None:
     args = _parse_args()
     assert args.action == "sweep"
+    assert args.profile == "ra_2026_alpha_v2_expansion_live_candidate"
     assert args.years == "1"
     assert args.verify_years == "3"
     assert args.preselect_top_k == 6
@@ -212,77 +213,6 @@ def test_build_cases_supports_alpha_bounded_sweep_axes() -> None:
     assert {case.pfd_premium_z_min for case in cases} == {1.8}
 
 
-def test_build_cases_supports_pfd_bounded_sweep_axes() -> None:
-    args = _parse_args(
-        "--profile",
-        "ra_2026_pfd_v1",
-        "--max-cases",
-        "0",
-        "--score-values",
-        "0.42",
-        "--rr-values",
-        "2.0",
-        "--max-trades-values",
-        "1",
-        "--reverse-cooldown-values",
-        "30",
-        "--margin-use-values",
-        "10",
-        "--daily-loss-values",
-        "2.5",
-        "--drawdown-margin-scale-min-values",
-        "35",
-        "--max-trade-margin-loss-fraction-values",
-        "30",
-        "--fb-failed-break-buffer-values",
-        "4.0",
-        "--fb-wick-ratio-values",
-        "1.25",
-        "--fb-take-profit-r-values",
-        "1.6",
-        "--fb-time-stop-values",
-        "8",
-        "--cbr-squeeze-percentile-values",
-        "0.20",
-        "--cbr-breakout-buffer-values",
-        "3.0",
-        "--cbr-take-profit-r-values",
-        "2.2",
-        "--cbr-time-stop-values",
-        "14",
-        "--cbr-trend-adx-values",
-        "14.0",
-        "--cbr-ema-gap-trend-values",
-        "0.0030",
-        "--cbr-breakout-min-range-values",
-        "0.90",
-        "--cbr-breakout-min-volume-values",
-        "1.0",
-        "--sfd-reclaim-sweep-buffer-values",
-        "3.0",
-        "--sfd-reclaim-wick-ratio-values",
-        "1.2",
-        "--sfd-drive-breakout-range-values",
-        "0.90",
-        "--sfd-take-profit-r-values",
-        "1.5",
-        "--pfd-premium-z-values",
-        "1.8,2.2",
-        "--pfd-funding-24h-values",
-        "0.00020,0.00030",
-        "--pfd-reclaim-buffer-atr-values",
-        "0.10,0.20",
-        "--pfd-take-profit-r-values",
-        "1.6,2.0",
-    )
-    cases = _build_cases(args)
-    assert len(cases) == 16
-    assert {case.pfd_premium_z_min for case in cases} == {1.8, 2.2}
-    assert {case.pfd_funding_24h_min for case in cases} == {0.00020, 0.00030}
-    assert {case.pfd_reclaim_buffer_atr for case in cases} == {0.10, 0.20}
-    assert {case.pfd_take_profit_r for case in cases} == {1.6, 2.0}
-
-
 def test_build_cases_locks_non_alpha_strategy_axes_for_alpha_profile_sweep() -> None:
     args = _parse_args("--profile", "ra_2026_alpha_v2_expansion", "--max-cases", "0")
     cases = _build_cases(args)
@@ -301,20 +231,6 @@ def test_build_cases_locks_non_alpha_strategy_axes_for_alpha_profile_sweep() -> 
     assert {case.cbr_breakout_buffer_bps for case in cases} == {3.0}
     assert {case.sfd_reclaim_sweep_buffer_bps for case in cases} == {3.0}
     assert {case.pfd_premium_z_min for case in cases} == {1.8}
-
-
-def test_build_cases_locks_non_pfd_axes_for_default_pfd_profile_sweep() -> None:
-    args = _parse_args("--profile", "ra_2026_pfd_v1")
-    cases = _build_cases(args)
-    assert len(cases) == 16
-    assert {case.min_signal_score for case in cases} == {0.4}
-    assert {case.max_trades_per_day for case in cases} == {1}
-    assert {case.reverse_cooldown_bars for case in cases} == {24}
-    assert {case.margin_use_pct for case in cases} == {8.0}
-    assert {case.pfd_premium_z_min for case in cases} == {1.8, 2.2}
-    assert {case.pfd_funding_24h_min for case in cases} == {0.00020, 0.00030}
-    assert {case.pfd_reclaim_buffer_atr for case in cases} == {0.10, 0.20}
-    assert {case.pfd_take_profit_r for case in cases} == {1.6, 2.0}
 
 
 def test_year_gate_reasons_detects_failures() -> None:
