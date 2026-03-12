@@ -2551,6 +2551,33 @@ def test_live_startup_reconcile_populates_exchange_position_and_status(tmp_path)
     assert status["last_reconcile_at"] is not None
 
 
+def test_start_auto_reconciles_dirty_restart_before_running(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _ReconREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    controller, _state_store, ops = _build_live_controller(
+        tmp_path,
+        rest_client=_ReconREST(),
+        dirty_restart_detected=True,
+    )
+
+    out = controller.start()
+    status = controller._status_snapshot()
+
+    assert out["state"] == "RUNNING"
+    assert status["recovery_required"] is False
+    assert status["startup_reconcile_ok"] is True
+    assert ops.can_open_new_entries() is True
+    controller.stop()
+
+
 def test_live_startup_reconcile_failure_sets_uncertainty_and_safe_mode(tmp_path) -> None:  # type: ignore[no-untyped-def]
     class _FailREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:
@@ -3119,6 +3146,49 @@ def test_readyz_and_healthz_reflect_uncertainty_stale_and_recovery(tmp_path) -> 
         status = client.get("/status")
         assert status.status_code == 200
         assert status.json()["health"]["ready"] is True
+
+
+def test_tick_auto_reconciles_dirty_restart_before_kernel_execution(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _KernelNoCandidate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    kernel = _KernelNoCandidate()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_HealthyREST(),
+        kernel=kernel,
+        market_data_state={
+            "last_market_data_at": now_iso,
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": now_iso,
+        },
+        dirty_restart_detected=True,
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = now_iso
+    controller._last_private_stream_ok_at = now_iso
+
+    out = controller.tick_scheduler_now()
+
+    assert out["snapshot"]["last_decision_reason"] == "no_candidate"
+    assert controller._status_snapshot()["recovery_required"] is False
+    assert kernel.calls == 1
 
 
 def test_readyz_fails_for_uncertainty_and_stale_freshness(tmp_path) -> None:  # type: ignore[no-untyped-def]

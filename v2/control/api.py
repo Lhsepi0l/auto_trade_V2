@@ -681,6 +681,19 @@ class RuntimeController:
             self._log_event("reconcile_failure", reason=f"{reason}:{type(exc).__name__}")
             logger.exception("startup_reconcile_failed")
 
+    def _auto_reconcile_if_recovery_required(self, *, reason: str) -> bool:
+        if not self._recovery_required:
+            return True
+        if self.cfg.mode != "live":
+            self._recovery_required = False
+            self._recovery_reason = None
+            return True
+        self._log_event("auto_reconcile_attempt", reason=reason)
+        self._perform_startup_reconcile(reason="manual_reconcile")
+        if not self._state_uncertain:
+            self._recover_brackets_on_boot(reason="manual_reconcile")
+        return not self._recovery_required
+
     def _recover_brackets_on_boot(self, *, reason: str = "startup_reconcile") -> None:
         if self.cfg.mode != "live" or self.rest_client is None:
             return
@@ -2651,6 +2664,7 @@ class RuntimeController:
 
     def start(self) -> dict[str, Any]:
         with self._lock:
+            self._auto_reconcile_if_recovery_required(reason="operator_start")
             self.state_store.set(status="RUNNING")
             self.ops.resume()
             if self._running:
@@ -2867,6 +2881,7 @@ class RuntimeController:
     def tick_scheduler_now(self) -> dict[str, Any]:
         if self._lock.acquire(blocking=False):
             try:
+                self._auto_reconcile_if_recovery_required(reason="operator_tick")
                 return self._run_cycle_once_locked()
             finally:
                 self._lock.release()

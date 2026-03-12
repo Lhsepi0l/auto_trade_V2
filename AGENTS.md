@@ -2017,3 +2017,16 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_exchange_user_stream.py v2/tests/test_control_api.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 dirty-restart operator auto-reconcile:
+  - 실제 운영에서는 systemd 재시작/재부팅 뒤 Discord 패널에서 `엔진 시작` 또는 `즉시 판단`을 눌러도 `recovery_required`가 먼저 막아, 운영자가 별도로 `/reconcile`을 호출해야 하는 UX 마찰이 남아 있었다.
+  - 조치:
+    - `v2/control/api.py`에 `_auto_reconcile_if_recovery_required(...)`를 추가해, operator-triggered `start()`와 `tick_scheduler_now()`가 dirty-restart 잠금 상태면 내부적으로 `manual_reconcile`을 먼저 시도하도록 바꿨다.
+    - reconcile이 성공하면 기존과 동일하게 recovery 플래그와 bracket recovery가 정리된 뒤 엔진 시작/즉시 판단이 이어지고, 실패하면 기존처럼 차단 상태를 유지한다.
+  - 회귀:
+    - `v2/tests/test_control_api.py`에 dirty restart 상태에서 `start()`가 자동 reconcile 후 RUNNING으로 전환되는 테스트 추가
+    - `v2/tests/test_control_api.py`에 dirty restart 상태에서 즉시 tick이 자동 reconcile 후 kernel 실행으로 이어지는 테스트 추가
+  - 검증:
+    - `python -m ruff check v2/control/api.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q` 전체 통과
+    - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
