@@ -17,19 +17,6 @@ def test_alpha_base_profile_loads() -> None:
     assert cfg.behavior.risk.max_leverage == 8.0
     assert [entry.name for entry in cfg.behavior.strategies if entry.enabled] == ["ra_2026_alpha_v2"]
 
-
-def test_alpha_breakout_profile_loads_single_alpha() -> None:
-    cfg = load_effective_config(
-        profile="ra_2026_alpha_v2_breakout",
-        mode="shadow",
-        env="testnet",
-        env_map={},
-    )
-    enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
-    assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
-    assert enabled[0].params["enabled_alphas"] == ["alpha_breakout"]
-
-
 def test_alpha_expansion_candidate_profile_loads() -> None:
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_candidate",
