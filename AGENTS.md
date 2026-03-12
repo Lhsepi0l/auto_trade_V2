@@ -2045,3 +2045,46 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_discord_panel.py v2/tests/test_control_api.py` 통과
     - `python -m pytest -q` 전체 통과
     - `python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30` 통과
+- 2026-03-12 Raspberry Pi live cutover 상세 정리:
+  - 이번 cutover는 fresh Raspberry Pi 기준으로 진행됐고, 중간에 발생한 운영 이슈는 크게 다섯 단계였다.
+    - Pi 환경별 `ruff` isort 편차로 `local_backtest` import 정렬 실패
+    - editable install + Python 3.13 수집 경로 차이로 `local_backtest` import 실패
+    - 운영 Pi에서 불필요한 local-backtest/full-suite 검증이 배포 게이트를 흔드는 문제
+    - stale `TRADER_API_BASE_URL` 또는 localhost 해석 차이로 `/panel` / `/status` ConnectError 발생
+    - dirty restart 이후 `recovery_required`, user stream stale, operator-facing 영어 토큰 노출
+  - 이 세션에서 `main`에 반영된 운영 관련 커밋 체인은 다음과 같다.
+    - `77d95cd` Raspberry Pi ruff isort 편차 고정
+    - `de2e469` `local_backtest` 패키지화
+    - `c7b9c70` pytest import 경로 고정
+    - `f6675a2` Pi 기본 배포 검증을 `runtime` 스코프로 경량화
+    - `03754b7` Discord panel control API 라우팅 하드닝
+    - `9fa5517` live startup freshness 유지 (`ws_alive`, startup market-data prime)
+    - `2cfa9d1` dirty restart 상태에서 operator action auto-reconcile
+    - `f26802e` operator-facing 한국어 라벨 정리
+  - 현재 live-candidate 운영 해석 기준:
+    - `엔진=중지(STOPPED)`는 systemd/service 장애가 아니라 기본 대기 상태다. control stack은 살아 있어도 자동 trading loop는 아직 시작하지 않은 상태다.
+    - Discord 패널 `엔진 시작`을 눌러야 background scheduler loop가 `RUNNING`으로 전환된다.
+    - `즉시 판단`은 엔진이 `STOPPED`여도 단발 평가/진단 용도로 동작할 수 있다. 이 경우 주문 조건이 맞으면 단발 실거래까지 갈 수 있으므로 live/prod에서는 operator action으로 취급한다.
+    - `즉시 판단: 대기`, `사유: 레짐 ADX 상승 추세 조건 미충족`, `포트폴리오 슬롯: 0/1`, `실시간 포지션: 없음`은 모두 정상 wait-state다. 복구/네트워크/상태불확실 이슈가 아니라 전략 조건 미충족 상태다.
+    - `포트폴리오 슬롯 0/1`은 이 프로필이 사실상 `BTCUSDT` 단일 심볼 + 최대 동시포지션 1개라서 기대되는 표시다. `0`은 빈 슬롯, `1`은 전체 허용 슬롯 수다.
+  - 현재 비정상으로 봐야 하는 live 패널/상태 신호:
+    - `recovery_required`
+    - `user_ws_stale`
+    - `market_data_stale`
+    - `state_uncertain`
+    - `network_error`
+    - `submit_recovery_required`
+  - 현재 정상으로 봐야 하는 live 패널/상태 신호:
+    - `no_candidate`
+    - 전략 블록 사유(`regime_*_missing`, `bias_missing`, `trigger_missing`, `volume_missing`, `cost_missing`)
+    - 포트폴리오 슬롯 `0/1`
+    - 포지션 없음 / 잔고 정상 표시
+  - 이번 세션 기준 서버 적용 최소 절차:
+    - `git pull --ff-only origin main`
+    - `sudo systemctl restart v2-stack.service`
+    - `bash v2/scripts/apply_alpha_expansion_live_candidate_risk.sh`
+    - Discord 패널에서 `엔진 시작`
+    - 이후 `즉시 판단`은 복구 해제 확인 또는 단발 전략 진단 용도로 사용
+  - 운영 verdict:
+    - 현재 `ra_2026_alpha_v2_expansion_live_candidate`는 Raspberry Pi에서 `control API + Discord panel + private stream freshness + dirty-restart recovery + operator-facing Korean messaging`까지 연결된 상태로 정리됐다.
+    - 남은 운영 관심사는 코드 결함보다 전략 진입 빈도/시장 조건 관찰이며, `no_candidate` 자체를 장애로 오인하지 않는 것이 중요하다.
