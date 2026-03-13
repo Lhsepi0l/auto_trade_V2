@@ -251,6 +251,9 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
     assert status_payload["config_summary"]["strategy_runtime"]["trend_adx_min_4h"] == 14.0
     assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 1.0
+    assert status_payload["config_summary"]["strategy_runtime"]["squeeze_percentile_threshold"] == 0.35
+    assert status_payload["config_summary"]["strategy_runtime"]["expansion_body_ratio_min"] == 0.25
+    assert status_payload["config_summary"]["strategy_runtime"]["expansion_close_location_min"] == 0.45
     assert status_payload["config_summary"]["strategy_runtime"]["expansion_quality_score_v2_min"] == 0.7
 
 

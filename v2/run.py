@@ -1247,6 +1247,12 @@ def _local_backtest_profile_alpha_overrides(*args, **kwargs):
     return _impl(*args, **kwargs)
 
 
+def _merge_local_backtest_profile_alpha_overrides(*args, **kwargs):
+    from v2.backtest.local_runner import _merge_local_backtest_profile_alpha_overrides as _impl
+
+    return _impl(*args, **kwargs)
+
+
 def _run_local_backtest_symbol_replay_worker(*args, **kwargs):
     from v2.backtest.local_runner import _run_local_backtest_symbol_replay_worker as _impl
 

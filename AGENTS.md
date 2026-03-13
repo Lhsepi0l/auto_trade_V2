@@ -2403,3 +2403,59 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m pytest -q v2/tests/test_control_api.py -k 'status_summary'` 통과
     - `python -m ruff check v2/control/presentation.py v2/tests/test_control_api.py` 통과
+- 2026-03-14 q070 수익성 재평가 및 튜닝 정렬:
+  - 운영자 피드백 기준으로 `ra_2026_alpha_v2_expansion_verified_q070`의 1Y 수익성이 너무 약하다는 문제를 다시 평가했다.
+  - 기존 저장 리포트와 fresh current-window 1Y 재실행을 같이 비교한 결과, 이번 사이클의 최적 튜닝은 `volume gate 완화`가 아니라 `qv2 품질 게이트 제거 + entry 구조 필터 유지`로 판정했다.
+  - fresh 비교 결과:
+    - `q070 explicit` (`body=0.25`, `close=0.45`, `width=0.05`, `range=0.7`, `cost=1.6`, `qv2=0.70`):
+      - `local_backtest/reports/q070_explicit_1y_20260314.json`
+      - `return=8.85697%`, `net=2.657091`, `pf=2.650383`, `max_dd=5.746067%`, `trades=132`, `fee_to_trade_gross=58.902013%`
+    - chosen candidate (`body=0.25`, `close=0.45`, `width=0.05`, `range=0.7`, `cost=1.6`, `qv2=0.0`, `min_volume_ratio=1.0`):
+      - `local_backtest/reports/q000_candidate_explicit_1y_20260314.json`
+      - `return=14.627137%`, `net=4.388141`, `pf=2.857804`, `max_dd=5.583727%`, `trades=178`, `fee_to_trade_gross=54.880929%`
+  - 해석:
+    - `volume_missing`는 여전히 최상위 block reason이지만, 이번 구간에서는 `min_volume_ratio_15m`를 직접 낮추는 것보다 `expansion_quality_score_v2_min=0.70` 제거가 수익률/PF/수수료 효율 개선에 더 직접적이었다.
+    - 따라서 이 턴의 최종 선택은 `volume gate 완화`가 아니라 `과잉 quality gate 제거`였다.
+  - 반영:
+    - `ra_2026_alpha_v2_expansion_verified_q070`를 `body=0.25`, `close=0.45`, `width=0.05`, `range=0.7`, `cost=1.6`, `qv2=0.0` 기준으로 정렬했다.
+    - `v2/config/config.yaml`, `v2/backtest/local_runner.py`, `v2/tests/test_control_api.py`, `v2/tests/test_v2_local_backtest.py`를 이에 맞게 갱신했다.
+    - local backtest CLI override가 profile defaults보다 우선하도록 `_merge_local_backtest_profile_alpha_overrides(...)` helper 경로를 유지했다.
+  - 검증:
+    - `python -m ruff check v2/backtest/local_runner.py v2/run.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides or local_backtest_cli_alpha_overrides_win_over_profile_defaults'` 통과
+    - 직접 config load sanity check로 `ra_2026_alpha_v2_expansion_verified_q070`가 `body=0.25`, `close=0.45`, `qv2=0.0`을 로드하는 것 확인
+- 2026-03-14 q070 bounded retuning 최종 판정(같은 날 earlier `qv2=0.0` 실험을 supersede):
+  - local-backtest 튜닝 검증 중 CLI override가 profile alpha defaults에 덮여 일부 실험이 사실상 무효화되는 버그를 발견했고, `v2/backtest/local_runner.py`에 `_merge_local_backtest_profile_alpha_overrides(...)`를 추가해 `profile defaults -> CLI override wins` 순서로 고쳤다.
+  - 이 수정 후 fresh explicit 비교를 다시 수행한 결과:
+    - q070 baseline (`body=0.25`, `close=0.45`, `width=0.05`, `squeeze=0.30`, `qv2=0.70`):
+      - `local_backtest/reports/q070_explicit_1y_20260314.json`
+      - `return=8.856970%`, `net=2.657091`, `pf=2.650383`, `max_dd=5.746067%`, `trades=132`
+    - candidate A, `qv2=0.0` only:
+      - 1Y `local_backtest/reports/q000_candidate_explicit_1y_20260314.json`
+      - `return=14.627137%`, `net=4.388141`, `pf=2.857804`, `max_dd=5.583727%`, `trades=178`
+      - 3Y `local_backtest/reports/tuning_q070_q000_explicit_3y.json`
+      - `return=26.642253%`, `net=7.992676`, `pf=2.343751`, `max_dd=7.701368%`, `trades=545`
+    - candidate B, `squeeze_percentile_threshold=0.35` with `qv2=0.70` 유지:
+      - 1Y `local_backtest/reports/tuning_q070_squeeze035_explicit_1y.json`
+      - `return=10.985713%`, `net=3.295714`, `pf=2.769931`, `max_dd=5.147586%`, `trades=149`
+      - 3Y `local_backtest/reports/tuning_q070_squeeze035_explicit_3y.json`
+      - `return=30.076130%`, `net=9.022839`, `pf=2.459397`, `max_dd=7.818664%`, `trades=524`
+  - 최종 선택은 `qv2 제거`가 아니라 `q070 + squeeze=0.35`다.
+    - 이유: `qv2=0.0`은 1Y는 강했지만 3Y 성능이 baseline보다 확실히 나빠져 bounded tune 기준에서 탈락했다.
+    - `squeeze=0.35`는 1Y를 `8.86% -> 10.99%`로 개선하면서 3Y 누적 수익은 `29.93% -> 30.08%`로 대체로 유지했다.
+  - 이에 따라 canonical `ra_2026_alpha_v2_expansion_verified_q070`는 `body=0.25`, `close=0.45`, `width=0.05`, `squeeze=0.35`, `qv2=0.70`, `volume=1.0`, `range=0.7`, `cost=1.6`으로 정렬했다.
+  - 검증:
+    - `python -m ruff check v2/backtest/local_runner.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides or cli_alpha_overrides'` 통과
+    - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or alpha_verified_q070_profile_loads'` 통과
+- 2026-03-14 q070 bounded retuning 재검증:
+  - 작업 도중 로컬 worktree의 `q070`이 서버 기준과 다르게 `expansion_quality_score_v2_min=0.0` 쪽으로 이미 드리프트해 있음을 확인했다. 따라서 이번 재튜닝의 핵심 비교는 CLI에서 `--backtest-alpha-expansion-quality-score-v2-min 0.70`을 강제로 주입해 서버 기준과 동일한 조건으로 다시 수행했다.
+  - 같은 fixed 1Y 창(`2025-03-11T08:13:13Z ~ 2026-03-11T08:13:13Z`)에서 bounded 후보를 비교한 결과:
+    - server-equivalent baseline: `return=8.703757%`, `net=2.611127`, `pf=2.800171`, `max_dd=5.302607%`, `trades=122`
+    - `min_volume_ratio_15m=0.90`: `return=8.624410%`, `pf=2.783260`으로 소폭 악화
+    - `body=0.30`, `close=0.55`: `return=8.812450%`, `net=2.643735`, `pf=2.823304`, `max_dd=5.207919%`, `trades=121`
+    - `body=0.30`, `close=0.55`, `min_volume_ratio_15m=0.90`: `return=8.733027%`, `pf=2.806111`으로 strict-only보다 약함
+  - 결론:
+    - 이번 bounded tuning에서는 `volume gate 완화`가 성과 개선을 만들지 못했다.
+    - 최선의 미세 개선은 `expansion_body_ratio_min=0.30`, `expansion_close_location_min=0.55`였고, 개선 폭은 작지만 `return/PF/MDD/fee efficiency`가 모두 baseline보다 좋아졌다.
+    - 따라서 q070의 다음 최종 후보는 `body=0.30`, `close=0.55`로 정리하고, 추가 무한 튜닝 없이 여기서 멈추는 것이 맞다.

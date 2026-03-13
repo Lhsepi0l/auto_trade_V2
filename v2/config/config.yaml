@@ -169,7 +169,7 @@ profiles:
         params:
           <<: *ra_2026_alpha_v2_params
           enabled_alphas: [alpha_expansion]
-          squeeze_percentile_threshold: 0.30
+          squeeze_percentile_threshold: 0.35
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
           expansion_body_ratio_min: 0.25

@@ -178,7 +178,7 @@ def _local_backtest_profile_alpha_overrides(profile_name: str) -> dict[str, Any]
         },
         "ra_2026_alpha_v2_expansion_verified_q070": {
             "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.30,
+            "squeeze_percentile_threshold": 0.35,
             "expansion_buffer_bps": 2.0,
             "expansion_range_atr_min": 0.7,
             "expansion_body_ratio_min": 0.25,
@@ -236,6 +236,19 @@ def _local_backtest_profile_alpha_overrides(profile_name: str) -> dict[str, Any]
         },
     }
     return dict(mapping.get(normalized, {}))
+
+
+def _merge_local_backtest_profile_alpha_overrides(
+    *,
+    profile_name: str,
+    active_strategy_name: str,
+    strategy_runtime_params: dict[str, Any],
+) -> dict[str, Any]:
+    merged = {}
+    if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
+        merged.update(_local_backtest_profile_alpha_overrides(profile_name))
+    merged.update(strategy_runtime_params)
+    return merged
 
 
 def _run_local_backtest_symbol_replay_worker(
@@ -472,8 +485,11 @@ def _run_local_backtest_symbol_replay_worker(
         pfd_reclaim_buffer_atr=float(pfd_reclaim_buffer_atr),
         pfd_take_profit_r=float(pfd_take_profit_r),
     )
-    if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
-        strategy_runtime_params.update(_local_backtest_profile_alpha_overrides(profile))
+    strategy_runtime_params = _merge_local_backtest_profile_alpha_overrides(
+        profile_name=profile,
+        active_strategy_name=active_strategy_name,
+        strategy_runtime_params=strategy_runtime_params,
+    )
     if strategy_runtime_params:
         kernel.set_strategy_runtime_params(**strategy_runtime_params)
     bracket_planner = BracketPlanner(
@@ -984,8 +1000,11 @@ def _run_local_backtest(
         pfd_reclaim_buffer_atr=float(pfd_reclaim_buffer_atr),
         pfd_take_profit_r=float(pfd_take_profit_r),
     )
-    if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
-        strategy_runtime_params.update(_local_backtest_profile_alpha_overrides(cfg.profile))
+    strategy_runtime_params = _merge_local_backtest_profile_alpha_overrides(
+        profile_name=cfg.profile,
+        active_strategy_name=active_strategy_name,
+        strategy_runtime_params=strategy_runtime_params,
+    )
 
     if years <= 0:
         print(json.dumps({"error": "backtest years must be > 0"}, ensure_ascii=True))

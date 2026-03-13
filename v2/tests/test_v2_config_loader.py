@@ -46,6 +46,22 @@ def test_alpha_champion_candidate_profile_loads() -> None:
     assert enabled[0].params["expansion_quality_score_v2_min"] == 0.70
 
 
+def test_alpha_verified_q070_profile_loads() -> None:
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
+    assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
+    assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
+    assert enabled[0].params["squeeze_percentile_threshold"] == 0.35
+    assert enabled[0].params["expansion_body_ratio_min"] == 0.25
+    assert enabled[0].params["expansion_close_location_min"] == 0.45
+    assert enabled[0].params["expansion_quality_score_v2_min"] == 0.70
+
+
 def test_alpha_live_candidate_profile_loads() -> None:
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_live_candidate",

@@ -24,6 +24,7 @@ from v2.run import (
     _load_cached_klines_for_range,
     _local_backtest_profile_alpha_overrides,
     _lsr_research_gate,
+    _merge_local_backtest_profile_alpha_overrides,
     _mr_research_gate,
     _parse_symbols,
     _pfd_research_gate,
@@ -166,7 +167,7 @@ def test_local_backtest_profile_alpha_overrides_maps_expansion_profiles() -> Non
     }
     assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_verified_q070") == {
         "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.30,
+        "squeeze_percentile_threshold": 0.35,
         "expansion_buffer_bps": 2.0,
         "expansion_range_atr_min": 0.7,
         "expansion_body_ratio_min": 0.25,
@@ -223,6 +224,29 @@ def test_local_backtest_profile_alpha_overrides_maps_expansion_profiles() -> Non
         "expected_move_cost_mult": 1.6,
     }
     assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2") == {}
+
+
+def test_local_backtest_cli_alpha_overrides_win_over_profile_defaults() -> None:
+    merged = _merge_local_backtest_profile_alpha_overrides(
+        profile_name="ra_2026_alpha_v2_expansion_verified_q070",
+        active_strategy_name="ra_2026_alpha_v2",
+        strategy_runtime_params={
+            "expansion_buffer_bps": 1.5,
+            "expansion_body_ratio_min": 0.30,
+            "expansion_close_location_min": 0.55,
+            "expansion_width_expansion_min": 0.03,
+            "min_volume_ratio_15m": 0.90,
+        },
+    )
+
+    assert merged["enabled_alphas"] == ["alpha_expansion"]
+    assert merged["squeeze_percentile_threshold"] == 0.35
+    assert merged["expansion_quality_score_v2_min"] == 0.70
+    assert merged["expansion_buffer_bps"] == 1.5
+    assert merged["expansion_body_ratio_min"] == 0.30
+    assert merged["expansion_close_location_min"] == 0.55
+    assert merged["expansion_width_expansion_min"] == 0.03
+    assert merged["min_volume_ratio_15m"] == 0.90
 
 
 def test_calc_max_drawdown_pct() -> None:
