@@ -2088,3 +2088,242 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 운영 verdict:
     - 현재 `ra_2026_alpha_v2_expansion_live_candidate`는 Raspberry Pi에서 `control API + Discord panel + private stream freshness + dirty-restart recovery + operator-facing Korean messaging`까지 연결된 상태로 정리됐다.
     - 남은 운영 관심사는 코드 결함보다 전략 진입 빈도/시장 조건 관찰이며, `no_candidate` 자체를 장애로 오인하지 않는 것이 중요하다.
+- 2026-03-12 alpha-only 운영 하드닝 마감:
+  - canonical live-ready profile 기준을 `ra_2026_alpha_v2_expansion_verified_q070` 하나로 정렬했다. `v2/run.py`, `v2/config/loader.py`, `v2/scripts/run_stack.sh`, `v2/scripts/deploy_prep.sh`, `v2/scripts/preflight.sh`, `v2/scripts/install_systemd_stack.sh`, `v2/systemd/v2-stack.service`, `v2/control/api.py` readiness/runtime override가 이 기준을 사용하도록 맞췄다.
+  - `v2/run.py`에 live/prod guard를 추가해 direct boot와 `--ops-http`를 명시적으로 non-zero 차단하고, `--control-http` 경로만 허용하도록 고정했다.
+  - `v2/scripts/run_stack.sh`는 기본값을 `shadow/testnet`으로 낮추고, control API `/readyz`가 실제 ready가 될 때까지 Discord bot을 띄우지 않도록 바꿨다. bot 모듈 import 실패 시도 즉시 실패하게 했고, `--ops-http` stack 경로는 차단했다.
+  - `v2/scripts/deploy_prep.sh` smoke는 이제 사용자 인자와 같은 `PROFILE/MODE/ENVIRONMENT/CONFIG`를 기준으로 검증한다. live/prod에서는 direct boot guard와 `--ops-http` guard를 smoke 대상으로 확인한다.
+  - `v2/control/api.py`는 fail-closed 쪽으로 보강했다:
+    - single-symbol live reentry position fetch 실패 시 `state_uncertain`로 올리고 신규 진입을 차단
+    - boot-time bracket recovery 실패/timeout 시 `recovery_required`를 세우고 `/readyz`/readiness를 차단
+    - private REST balance timeout/rate-limit/fetch failure/rest client unavailable/usdt missing을 readiness unsafe로 반영
+    - runtime risk key는 `risk_per_trade_pct`를 canonical로 두고 `per_trade_risk_pct`는 입력/응답 alias로만 유지
+    - `start()/stop()`는 lock 밖 mutation bug를 제거하고 worker join/drain, duplicate thread suppression을 추가
+  - 회귀/검증:
+    - `python -m ruff check v2/run.py v2/config/loader.py v2/control/api.py v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py` 통과
+    - `python -m v2.run --mode live --env prod` direct boot guard `rc=1` 확인
+    - `python -m v2.run --ops-http --mode live --env prod` ops-http guard `rc=1` 확인
+- 2026-03-13 1차 구조 분리:
+  - 동작 변경 없이 `v2/run.py`의 CLI/parser, live-prod entry guard, serve/preflight/boot 경로를 `v2/cli/parser.py`, `v2/runtime/entry_guard.py`, `v2/runtime/serve.py`, `v2/runtime/boot.py`로 분리하고, `v2/run.py`에는 기존 import path를 유지하는 thin wrapper만 남겼다.
+  - 동작 변경 없이 `v2/control/api.py`의 profile/runtime policy, gate snapshot, startup recovery, cycle/reentry helper를 `v2/control/profile_policy.py`, `v2/control/gates.py`, `v2/control/recovery.py`, `v2/control/cycle.py`로 분리하고, `RuntimeController` 메서드는 기존 public behavior를 유지한 채 delegate만 하도록 바꿨다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/cli/parser.py v2/runtime/entry_guard.py v2/runtime/serve.py v2/runtime/boot.py v2/control/api.py v2/control/profile_policy.py v2/control/gates.py v2/control/recovery.py v2/control/cycle.py` 통과
+    - `python -m ruff check v2/run.py v2/cli/parser.py v2/runtime/entry_guard.py v2/runtime/serve.py v2/runtime/boot.py v2/control/api.py v2/control/profile_policy.py v2/control/gates.py v2/control/recovery.py v2/control/cycle.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_local_backtest_param_sweep.py v2/tests/test_ops_controls.py v2/tests/test_v2_replay.py` 통과
+    - `bash -n v2/scripts/run_stack.sh && bash -n v2/scripts/deploy_prep.sh && bash -n v2/scripts/preflight.sh && bash -n v2/scripts/install_systemd_stack.sh` 통과
+- 2026-03-13 3차 구조 분리:
+  - `v2/run.py`의 local backtest/metrics/reporting 덩어리를 `v2/backtest/local_runner.py`, `v2/backtest/metrics.py`, `v2/backtest/reporting.py`로 이동하고, `v2/run.py`에는 기존 private helper 이름을 유지하는 thin wrapper만 남겼다.
+  - `run.py`와 새 backtest 모듈 사이에는 의미 변경 없이 move-first extraction만 적용했다. backtest 모듈은 아직 `v2.run` namespace bridge를 통해 기존 helper/상수를 재사용하며, live runtime/control 경로는 이번 턴에 건드리지 않았다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/__init__.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/__init__.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_replay.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_local_backtest_runner_247.py v2/tests/test_v2_local_backtest_capital_lock.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` import smoke 통과
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 4차 구조 분리:
+  - `v2/run.py`의 replay / row loading / replay cycle record 경로를 `v2/backtest/replay.py`와 `v2/backtest/row_loader.py`로 이동하고, `v2/run.py`에는 기존 private helper 이름을 유지하는 thin wrapper만 남겼다.
+  - `row_loader.py`에는 `_safe_json_loads`, `_extract_meta`, `_extract_snapshot_time`, `_normalize_snapshot`, `_normalize_replay_rows`, `_load_replay_rows_json`, `_load_replay_rows_csv`, `_load_replay_frames`를 모았고, `replay.py`에는 `_build_replay_cycle_record`, `_run_replay`를 모았다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/__init__.py v2/backtest/row_loader.py v2/backtest/replay.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/__init__.py v2/backtest/row_loader.py v2/backtest/replay.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_replay.py v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` import smoke 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke_reports` 실행 시 import error 없이 report 생성까지 완료
+- 2026-03-13 5차 구조 분리:
+  - `v2/run.py`의 backtest snapshot/provider/cache 경로를 `v2/backtest/snapshots.py`, `v2/backtest/providers.py`, `v2/backtest/cache_paths.py`, `v2/backtest/cache_loader.py`로 이동했다.
+  - `snapshots.py`에는 `_ReplayFrame`, `_Kline15m`, `_FundingRateRow`를 옮겼고, `providers.py`에는 `_zscore_latest`, `_sum_recent_funding`, `_HistoricalSnapshotProvider`, `_ReplaySnapshotProvider`, `_HistoricalPortfolioSnapshotProvider`를 모았다.
+  - `cache_paths.py`에는 `_interval_to_ms`, `_cache_file_for_klines`, `_cache_file_for_premium`, `_cache_file_for_funding`을, `cache_loader.py`에는 `_write_klines_csv`, `_klines_csv_has_volume_column`, `_read_klines_csv_rows`, `_load_cached_klines_for_range`, `_load_cached_premium_for_range`, `_write_funding_csv`, `_read_funding_csv_rows`, `_load_cached_funding_for_range`를 모았다.
+  - `v2/run.py`는 이 경로들에 대해 re-export 또는 thin wrapper만 남기도록 줄였고, replay/local backtest 소비 경로는 유지했다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/snapshots.py v2/backtest/providers.py v2/backtest/cache_paths.py v2/backtest/cache_loader.py v2/backtest/row_loader.py v2/backtest/replay.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/snapshots.py v2/backtest/providers.py v2/backtest/cache_paths.py v2/backtest/cache_loader.py v2/backtest/row_loader.py v2/backtest/replay.py v2/backtest/local_runner.py v2/backtest/metrics.py v2/backtest/reporting.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_replay.py v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_run_smoke.py v2/tests/test_market_intervals_config.py` 통과
+    - `python -m v2.run --help` import smoke 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke5b_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke5b`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 6차 구조 분리:
+  - `v2/run.py`에 남아 있던 local backtest orchestration glue를 `v2/backtest/decision_types.py`와 `v2/backtest/orchestration.py`로 이동했다.
+  - `decision_types.py`에는 `_ReplayDecision`, `_ReplayDecisionBySymbol`를 옮겼고, `orchestration.py`에는 `_portfolio_history_limit`, `_build_local_backtest_cycle_input`, `_build_local_backtest_portfolio_rows`를 모았다.
+  - `v2/run.py`에는 기존 private helper/class 이름을 유지하는 re-export 및 thin wrapper만 남겼다. `run_module._build_strategy_selector` monkeypatch surface는 유지하도록 `orchestration.py`가 직접 import 대신 `run_module` bridge를 사용한다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/decision_types.py v2/backtest/orchestration.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/reporting.py v2/backtest/row_loader.py v2/backtest/snapshots.py v2/backtest/providers.py v2/backtest/cache_paths.py v2/backtest/cache_loader.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/decision_types.py v2/backtest/orchestration.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/reporting.py v2/backtest/row_loader.py v2/backtest/snapshots.py v2/backtest/providers.py v2/backtest/cache_paths.py v2/backtest/cache_loader.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke6_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke6`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 7차 구조 정리:
+  - `v2/run.py`에서 이미 `v2/backtest/*`로 옮겨둔 cache/provider/replay/local-backtest helper의 중복 wrapper 본문을 실제로 더 collapse했다.
+  - cycle이 없는 대상은 `run.py` 함수 정의를 제거하고 direct re-export import로 바꿨다:
+    - `v2/backtest/cache_paths.py`의 `_interval_to_ms`, `_cache_file_for_klines`, `_cache_file_for_premium`, `_cache_file_for_funding`
+    - `v2/backtest/cache_loader.py`의 `_write_klines_csv`, `_klines_csv_has_volume_column`, `_read_klines_csv_rows`, `_load_cached_klines_for_range`, `_load_cached_premium_for_range`, `_write_funding_csv`, `_read_funding_csv_rows`, `_load_cached_funding_for_range`
+    - `v2/backtest/providers.py`의 `_zscore_latest`, `_sum_recent_funding`
+  - cycle이 있는 대상은 `run.py`의 긴 wrapper를 공용 `_lazy_impl(...)` delegate로 줄였다:
+    - `_normalize_snapshot`, `_normalize_replay_rows`, `_load_replay_rows_json`, `_load_replay_rows_csv`, `_load_replay_frames`
+    - `_build_replay_cycle_record`, `_run_replay`
+    - `_build_local_backtest_cycle_input`, `_build_local_backtest_portfolio_rows`
+    - `_write_replay_report`, `_cleanup_local_backtest_artifacts`
+    - `_simulate_symbol_metrics`, `_simulate_portfolio_metrics`
+    - `_run_local_backtest_portfolio_replay`, `_run_local_backtest`
+  - `run.py` line count는 `2584 -> 2434`로 줄었다. collapse 과정에서 `replay.py` bridge가 필요로 하는 `BracketPlanner` re-export를 다시 유지해 기존 semantics를 맞췄다.
+  - 검증:
+    - `python -m py_compile v2/run.py` 통과
+    - `python -m ruff check v2/run.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke7_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke7`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 8차 구조 정리:
+  - `v2/backtest/common.py`를 추가하고 `v2/run.py`에 남아 있던 순수 helper `_to_float`, `_to_int`, `_candidate_to_payload`, `_candidate_from_payload`를 공용 backtest helper로 이동했다.
+  - `v2/backtest/orchestration.py`, `v2/backtest/row_loader.py`, `v2/backtest/reporting.py`, `v2/backtest/replay.py`, `v2/backtest/metrics.py`, `v2/backtest/local_runner.py`에서 위 helper 호출을 `run_module` bridge 대신 direct import로 전환했다.
+  - `run_module` 참조 수는 `v2/backtest/*.py` 기준 `34 -> 6`으로 줄였다. 남은 참조는 `metrics.py`/`local_runner.py`의 `globals().update(...)`, `orchestration.py`의 `_build_strategy_selector`, `replay.py`의 `_build_runtime`, `local_runner.py`의 `_run_local_backtest_symbol_replay_worker` monkeypatch surface 유지용이다.
+  - `v2/run.py`에는 `_to_float`, `_to_int`, `_candidate_to_payload`, `_candidate_from_payload`의 compatibility alias/re-export만 남겼다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/common.py v2/backtest/orchestration.py v2/backtest/row_loader.py v2/backtest/reporting.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/local_runner.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/common.py v2/backtest/orchestration.py v2/backtest/row_loader.py v2/backtest/reporting.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/local_runner.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke8_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke8`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 9차 구조 정리:
+  - `v2/backtest/runtime_deps.py`를 추가하고 `v2.run`에 남아 있던 backtest-facing dependency 접근을 lazy getter로 모았다.
+  - `v2/backtest/metrics.py`와 `v2/backtest/local_runner.py`에서 `globals().update(...)`를 제거하고, 표준 라이브러리/이동된 backtest 모듈은 direct import, `run.py`에 아직 남아 있는 helper/constant/function은 `runtime_deps.py`를 통해 명시적으로 받도록 바꿨다.
+  - `v2/backtest/orchestration.py`, `v2/backtest/replay.py`, `v2/backtest/local_runner.py`의 `_build_strategy_selector`, `_build_runtime`, `_run_local_backtest_symbol_replay_worker` 의존은 monkeypatch surface를 유지하려고 getter 호출 시점에 resolve되게 바꿨다.
+  - `v2/backtest/*.py` 기준 `run_module.` 참조 수는 `6 -> 0`, `globals().update(...)` 사용 수는 `2 -> 0`으로 줄였다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/common.py v2/backtest/runtime_deps.py v2/backtest/orchestration.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/local_runner.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/common.py v2/backtest/runtime_deps.py v2/backtest/orchestration.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/local_runner.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke9_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke9`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 10차 구조 정리:
+  - `v2/backtest/analytics.py`, `v2/backtest/policy.py`, `v2/backtest/summaries.py`, `v2/backtest/research_policy.py`를 추가해 `runtime_deps.py`에 남아 있던 비-runtime backtest helper를 성격별 모듈로 이동했다.
+  - `analytics.py`로 `_OpenTrade`, `_BacktestExecutionModel`, `_calc_max_drawdown_pct`, `_summarize_alpha_stats`, `_entry_reward_and_risk_pct`를 옮겼고, `policy.py`로 `LOCAL_BACKTEST_INITIAL_CAPITAL_USDT`, `_locked_local_backtest_initial_capital`, `_resolve_market_intervals`, `_is_vol_target_backtest_strategy`, `_VOL_TARGET_STRATEGIES`, `_LEGACY_PORTFOLIO_BACKTEST_STRATEGIES`를 옮겼다.
+  - `summaries.py`로 `_format_utc_iso`, `_build_half_year_window_summaries`를 옮겼고, `research_policy.py`로 `_portfolio_research_gate`를 분리했다.
+  - `v2/backtest/metrics.py`와 `v2/backtest/local_runner.py`는 위 helper를 `runtime_deps.py` getter 대신 direct import로 쓰도록 바꿨다. `runtime_deps.py`는 `_build_strategy_selector`, `_build_runtime`, `_run_local_backtest_symbol_replay_worker`, `_fetch_klines_interval`, `_fetch_klines_15m`만 남긴 얇은 runtime-facing layer로 줄였다.
+  - `v2/run.py`에서는 위 helper/class/constant 본문을 제거하고 compatibility alias/re-export만 유지했다. `v2/run.py` line count는 `2359 -> 1914`, `v2/backtest/runtime_deps.py`는 `80 -> 28`, getter 수는 `18 -> 5`로 줄었다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/common.py v2/backtest/runtime_deps.py v2/backtest/analytics.py v2/backtest/policy.py v2/backtest/summaries.py v2/backtest/research_policy.py v2/backtest/metrics.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/orchestration.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/common.py v2/backtest/runtime_deps.py v2/backtest/analytics.py v2/backtest/policy.py v2/backtest/summaries.py v2/backtest/research_policy.py v2/backtest/metrics.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/orchestration.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke10_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke10`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 11차 구조 정리:
+  - `v2/backtest/downloader.py`를 추가하고 `v2/run.py`에 남아 있던 downloader 본문 `_aggregate_klines_to_interval`, `_fetch_klines_interval`, `_fetch_klines_15m`, `_fetch_premium_index_klines_15m`, `_fetch_funding_rate_history`를 이동했다.
+  - `v2/backtest/local_runner.py`는 downloader 관련 의존을 `runtime_deps.py` getter 대신 `v2/backtest/downloader.py` direct import로 전환했다.
+  - `v2/backtest/runtime_deps.py`에서는 `get_fetch_klines_interval()`, `get_fetch_klines_15m()`를 제거했고, `_build_strategy_selector`, `_build_runtime`, `_run_local_backtest_symbol_replay_worker` 세 getter만 남겼다.
+  - `v2/run.py`에는 downloader helper 본문을 다시 두지 않고 compatibility alias/re-export만 유지했다. `v2/run.py` line count는 `1914 -> 1619`, `v2/backtest/runtime_deps.py`는 `28 -> 20`, getter 수는 `5 -> 3`으로 줄었다.
+  - 검증:
+    - `python -m py_compile v2/run.py v2/backtest/downloader.py v2/backtest/runtime_deps.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/orchestration.py v2/backtest/cache_loader.py v2/backtest/cache_paths.py` 통과
+    - `python -m ruff check v2/run.py v2/backtest/downloader.py v2/backtest/runtime_deps.py v2/backtest/local_runner.py v2/backtest/replay.py v2/backtest/metrics.py v2/backtest/orchestration.py v2/backtest/cache_loader.py v2/backtest/cache_paths.py` 통과
+    - `python -m pytest -q v2/tests/test_local_backtest_param_sweep.py v2/tests/test_v2_local_backtest.py v2/tests/test_v2_replay.py v2/tests/test_v2_run_smoke.py v2/tests/test_market_intervals_config.py` 통과
+    - `python -m v2.run --help` 통과
+    - 임시 replay JSON으로 `python -m v2.run --mode shadow --replay <tmp_json> --report-dir /tmp/v2_replay_smoke11_reports` 실행 시 import error 없이 report 생성까지 완료
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --local-backtest --backtest-symbols BTCUSDT --backtest-years 1 --backtest-offline --report-dir /tmp/v2_bt_smoke11`는 import error 없이 local backtest runner까지 진입했고, 오프라인 캐시 부재로 `no historical klines downloaded`에서 종료됨
+- 2026-03-13 12차 구조 정리:
+  - `v2/control/status_payloads.py`를 추가하고 `v2/control/api.py`에 남아 있던 `/status`, `/healthz`, `/readyz` payload 조립을 `build_status_snapshot`, `build_healthz_snapshot`, `build_readyz_snapshot`로 분리했다.
+  - `status_payloads.py`에는 status용 보조 조립 helper `_live_trading_enabled`, `_positions_payload`, `_config_summary_payload`를 함께 두고, 기존 field/key/nested dict 구조와 `state_uncertain -> recovery_required -> stale/private readiness` 계산 근거는 그대로 유지했다.
+  - `v2/control/http_apps.py`를 추가하고 `create_control_http_app`, `register_readonly_control_routes`, `register_mutating_control_routes`, request model (`SetValueRequest`, `SetSymbolLeverageRequest`, `SchedulerIntervalRequest`, `PresetRequest`, `TradeCloseRequest`)를 이동했다.
+  - `v2/control/api.py`에서는 `RuntimeController._status_snapshot`, `_healthz_snapshot`, `_readyz_snapshot`이 thin delegate로 바뀌었고, `create_control_http_app`도 새 `http_apps.py` wrapper 호출만 남겼다. `api.py` line count는 `2633 -> 2300`으로 줄었다.
+  - 이번 턴에서는 `RuntimeController` 핵심 상태 전이, gate/recovery/cycle 호출 순서, mutating endpoint semantics, daily report formatting, status summary 번역/알림 로직은 일부러 유지했다.
+  - 검증:
+    - `python -m py_compile v2/control/api.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m ruff check v2/control/api.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_discord_bot_smoke.py` 통과
+    - `python -m v2.run --help` 통과
+    - `python -m v2.run --mode live --env prod`는 기존과 동일하게 non-zero로 direct boot 차단 확인
+    - `python -m v2.run --ops-http --mode live --env prod`는 기존과 동일하게 non-zero로 차단 확인
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; from v2.runtime import serve; print('control_http_import_ok')"` 통과
+- 2026-03-13 13차 구조 정리:
+  - `v2/control/presentation.py`를 추가하고 `v2/control/api.py`에 남아 있던 status summary/operator presentation helper를 이동했다.
+  - `presentation.py`에는 `build_status_summary`, `build_portfolio_slot_summary`, `build_status_pnl_summary`, `translate_status_token`, `format_signed`, `position_side_label`, `build_risk_response`, `build_scheduler_response`, `build_reconcile_response`를 두고, text 의미와 response field 구조는 유지했다.
+  - `v2/control/report_builders.py`를 추가하고 daily report 조립 helper `build_daily_report_payload`, `build_daily_report_message`를 이동했다. notifier 호출 타이밍과 result 반영은 `RuntimeController.send_daily_report()`에 그대로 남겼다.
+  - `v2/control/api.py`에서는 `RuntimeController._status_summary`, `_portfolio_slot_summary`, `_fmt_signed`, `_position_side_label`, `_status_pnl_summary`, `_translate_status_token`, `get_risk`, `get_scheduler`, `reconcile_now`, `_format_daily_report_message`, `send_daily_report`가 helper delegate 중심으로 바뀌었다. `api.py` line count는 `2300 -> 2170`으로 줄었다.
+  - 이번 턴에서는 cycle/recovery/gate 계산, live service lifecycle, tick/start/stop/set_value 등 mutating core와 readiness semantics는 일부러 유지했다.
+  - 검증:
+    - `python -m py_compile v2/control/api.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m ruff check v2/control/api.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_discord_bot_smoke.py v2/tests/test_discord_report_formatting.py` 통과
+    - `python -m v2.run --help` 통과
+    - `python -m v2.run --mode live --env prod`는 기존과 동일하게 non-zero로 direct boot 차단 확인
+    - `python -m v2.run --ops-http --mode live --env prod`는 기존과 동일하게 non-zero로 차단 확인
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+- 2026-03-13 14차 구조 정리:
+  - `v2/control/mutating_responses.py`를 추가하고 `v2/control/api.py`에 남아 있던 mutating response dict 조립을 이동했다.
+  - `mutating_responses.py`에는 `build_state_response`, `build_panic_response`, `build_set_value_response`, `build_tick_scheduler_response`, `build_trade_close_response`, `build_trade_close_all_response`, `build_clear_cooldown_response`를 두고, field 이름과 nested dict 구조는 유지했다.
+  - `v2/control/api.py`에서는 `start`, `stop`, `panic`, `set_value`, `tick_scheduler_now`의 busy/coalesced path, `close_position`, `close_all`, `clear_cooldown`가 builder delegate를 사용하도록 바뀌었고, `set_symbol_leverage`와 `preset`도 기존 risk response builder를 재사용하도록 정리했다.
+  - `tick_scheduler_now()`의 lock 획득/해제, coalescing 대기, busy 시 `_last_cycle` mutation 순서는 바꾸지 않았고, response dict 반환만 `build_tick_scheduler_response(...)`로 통일했다.
+  - `v2/control/api.py` line count는 `2170 -> 2154`로 줄었다.
+  - 검증:
+    - `python -m py_compile v2/control/api.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m ruff check v2/control/api.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_discord_bot_smoke.py v2/tests/test_discord_report_formatting.py` 통과
+    - `python -m v2.run --help` 통과
+    - `python -m v2.run --mode live --env prod`는 기존과 동일하게 non-zero로 direct boot 차단 확인
+    - `python -m v2.run --ops-http --mode live --env prod`는 기존과 동일하게 non-zero로 차단 확인
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+- 2026-03-13 15차 구조 정리:
+  - `v2/control/mutating_core_helpers.py`를 추가하고 `v2/control/api.py` mutating core 안의 반복 상태 캡처/last-cycle 보조 블록을 이동했다.
+  - `mutating_core_helpers.py`에는 `capture_runtime_state`, `capture_public_risk_config`, `capture_last_cycle_snapshot`, `apply_tick_busy_cycle_state`를 두고, controller가 mutation과 lock을 계속 소유한 채 반복 helper만 호출하도록 유지했다.
+  - `v2/control/api.py`에서는 `start`, `stop`, `panic`, `get_risk`, `set_value`, `set_symbol_leverage`, `reconcile_now`, `send_daily_report`, `preset`, `tick_scheduler_now`가 helper 호출로 반복 state/risk capture를 줄였고, `tick_scheduler_now()`의 coalesced snapshot 및 busy 시 `_last_cycle` 채우기 블록도 helper로 치환했다.
+  - `tick_scheduler_now()`의 busy/coalesced 판정, `_last_cycle` mutation 의미, `tick_busy` error semantics, lock scope와 cycle 호출 순서는 유지했다.
+  - `v2/control/api.py` line count는 `2154 -> 2147`로 줄었다.
+  - 검증:
+    - `python -m py_compile v2/control/api.py v2/control/mutating_core_helpers.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m ruff check v2/control/api.py v2/control/mutating_core_helpers.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_discord_bot_smoke.py v2/tests/test_discord_report_formatting.py` 통과
+    - `python -m v2.run --help` 통과
+    - `python -m v2.run --mode live --env prod`는 기존과 동일하게 non-zero로 direct boot 차단 확인
+    - `python -m v2.run --ops-http --mode live --env prod`는 기존과 동일하게 non-zero로 차단 확인
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+- 2026-03-13 16차 구조 정리:
+  - `v2/control/live_balance_helpers.py`를 추가하고 `v2/control/api.py`에 남아 있던 live balance/private REST/cache/freshness 보조 본문을 이동했다.
+  - `live_balance_helpers.py`에는 `build_freshness_snapshot`, `get_cached_live_balance`, `get_cached_or_fallback_balance`, `fetch_live_usdt_balance`를 두고, cache TTL/fallback/error string/logging과 freshness field/key 구조를 유지했다.
+  - `v2/control/api.py`에서는 `_freshness_snapshot`, `_cached_live_balance`, `_cached_or_fallback_balance`, `_fetch_live_usdt_balance`가 thin delegate로 바뀌었고, status/readiness/gate 쪽 orchestration 순서 자체는 유지했다.
+  - 특히 `/status` 경로에서 `balance fetch -> freshness snapshot -> gate snapshot -> stale transition` 순서를 바꾸지 않았고, `probe_private_rest=True` 시 private REST readiness 차단 의미도 그대로 유지했다.
+  - `v2/control/api.py` line count는 `2147 -> 1976`으로 줄었다.
+  - 검증:
+    - `python -m py_compile v2/control/api.py v2/control/live_balance_helpers.py v2/control/mutating_core_helpers.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m ruff check v2/control/api.py v2/control/live_balance_helpers.py v2/control/mutating_core_helpers.py v2/control/mutating_responses.py v2/control/presentation.py v2/control/report_builders.py v2/control/status_payloads.py v2/control/http_apps.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py` 통과
+    - `python -m pytest -q v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_discord_bot_smoke.py` 통과
+    - `python -m pytest -q v2/tests/test_discord_panel.py -k "live_balance or readyz or cached"` 통과
+    - `python -m v2.run --help` 통과
+    - `python -m v2.run --mode live --env prod`는 기존과 동일하게 non-zero로 direct boot 차단 확인
+    - `python -m v2.run --ops-http --mode live --env prod`는 기존과 동일하게 non-zero로 차단 확인
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+- 2026-03-13 운영 검증 준비:
+  - shadow soak 운영 검증용 문서 `v2/docs/SHADOW_SOAK_CHECKLIST.md`, `v2/docs/CANARY_GO_NO_GO.md`를 추가했다. 기준 프로필은 `ra_2026_alpha_v2_expansion_verified_q070`, 기준 조합은 `mode=shadow`, `env=testnet`, `control-http-host=127.0.0.1`, `control-http-port=8101`로 고정했다.
+  - 증거 수집용 read-only 스크립트 `v2/scripts/shadow_soak_snapshot.sh`, `v2/scripts/shadow_soak_bundle.sh`를 추가했다. `/status`, `/healthz`, `/readyz`, git HEAD/status, process/socket, journalctl, log tail을 `logs/shadow_soak/<timestamp>_<label>/`에 모으고 tar.gz bundle까지 만들 수 있게 했다.
+  - 기존 문서는 `v2/docs/RUNBOOK.md` 상단을 현재 기준 문서와 q070 기본 프로필 기준으로 갱신했고, `v2/docs/SHADOW_REHEARSAL_RUNBOOK.md`의 shadow 대상 프로필과 예시 명령을 q070 기준으로 맞췄다.
+  - 검증:
+    - `bash -n v2/scripts/shadow_soak_snapshot.sh v2/scripts/shadow_soak_bundle.sh` 통과
+    - `python -m v2.run --help` 통과
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+    - `bash v2/scripts/shadow_soak_snapshot.sh --label dryrun --output-root /tmp/shadow_soak_test --log-lines 5` 통과
+    - `bash v2/scripts/shadow_soak_bundle.sh --source-root /tmp/shadow_soak_test --output-dir /tmp/shadow_soak_bundle_test` 통과
+    - `rg -n "ra_2026_alpha_v2_expansion_verified_q070|shadow_soak_snapshot.sh|shadow_soak_bundle.sh|/status|/healthz|/readyz|/start|/stop|/panic|/cooldown/clear|/scheduler/tick|/report|/reconcile" v2/docs/SHADOW_SOAK_CHECKLIST.md v2/docs/CANARY_GO_NO_GO.md v2/docs/RUNBOOK.md v2/docs/SHADOW_REHEARSAL_RUNBOOK.md`로 문서/명령/프로필 일치 확인
+- 2026-03-13 구조정리 1차 종료 verdict:
+  - 현재 기준 운영 profile은 `ra_2026_alpha_v2_expansion_verified_q070` 하나로 정렬했다. shadow soak/checklist/runbook/systemd/control-http 예시는 이 기준으로 맞췄다.
+  - `run.py/backtest/control` 1차 구조정리는 move-first extraction 기준으로 마감 가능 상태다. public runtime 의미 변경 없이 `v2/run.py`, `v2/control/api.py` giant file 책임을 여러 helper/module로 분리했고, direct boot guard와 `--ops-http` live/prod 차단도 유지했다.
+  - 현재 상태는 `구조 때문에 불안정한 단계`는 아니다. 다만 `운영 가능 최종 판정`은 코드 정리 완료만으로 끝내지 않고, `shadow soak 6시간 + clean restart 1회 + dirty restart -> reconcile 복구 1회 + evidence bundle`까지 확보한 뒤 내리도록 고정했다.
+  - 2026-03-13 시점 최종 빠른 verdict:
+    - codebase structure phase-1: 완료
+    - focused lint/tests/smoke: 통과
+    - control-http import/runtime guard: 통과
+    - live/prod direct boot safety: 차단 유지
+    - canary go/no-go: 아직 shadow soak 증거 확보 전이므로 `보류`
+  - 운영자가 바로 실행해야 하는 최소 순서:
+    - `bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet`
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --runtime-preflight --control-http-host 127.0.0.1 --control-http-port 8101`
+    - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --control-http --control-http-host 127.0.0.1 --control-http-port 8101`
+    - `bash v2/scripts/shadow_soak_snapshot.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --label kickoff`
+    - `t30m / t1h / t6h` snapshot 저장 후 `bash v2/scripts/shadow_soak_bundle.sh`

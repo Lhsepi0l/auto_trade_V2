@@ -1,7 +1,7 @@
 # Shadow Rehearsal Runbook
 
 ## 1. 목적
-- 대상 전략 후보는 `ra_2026_alpha_v2_expansion_live_candidate` 고정이다.
+- 대상 전략 후보는 `ra_2026_alpha_v2_expansion_verified_q070` 고정이다.
 - 본 문서는 `mode=shadow`, `env=testnet` 기준 운영 리허설 절차만 다룬다.
 - 목표는 `실거래 시작`이 아니라 `운영 상태 전이`, `복구 절차`, `canary 직전 게이트`를 검증하는 것이다.
 
@@ -10,7 +10,7 @@
 ### 2.1 shadow preflight
 ```bash
 bash v2/scripts/preflight.sh \
-  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
   --mode shadow \
   --env testnet
 ```
@@ -18,7 +18,7 @@ bash v2/scripts/preflight.sh \
 ### 2.2 runtime preflight
 ```bash
 python -m v2.run \
-  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
   --mode shadow \
   --env testnet \
   --runtime-preflight \
@@ -29,7 +29,7 @@ python -m v2.run \
 ### 2.3 shadow control runtime
 ```bash
 python -m v2.run \
-  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
   --mode shadow \
   --env testnet \
   --control-http \
@@ -52,7 +52,7 @@ curl -s -X POST http://127.0.0.1:8101/scheduler/tick
 - systemd 경로 사용 시 `journalctl -u v2-stack.service`
 
 ## 3. shadow 시작 전 체크리스트
-- `profile=ra_2026_alpha_v2_expansion_live_candidate`인지 다시 확인한다.
+- `profile=ra_2026_alpha_v2_expansion_verified_q070`인지 다시 확인한다.
 - `mode=shadow`, `env=testnet`, `control-http-host=127.0.0.1`인지 확인한다.
 - `preflight`와 `runtime-preflight`가 모두 통과했는지 확인한다.
 - startup banner에 `live_trading_enabled=false`가 보이는지 확인한다.

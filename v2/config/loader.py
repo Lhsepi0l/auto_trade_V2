@@ -113,7 +113,7 @@ class RootConfig(BaseModel):
 
     @model_validator(mode="after")
     def ensure_required_profiles(self) -> "RootConfig":
-        required = {"ra_2026_alpha_v2", "ra_2026_alpha_v2_expansion_live_candidate"}
+        required = {"ra_2026_alpha_v2", "ra_2026_alpha_v2_expansion_verified_q070"}
         missing = required.difference(set(self.profiles.keys()))
         if missing:
             joined = ", ".join(sorted(missing))
@@ -232,7 +232,7 @@ def load_root_config(path: str | Path | None = None) -> RootConfig:
 
 def load_effective_config(
     *,
-    profile: str = "ra_2026_alpha_v2_expansion_live_candidate",
+    profile: str = "ra_2026_alpha_v2_expansion_verified_q070",
     mode: ModeName = "shadow",
     env: EnvName = "testnet",
     config_path: str | Path | None = None,

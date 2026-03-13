@@ -23,7 +23,7 @@ from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 
 
-def _build_app(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_live_candidate"):  # type: ignore[no-untyped-def]
+def _build_app(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_verified_q070"):  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile=profile, mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
@@ -53,7 +53,7 @@ def _build_app(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_live_cand
     return create_control_http_app(controller=controller)
 
 
-def _build_controller(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_live_candidate"):  # type: ignore[no-untyped-def]
+def _build_controller(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_verified_q070"):  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile=profile, mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_controller.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
@@ -85,7 +85,7 @@ def _build_controller(tmp_path, *, profile: str = "ra_2026_alpha_v2_expansion_li
 def _build_live_controller(  # type: ignore[no-untyped-def]
     tmp_path,
     *,
-    profile: str = "ra_2026_alpha_v2_expansion_live_candidate",
+    profile: str = "ra_2026_alpha_v2_expansion_verified_q070",
     rest_client: Any | None,
     kernel: Any | None = None,
     user_stream_manager: Any | None = None,
@@ -115,6 +115,18 @@ def _build_live_controller(  # type: ignore[no-untyped-def]
             dry_run=False,
             rest_client=rest_client,
         )
+    if rest_client is not None and not hasattr(rest_client, "get_open_algo_orders"):
+        async def _get_open_algo_orders(*, symbol=None):  # type: ignore[no-untyped-def]
+            _ = symbol
+            return []
+
+        rest_client.get_open_algo_orders = _get_open_algo_orders  # type: ignore[attr-defined]
+    if rest_client is not None and not hasattr(rest_client, "cancel_algo_order"):
+        async def _cancel_algo_order(*, params):  # type: ignore[no-untyped-def]
+            _ = params
+            return {}
+
+        rest_client.cancel_algo_order = _cancel_algo_order  # type: ignore[attr-defined]
     controller = build_runtime_controller(
         cfg=cfg,
         state_store=state_store,
@@ -197,10 +209,10 @@ def test_control_api_contract(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert stop.json()["state"] == "PAUSED"
 
 
-def test_alpha_live_candidate_profile_seeds_runtime_defaults_and_readiness(
+def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
-    app = _build_app(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
+    app = _build_app(tmp_path, profile="ra_2026_alpha_v2_expansion_verified_q070")
     client = TestClient(app)
 
     risk = client.get("/risk")
@@ -215,8 +227,8 @@ def test_alpha_live_candidate_profile_seeds_runtime_defaults_and_readiness(
     readiness = client.get("/readiness")
     assert readiness.status_code == 200
     payload = readiness.json()
-    assert payload["target"] == "alpha_expansion_live_candidate"
-    assert payload["profile"] == "ra_2026_alpha_v2_expansion_live_candidate"
+    assert payload["target"] == "alpha_expansion_verified_q070"
+    assert payload["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
     assert payload["enabled_symbols"] == ["BTCUSDT"]
     assert payload["overall"] == "caution"
     assert payload["checks"]["profile"]["status"] == "pass"
@@ -229,11 +241,11 @@ def test_alpha_live_candidate_profile_seeds_runtime_defaults_and_readiness(
     status = client.get("/status")
     assert status.status_code == 200
     status_payload = status.json()
-    assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_live_candidate"
+    assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
 
 
 def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_params.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
@@ -2292,7 +2304,7 @@ def test_control_api_tick_coalesces_when_background_cycle_completes(
 
 
 def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_sync.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
@@ -2480,6 +2492,14 @@ def test_live_tick_does_not_preblock_multi_symbol_scan_when_live_position_exists
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, Any]]:
+            _ = symbol
+            return []
+
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            _ = params
+            return {}
+
     kernel = _KernelNoCandidate()
     controller = build_runtime_controller(
         cfg=cfg,
@@ -2532,6 +2552,14 @@ def test_live_tick_allows_reentry_when_flag_enabled(tmp_path) -> None:  # type: 
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, Any]]:
+            _ = symbol
+            return []
+
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            _ = params
+            return {}
+
     kernel = _KernelNoCandidate()
     controller = build_runtime_controller(
         cfg=cfg,
@@ -2554,6 +2582,57 @@ def test_live_tick_allows_reentry_when_flag_enabled(tmp_path) -> None:  # type: 
     assert tick.status_code == 200
     assert tick.json()["snapshot"]["last_action"] == "no_candidate"
     assert kernel.calls == 1
+
+
+def test_live_reentry_fetch_failure_blocks_and_sets_uncertainty(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _KernelNoCandidate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _FlakyPositionsREST:
+        def __init__(self) -> None:
+            self.position_calls = 0
+
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            self.position_calls += 1
+            if self.position_calls == 1:
+                return []
+            raise RuntimeError("positions_down")
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    kernel = _KernelNoCandidate()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_FlakyPositionsREST(),
+        kernel=kernel,
+        market_data_state={
+            "last_market_data_at": now_iso,
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": now_iso,
+        },
+    )
+    controller._running = True
+    controller._user_stream_started = True
+    controller._user_stream_started_at = now_iso
+    controller._last_private_stream_ok_at = now_iso
+
+    out = controller.tick_scheduler_now()
+
+    assert out["snapshot"]["last_action"] == "blocked"
+    assert out["snapshot"]["last_decision_reason"] == "state_uncertain"
+    assert controller._status_snapshot()["state_uncertain"] is True
+    assert controller._status_snapshot()["state_uncertain_reason"] == "live_positions_fetch_failed"
+    assert kernel.calls == 0
 
 
 def test_live_startup_reconcile_populates_exchange_position_and_status(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -2612,6 +2691,55 @@ def test_start_auto_reconciles_dirty_restart_before_running(tmp_path) -> None:  
     assert status["startup_reconcile_ok"] is True
     assert ops.can_open_new_entries() is True
     controller.stop()
+
+
+def test_start_does_not_spawn_duplicate_worker_thread(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _fake_loop_worker() -> None:
+        entered.set()
+        release.wait(timeout=2.0)
+
+    controller._loop_worker = _fake_loop_worker  # type: ignore[method-assign]
+
+    first = controller.start()
+    assert first["state"] == "RUNNING"
+    assert entered.wait(timeout=1.0)
+    thread = controller._thread
+    assert thread is not None
+
+    second = controller.start()
+    assert second["state"] == "RUNNING"
+    assert controller._thread is thread
+
+    release.set()
+    controller._thread_stop.set()
+    thread.join(timeout=1.0)
+    controller.stop()
+
+
+def test_stop_waits_for_worker_thread_to_drain(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    started = threading.Event()
+
+    def _worker() -> None:
+        started.set()
+        while not controller._thread_stop.is_set():
+            time.sleep(0.01)
+
+    worker = threading.Thread(target=_worker, daemon=True)
+    controller._running = True
+    controller._thread = worker
+    worker.start()
+    assert started.wait(timeout=1.0)
+
+    out = controller.stop()
+
+    assert out["state"] == "PAUSED"
+    assert worker.is_alive() is False
+    assert controller._running is False
 
 
 def test_live_startup_reconcile_failure_sets_uncertainty_and_safe_mode(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -3278,6 +3406,100 @@ def test_readyz_fails_for_uncertainty_and_stale_freshness(tmp_path) -> None:  # 
         stale_market = client.get("/readyz")
         assert stale_market.status_code == 503
         assert stale_market.json()["market_data_stale"] is True
+
+
+def test_readyz_fails_when_bracket_recovery_fails(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    async def _fail_recover(self) -> dict[str, Any]:
+        raise RuntimeError("recover_boom")
+
+    monkeypatch.setattr("v2.control.api.BracketService.recover", _fail_recover)
+
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_HealthyREST(),
+        market_data_state={
+            "last_market_data_at": datetime.now(timezone.utc).isoformat(),
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = datetime.now(timezone.utc).isoformat()
+    controller._last_private_stream_ok_at = controller._user_stream_started_at
+
+    readyz = controller._readyz_snapshot()
+
+    assert readyz["ready"] is False
+    assert readyz["bracket_recovery_ok"] is False
+    assert readyz["recovery_required"] is True
+    assert readyz["recovery_reason"] == "bracket_recovery_exception"
+
+
+def test_readyz_fails_when_private_rest_is_rate_limited_even_with_cached_balance(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _RateLimitedREST:
+        def __init__(self) -> None:
+            self.balance_calls = 0
+
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            self.balance_calls += 1
+            if self.balance_calls == 1:
+                return [{"asset": "USDT", "availableBalance": "1000", "walletBalance": "1000"}]
+            raise BinanceRESTError(
+                status_code=429,
+                code=-1003,
+                message="too many requests",
+                path="/fapi/v2/balance",
+            )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_RateLimitedREST(),
+        market_data_state={
+            "last_market_data_at": now_iso,
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": now_iso,
+        },
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = now_iso
+    controller._last_private_stream_ok_at = now_iso
+
+    _ = controller._readyz_snapshot()
+    second = controller._readyz_snapshot()
+
+    assert second["ready"] is False
+    assert second["private_auth_ok"] is False
+    assert second["private_error"] == "balance_rate_limited"
+    assert second["private_error_detail"] is not None
+
+
+def test_runtime_risk_key_alias_normalizes_to_risk_per_trade_pct(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+
+    out = controller.set_value(key="per_trade_risk_pct", value="7")
+    risk = controller.get_risk()
+
+    assert out["key"] == "risk_per_trade_pct"
+    assert out["applied_value"] == 7
+    assert risk["risk_per_trade_pct"] == 7
+    assert risk["per_trade_risk_pct"] == 7
 
 
 def test_controller_structured_logs_include_phase_b_fields(tmp_path, caplog) -> None:  # type: ignore[no-untyped-def]

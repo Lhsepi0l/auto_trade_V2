@@ -10,35 +10,36 @@
 ## 2. 빠른 시작
 
 ### Shadow 운영 리허설
-- shadow 운영 절차, failure-injection 리허설, operator checklist, pre-canary gate는 [SHADOW_REHEARSAL_RUNBOOK.md](./SHADOW_REHEARSAL_RUNBOOK.md)를 기준으로 진행합니다.
-- 현재 shadow 검증 대상 profile은 `ra_2026_alpha_v2_expansion_live_candidate` 하나로 고정합니다.
+- 현재 구조 기준 shadow soak 체크리스트는 [SHADOW_SOAK_CHECKLIST.md](./SHADOW_SOAK_CHECKLIST.md), canary 판정 기준은 [CANARY_GO_NO_GO.md](./CANARY_GO_NO_GO.md)를 우선 기준으로 사용합니다.
+- failure-injection 리허설 상세 절차는 [SHADOW_REHEARSAL_RUNBOOK.md](./SHADOW_REHEARSAL_RUNBOOK.md)를 보조 문서로 사용합니다.
+- 현재 shadow 운영 기본 profile은 `ra_2026_alpha_v2_expansion_verified_q070`이다.
 
 ### 기본 실행
 ```bash
 # 테스트넷 Shadow (키 불필요)
-python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
 
-# 운영 Prod Live (BINANCE_API_KEY, BINANCE_API_SECRET 필요)
-python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod
+# live/prod direct boot guard 확인용(차단이 정상)
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod
 
 # 배포 준비(원커맨드: preflight + runtime smoke, 기본은 server-minimal runtime 테스트)
-python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30
 
 # 워크스테이션에서 전체 테스트까지 포함한 full 게이트
-python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30 --test-scope full
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30 --test-scope full
 ```
 
-### Alpha Expansion Live Candidate 런칭
-현재 검증 후보는 `ra_2026_alpha_v2_expansion_live_candidate` 입니다.
+### Verified q070 운영 기준
+현재 운영 검증 기본 profile은 `ra_2026_alpha_v2_expansion_verified_q070` 입니다.
 
 ```bash
-python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
-python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
 python -m v2.discord_bot.bot
 ```
 
-- 이전 보수 운영판 `ra_2026_alpha_v2_expansion_live_candidate`는 fallback profile 로만 유지합니다.
-- 새 후보는 `alpha_expansion` 단일 모듈과 30U 캐너리 리스크 전제로 운영합니다.
+- 운영 예시는 현재 `q070` 기준으로만 유지합니다.
+- control HTTP는 `127.0.0.1:8101` 기준으로만 노출합니다.
 
 ### 종료
 - 수동 중지는 `Ctrl+C`로 프로세스를 종료합니다.
@@ -55,7 +56,7 @@ python -m v2.discord_bot.bot
 ```bash
 # 로컬에서 3년치 BTC/ETH 히스토리(15m 실행축 + 10m/30m/1h/4h 컨텍스트)를 받아 전략 리플레이 + 손익 리포트 생성
 python -m v2.run \
-  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
   --mode shadow \
   --env prod \
   --local-backtest \
@@ -82,7 +83,7 @@ python -m v2.run \
 ```bash
 # 빠른 기본 모드: 1년 전체 스캔 -> 상위 케이스만 3년 재검증
 python local_backtest/param_sweep.py \
-  --profile ra_2026_alpha_v2_expansion_live_candidate \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
   --symbols BTCUSDT,ETHUSDT
 ```
 
@@ -101,7 +102,7 @@ python local_backtest/param_sweep.py \
 ### Discord Bot (v2 패키지)
 ```bash
 # 1) v2 제어 API 실행 (Discord 패널 호환)
-python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
 
 # 2) Discord bot 실행 (같은 .env 사용)
 python -m v2.discord_bot.bot
@@ -110,7 +111,7 @@ python -m v2.discord_bot.bot
 ### 통합 실행(원커맨드)
 ```bash
 # control API + Discord bot 동시 실행
-bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 ```
 
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
@@ -121,10 +122,10 @@ bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash
 # dry-run으로 유닛 내용 확인
-bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate
+bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
 
 # 실제 설치/기동
-bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 
 # 상태/로그 확인
 sudo systemctl status v2-stack.service --no-pager
@@ -142,12 +143,12 @@ sudo journalctl -u v2-stack.service -f
 
 ```bash
 # 기본 server-minimal 경로
-bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
-python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30
 
 # 필요한 경우에만 워크스테이션에서 전체 테스트
-bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
-python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30 --test-scope full
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --test-scope full
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30 --test-scope full
 ```
 
 runtime 테스트 묶음은 아래만 포함합니다.
@@ -160,10 +161,11 @@ runtime 테스트 묶음은 아래만 포함합니다.
 - `v2/tests/test_tpsl_brackets.py`
 - `v2/tests/test_discord_panel.py`
 
-### `ra_2026_alpha_v2_expansion_live_candidate` 30U 캐너리 런칭 후 리스크 재설정
+### `ra_2026_alpha_v2_expansion_verified_q070` 기동 후 리스크 재설정
 `/risk` 값은 런타임 저장소에서 복구될 수 있으므로, systemd 재기동 직후 아래 값을 한 번씩 다시 고정합니다.
 
 ```bash
+# 스크립트 파일명은 기존 명칭을 유지한다.
 bash v2/scripts/apply_alpha_expansion_live_candidate_risk.sh
 ```
 
@@ -237,7 +239,7 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 - `python -m ruff check v2 v2/tests`
 - 서버(Pi): `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_v2_env_and_notify.py v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_live_execution_service.py v2/tests/test_exchange_user_stream.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py`
 - 워크스테이션(선택): `python -m pytest -q v2/tests`
-- `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_live_candidate` 실행(또는 `--mode live --env prod`, full suite가 필요하면 `--test-scope full`)
+- `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_verified_q070` 실행(또는 `--mode live --env prod`, full suite가 필요하면 `--test-scope full`)
 
 ### 실행 중 모니터링
 - 출력에 `v2 boot completed`가 보이고 프로세스가 지속 실행되는지 확인
@@ -275,9 +277,9 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 자동 점검 리포트를 생성합니다.
 
 ```bash
-bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
-bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/preflight_prod_$(date -u +%Y%m%d_%H%M%S).md --keep-reports 30
-bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --report-file reports/preflight_prod_$(date -u +%Y%m%d_%H%M%S).md --keep-reports 30
+bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --test-scope full
 ```
 
 리포트에는 다음 항목이 포함됩니다.

@@ -6,81 +6,68 @@ import threading
 import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-
 from v2.clean_room.contracts import KernelCycleResult
 from v2.common.async_bridge import run_async_blocking
-from v2.common.operator_labels import humanize_action_token, humanize_reason_token
 from v2.config.loader import EffectiveConfig
+from v2.control.http_apps import create_control_http_app as _create_control_http_app
+from v2.control.live_balance_helpers import (
+    build_freshness_snapshot,
+    fetch_live_usdt_balance,
+    get_cached_live_balance,
+    get_cached_or_fallback_balance,
+)
+from v2.control.mutating_core_helpers import (
+    apply_tick_busy_cycle_state,
+    capture_last_cycle_snapshot,
+    capture_public_risk_config,
+    capture_runtime_state,
+)
+from v2.control.mutating_responses import (
+    build_clear_cooldown_response,
+    build_panic_response,
+    build_set_value_response,
+    build_state_response,
+    build_tick_scheduler_response,
+    build_trade_close_all_response,
+    build_trade_close_response,
+)
+from v2.control.presentation import (
+    build_portfolio_slot_summary,
+    build_reconcile_response,
+    build_risk_response,
+    build_scheduler_response,
+    build_status_pnl_summary,
+    build_status_summary,
+    format_signed,
+    position_side_label,
+    translate_status_token,
+)
+from v2.control.profile_policy import (
+    normalize_runtime_risk_config as _normalize_runtime_risk_config_impl,
+)
+from v2.control.profile_policy import (
+    normalize_runtime_risk_key as _normalize_runtime_risk_key_impl,
+)
+from v2.control.profile_policy import (
+    serialize_runtime_risk_config as _serialize_runtime_risk_config_impl,
+)
+from v2.control.report_builders import build_daily_report_message, build_daily_report_payload
+from v2.control.status_payloads import (
+    build_healthz_snapshot,
+    build_readyz_snapshot,
+    build_status_snapshot,
+)
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
-from v2.exchange import BinanceRESTError
 from v2.exchange.types import ResyncSnapshot
 from v2.notify import Notifier
 from v2.ops import OpsController
 from v2.tpsl import BracketConfig, BracketPlanner, BracketService
 
 logger = logging.getLogger(__name__)
-
-
-_ACTION_LABELS_KO: dict[str, str] = {
-    "blocked": "차단",
-    "no_candidate": "대기",
-    "risk_rejected": "리스크거부",
-    "size_invalid": "수량오류",
-    "executed": "실행완료",
-    "dry_run": "모의실행",
-    "execution_failed": "실행실패",
-    "error": "오류",
-    "hold": "대기",
-    "enter": "진입",
-    "close": "청산",
-}
-
-
-_REASON_LABELS_KO: dict[str, str] = {
-    "ops_paused": "운영 일시정지",
-    "safe_mode": "안전모드",
-    "position_open": "기존 포지션 보유중",
-    "portfolio_symbol_open": "포트폴리오 동일 심볼 보유중",
-    "portfolio_bucket_cap": "포트폴리오 버킷 한도 도달",
-    "portfolio_cap_reached": "포트폴리오 최대 포지션 도달",
-    "no_candidate": "현재 진입 후보가 없습니다",
-    "no_candidate_multi": "복수 전략 후보가 정합성에서 탈락",
-    "invalid_size": "유효하지 않은 주문 수량",
-    "would_execute": "모의모드에서 실행 가능",
-    "executed": "주문 실행 완료",
-    "execution_failed": "주문 실행 실패",
-    "risk_rejected": "리스크 검증에서 거부됨",
-    "size_invalid": "수량 검증 실패",
-    "tick_busy": "이미 판단 작업이 진행중",
-    "cycle_failed": "사이클 실행 실패",
-    "live_order_failed": "실주문 제출 실패",
-    "bracket_failed": "TP/SL 브래킷 주문 실패",
-    "no_entry": "진입 조건 미충족",
-    "cooldown_active": "쿨다운 중",
-    "daily_loss_limit": "일일 손실 제한 도달",
-    "drawdown_limit": "드로우다운 제한 도달",
-    "spread_block": "스프레드 과대",
-    "edge_below_cost": "기대 수익 대비 비용 우위 부족",
-    "confidence_below_threshold": "최소 신호 점수 미달",
-    "gap_below_threshold": "신호 격차 미달",
-    "risk_ok_scaled": "리스크 감속 적용",
-    "signal_conflict": "전략 간 방향 충돌",
-    "regime_conflict": "전략 간 레짐 충돌",
-    "network_error": "네트워크 오류",
-    "state_uncertain": "거래소 상태 정합성 불확실",
-    "user_ws_stale": "프라이빗 스트림 freshness 초과",
-    "market_data_stale": "마켓 데이터 freshness 초과",
-    "recovery_required": "더티 재시작 복구 필요",
-    "submit_recovery_required": "주문 제출 확정 복구 필요",
-}
 
 
 def _utcnow_iso() -> str:
@@ -138,6 +125,18 @@ def _parse_value(raw: str) -> Any:
         if len(parts) > 0:
             return parts
     return value
+
+
+def _normalize_runtime_risk_key(key: Any) -> str:
+    return _normalize_runtime_risk_key_impl(key)
+
+
+def _normalize_runtime_risk_config(payload: Any) -> dict[str, Any]:
+    return _normalize_runtime_risk_config_impl(payload)
+
+
+def _serialize_runtime_risk_config(payload: Any) -> dict[str, Any]:
+    return _serialize_runtime_risk_config_impl(payload)
 
 
 def _parse_iso_datetime(raw: Any) -> datetime | None:
@@ -334,6 +333,26 @@ class RuntimeController:
             self._log_event("uncertainty_transition", state_uncertain=False)
             self._maybe_log_ready_transition()
 
+    def _set_recovery_required(self, *, reason: str) -> None:
+        next_reason = str(reason or "recovery_required")
+        changed = (not self._recovery_required) or self._recovery_reason != next_reason
+        self._recovery_required = True
+        self._recovery_reason = next_reason
+        if changed:
+            self._log_event("recovery_transition", recovery_required=True, reason=next_reason)
+            self._maybe_log_ready_transition()
+
+    def _clear_recovery_required(self, *, only_when_prefix: str | None = None, reason: str) -> None:
+        current_reason = str(self._recovery_reason or "")
+        if only_when_prefix is not None and not current_reason.startswith(only_when_prefix):
+            return
+        changed = self._recovery_required or bool(self._recovery_reason)
+        self._recovery_required = False
+        self._recovery_reason = None
+        if changed:
+            self._log_event("recovery_transition", recovery_required=False, reason=reason)
+            self._maybe_log_ready_transition()
+
     def _log_event(self, event: str, **fields: Any) -> None:
         ops_state = self.state_store.get().operational
         logger.info(
@@ -349,78 +368,7 @@ class RuntimeController:
         )
 
     def _freshness_snapshot(self) -> dict[str, Any]:
-        user_ws_stale_sec = max(
-            10.0,
-            _to_float(
-                self._risk.get("user_ws_stale_sec"),
-                default=max(float(self.scheduler.tick_seconds) * 4.0, 60.0),
-            ),
-        )
-        market_data_stale_sec = max(
-            5.0,
-            _to_float(
-                self._risk.get("market_data_stale_sec"),
-                default=max(float(self.scheduler.tick_seconds) * 2.0, 30.0),
-            ),
-        )
-        reconcile_max_age_sec = max(
-            30.0,
-            _to_float(self._risk.get("reconcile_max_age_sec"), default=300.0),
-        )
-        last_user_ws_event_at = self._user_stream_last_event_at
-        last_private_stream_ok_at = self._last_private_stream_ok_at
-        last_market_data_at = self._market_data_state.get("last_market_data_at")
-        last_market_data_source_ok_at = self._market_data_state.get("last_market_data_source_ok_at")
-        last_market_data_source_fail_at = self._market_data_state.get("last_market_data_source_fail_at")
-        last_market_data_source_error = self._market_data_state.get("last_market_data_source_error")
-        last_reconcile_at = self.state_store.get().last_reconcile_at
-        user_ws_age_sec = _age_seconds(last_private_stream_ok_at)
-        market_data_age_sec = _age_seconds(last_market_data_at)
-        market_data_source_age_sec = _age_seconds(last_market_data_source_ok_at)
-        reconcile_age_sec = _age_seconds(last_reconcile_at)
-
-        if user_ws_age_sec is None and self._user_stream_started:
-            user_ws_age_sec = _age_seconds(self._user_stream_started_at)
-
-        user_ws_stale = (
-            self.cfg.mode == "live"
-            and self._user_stream_started
-            and user_ws_age_sec is not None
-            and user_ws_age_sec > user_ws_stale_sec
-        )
-        market_data_observer_stale = (
-            self.cfg.mode == "live"
-            and market_data_age_sec is not None
-            and market_data_age_sec > market_data_stale_sec
-        )
-        market_data_source_stale = (
-            self.cfg.mode == "live"
-            and market_data_source_age_sec is not None
-            and market_data_source_age_sec > market_data_stale_sec
-        )
-        market_data_stale = market_data_observer_stale or market_data_source_stale
-        return {
-            "last_user_ws_event_at": last_user_ws_event_at,
-            "last_private_stream_ok_at": last_private_stream_ok_at,
-            "last_market_data_at": last_market_data_at,
-            "last_market_data_source_ok_at": last_market_data_source_ok_at,
-            "last_market_data_source_fail_at": last_market_data_source_fail_at,
-            "last_market_data_source_error": last_market_data_source_error,
-            "last_reconcile_at": last_reconcile_at,
-            "user_ws_age_sec": user_ws_age_sec,
-            "market_data_age_sec": market_data_age_sec,
-            "market_data_source_age_sec": market_data_source_age_sec,
-            "reconcile_age_sec": reconcile_age_sec,
-            "user_ws_stale_sec": user_ws_stale_sec,
-            "market_data_stale_sec": market_data_stale_sec,
-            "reconcile_max_age_sec": reconcile_max_age_sec,
-            "user_ws_stale": user_ws_stale,
-            "market_data_stale": market_data_stale,
-            "market_data_observer_stale": market_data_observer_stale,
-            "market_data_source_stale": market_data_source_stale,
-            "market_data_seen": last_market_data_at is not None,
-            "private_stream_seen": last_private_stream_ok_at is not None,
-        }
+        return build_freshness_snapshot(self)
 
     def _update_stale_transitions(self) -> None:
         freshness = self._freshness_snapshot()
@@ -492,127 +440,14 @@ class RuntimeController:
         snapshot: ResyncSnapshot,
         reason: str,
     ) -> dict[str, Any]:
-        storage = self.state_store.runtime_storage()
-        rows = storage.list_submission_intents(statuses=["PENDING", "SUBMIT_ERROR", "REVIEW_REQUIRED"])
-        open_orders_by_client: dict[str, dict[str, Any]] = {}
-        for row in snapshot.open_orders:
-            if not isinstance(row, dict):
-                continue
-            client_order_id = str(row.get("clientOrderId") or row.get("c") or "").strip()
-            if client_order_id:
-                open_orders_by_client[client_order_id] = row
-        live_position_symbols = {
-            str(item.get("symbol") or item.get("s") or "").strip().upper()
-            for item in snapshot.positions
-            if isinstance(item, dict)
-            and abs(_to_float(item.get("positionAmt") if item.get("positionAmt") is not None else item.get("pa"), default=0.0)) > 0.0
-        }
+        from v2.control.recovery import recover_submission_intents_from_snapshot
 
-        resolved_open = 0
-        resolved_position = 0
-        resolved_not_found = 0
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            intent_id = str(row.get("intent_id") or "").strip()
-            client_order_id = str(row.get("client_order_id") or "").strip()
-            symbol = str(row.get("symbol") or "").strip().upper()
-            if not intent_id or not client_order_id:
-                continue
-            open_row = open_orders_by_client.get(client_order_id)
-            if open_row is not None:
-                storage.mark_submission_intent_status(
-                    intent_id=intent_id,
-                    status="SUBMITTED",
-                    order_id=str(open_row.get("orderId") or ""),
-                )
-                resolved_open += 1
-                continue
-            if symbol and symbol in live_position_symbols:
-                storage.mark_submission_intent_status(
-                    intent_id=intent_id,
-                    status="RECOVERED_POSITION_OPEN",
-                )
-                resolved_position += 1
-                continue
-            storage.mark_submission_intent_status(
-                intent_id=intent_id,
-                status="NOT_FOUND_AFTER_RECONCILE",
-            )
-            resolved_not_found += 1
+        return recover_submission_intents_from_snapshot(self, snapshot=snapshot, reason=reason)
 
-        summary = {
-            "reason": reason,
-            "resolved_open_orders": resolved_open,
-            "resolved_positions": resolved_position,
-            "resolved_not_found": resolved_not_found,
-            "pending_before": len(rows),
-            "pending_after": self._submission_recovery_snapshot()["pending_review_count"],
-        }
-        self._boot_recovery["submission_recovery"] = summary
-        self._log_event("submission_recovery_sync", **summary)
-        return summary
+    def _gate_snapshot(self, *, probe_private_rest: bool = False) -> dict[str, Any]:
+        from v2.control.gates import gate_snapshot
 
-    def _gate_snapshot(self) -> dict[str, Any]:
-        freshness = self._freshness_snapshot()
-        submission_recovery = self._submission_recovery_snapshot()
-        ops_state = self.state_store.get().operational
-        last_reconcile_at = freshness["last_reconcile_at"]
-        last_reconcile_ok = (
-            self.cfg.mode != "live"
-            or (
-                self._startup_reconcile_ok is True
-                and last_reconcile_at is not None
-                and freshness["reconcile_age_sec"] is not None
-                and freshness["reconcile_age_sec"] <= freshness["reconcile_max_age_sec"]
-            )
-        )
-        user_ws_ok = (
-            self.cfg.mode != "live"
-            or (
-                self._user_stream_started
-                and freshness["private_stream_seen"]
-                and not freshness["user_ws_stale"]
-            )
-        )
-        market_data_ok = (
-            self.cfg.mode != "live"
-            or (freshness["market_data_seen"] and not freshness["market_data_stale"])
-        )
-        private_auth_ok = self.cfg.mode != "live" or (
-            self.rest_client is not None
-            and str(self._last_balance_error or "") not in {"balance_auth_failed"}
-        )
-        ready = all(
-            [
-                bool(self._runtime_lock_active or self.cfg.mode != "live"),
-                not self._state_uncertain,
-                not self._recovery_required,
-                bool(submission_recovery["ok"]),
-                last_reconcile_ok,
-                user_ws_ok,
-                market_data_ok,
-                not bool(ops_state.paused),
-                not bool(ops_state.safe_mode),
-                private_auth_ok,
-            ]
-        )
-        return {
-            "ready": ready,
-            "single_instance_ok": bool(self._runtime_lock_active or self.cfg.mode != "live"),
-            "state_uncertain": bool(self._state_uncertain),
-            "recovery_required": bool(self._recovery_required),
-            "startup_reconcile_ok": self._startup_reconcile_ok,
-            "submission_recovery_ok": bool(submission_recovery["ok"]),
-            "last_reconcile_ok": last_reconcile_ok,
-            "user_ws_ok": user_ws_ok,
-            "market_data_ok": market_data_ok,
-            "private_auth_ok": private_auth_ok,
-            "paused": bool(ops_state.paused),
-            "safe_mode": bool(ops_state.safe_mode),
-            "freshness": freshness,
-            "submission_recovery": submission_recovery,
-        }
+        return gate_snapshot(self, probe_private_rest=probe_private_rest)
 
     def _maybe_log_ready_transition(self) -> None:
         gate = self._gate_snapshot()
@@ -654,78 +489,24 @@ class RuntimeController:
         self._startup_reconcile_ok = True
         self._clear_state_uncertain()
         if reason == "manual_reconcile" and self._recovery_required:
-            self._recovery_required = False
-            self._recovery_reason = None
-            self._log_event("recovery_cleared", reason=reason)
+            self._clear_recovery_required(reason=reason)
         self._log_event("reconcile_success", reason=reason)
         self._update_stale_transitions()
 
     def _perform_startup_reconcile(self, *, reason: str) -> None:
-        if self.cfg.mode != "live":
-            self._startup_reconcile_ok = None
-            return
-        self._log_event("reconcile_start", reason=reason)
-        try:
-            snapshot = self._fetch_exchange_snapshot()
-            self._apply_resync_snapshot(snapshot=snapshot, reason=reason)
-        except FutureTimeoutError:
-            self._startup_reconcile_ok = False
-            self._set_state_uncertain(reason=f"{reason}:timeout", engage_safe_mode=True)
-            self._log_event("reconcile_failure", reason=f"{reason}:timeout")
-            logger.warning("startup_reconcile_timed_out")
-        except Exception as exc:  # noqa: BLE001
-            self._startup_reconcile_ok = False
-            self._set_state_uncertain(
-                reason=f"{reason}:{type(exc).__name__}",
-                engage_safe_mode=True,
-            )
-            self._log_event("reconcile_failure", reason=f"{reason}:{type(exc).__name__}")
-            logger.exception("startup_reconcile_failed")
+        from v2.control.recovery import perform_startup_reconcile
+
+        perform_startup_reconcile(self, reason=reason)
 
     def _auto_reconcile_if_recovery_required(self, *, reason: str) -> bool:
-        if not self._recovery_required:
-            return True
-        if self.cfg.mode != "live":
-            self._recovery_required = False
-            self._recovery_reason = None
-            return True
-        self._log_event("auto_reconcile_attempt", reason=reason)
-        self._perform_startup_reconcile(reason="manual_reconcile")
-        if not self._state_uncertain:
-            self._recover_brackets_on_boot(reason="manual_reconcile")
-        return not self._recovery_required
+        from v2.control.recovery import auto_reconcile_if_recovery_required
+
+        return auto_reconcile_if_recovery_required(self, reason=reason)
 
     def _recover_brackets_on_boot(self, *, reason: str = "startup_reconcile") -> None:
-        if self.cfg.mode != "live" or self.rest_client is None:
-            return
-        self._log_event("bracket_recovery_start", reason=reason)
-        try:
-            result = _run_async_blocking(
-                lambda: self._bracket_service.recover(),
-                timeout_sec=10.0,
-            )
-            self._boot_recovery["bracket_recovery"] = {
-                "reason": reason,
-                "ok": True,
-                "result": result if isinstance(result, dict) else {},
-            }
-            self._log_event("bracket_recovery_success", reason=reason)
-        except FutureTimeoutError:
-            self._boot_recovery["bracket_recovery"] = {
-                "reason": reason,
-                "ok": False,
-                "error": "timeout",
-            }
-            self._log_event("bracket_recovery_failure", reason=f"{reason}:timeout")
-            logger.warning("bracket_recover_timed_out")
-        except Exception:  # noqa: BLE001
-            self._boot_recovery["bracket_recovery"] = {
-                "reason": reason,
-                "ok": False,
-                "error": "exception",
-            }
-            self._log_event("bracket_recovery_failure", reason=f"{reason}:exception")
-            logger.exception("bracket_recover_failed")
+        from v2.control.recovery import recover_brackets_on_boot
+
+        recover_brackets_on_boot(self, reason=reason)
 
     def _load_persisted_risk_config(self) -> None:
         try:
@@ -733,16 +514,22 @@ class RuntimeController:
         except Exception:  # noqa: BLE001
             logger.exception("runtime_risk_config_load_failed")
             return
-        if not isinstance(persisted, dict) or not persisted:
+        normalized = _normalize_runtime_risk_config(persisted)
+        if not normalized:
             return
-        for key, value in persisted.items():
+        for key, value in normalized.items():
             self._risk[key] = value
 
     def _persist_risk_config(self) -> None:
         try:
-            self.state_store.save_runtime_risk_config(config=dict(self._risk))
+            self.state_store.save_runtime_risk_config(
+                config=_normalize_runtime_risk_config(self._risk)
+            )
         except Exception:  # noqa: BLE001
             logger.exception("runtime_risk_config_save_failed")
+
+    def _public_risk_config(self) -> dict[str, Any]:
+        return _serialize_runtime_risk_config(self._risk)
 
     def _sync_kernel_runtime_overrides(self) -> None:
         symbols, mapping, effective_margin, effective_leverage, _expected_notional = (
@@ -841,7 +628,7 @@ class RuntimeController:
         sched_sec = int(self.cfg.behavior.scheduler.tick_seconds)
         day_key = datetime.now(timezone.utc).date().isoformat()
         config = {
-            "per_trade_risk_pct": 10.0,
+            "risk_per_trade_pct": 10.0,
             "max_exposure_pct": float(risk_cfg.max_exposure_pct),
             "max_notional_pct": 1000.0,
             "max_leverage": float(risk_cfg.max_leverage),
@@ -946,20 +733,9 @@ class RuntimeController:
         return config
 
     def _profile_runtime_risk_overrides(self, *, sched_sec: int) -> dict[str, Any]:
-        profile = str(self.cfg.profile or "").strip().lower()
-        profile_overrides: dict[str, dict[str, Any]] = {
-            "ra_2026_alpha_v2_expansion_live_candidate": {
-                "risk_score_min": 0.60,
-                "spread_max_pct": 0.35,
-                "margin_use_pct": 0.10,
-                "universe_symbols": ["BTCUSDT"],
-                "enable_watchdog": True,
-                "watchdog_interval_sec": max(5, min(int(sched_sec), 15)),
-                "lose_streak_n": 2,
-                "cooldown_hours": 4,
-            },
-        }
-        return dict(profile_overrides.get(profile, {}))
+        from v2.control.profile_policy import profile_runtime_risk_overrides
+
+        return profile_runtime_risk_overrides(self, sched_sec=sched_sec)
 
     def _live_readiness_snapshot(
         self,
@@ -967,234 +743,13 @@ class RuntimeController:
         live_balance_source: str | None = None,
         private_error: str | None = None,
     ) -> dict[str, Any]:
-        gate = self._gate_snapshot()
-        strategies = [
-            str(entry.name).strip()
-            for entry in self.cfg.behavior.strategies
-            if bool(getattr(entry, "enabled", False))
-        ]
-        symbols = self._runtime_symbols()
-        max_leverage = max(
-            1.0,
-            _to_float(self._risk.get("max_leverage"), default=float(self.cfg.behavior.risk.max_leverage)),
-        )
-        margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
-        daily_limit = _normalize_pct(self._risk.get("daily_loss_limit_pct"), default=0.02)
-        dd_limit = _normalize_pct(self._risk.get("dd_limit_pct"), default=0.15)
-        tick_sec = max(1.0, _to_float(self._risk.get("scheduler_tick_sec"), default=float(self.scheduler.tick_seconds)))
-        profile_name = str(self.cfg.profile or "").strip()
-        mode_name = str(self.cfg.mode or "").strip()
-        checks: dict[str, dict[str, Any]] = {}
-        readiness_specs: dict[str, dict[str, Any]] = {
-            "ra_2026_alpha_v2_expansion_live_candidate": {
-                "target": "alpha_expansion_live_candidate",
-                "strategy": ["ra_2026_alpha_v2"],
-                "symbols": ["BTCUSDT"],
-                "margin_pass": 0.10,
-                "margin_warn": 0.15,
-                "leverage_pass": 5.0,
-                "leverage_warn": 8.0,
-                "daily_pass": 0.015,
-                "daily_warn": 0.02,
-                "dd_pass": 0.12,
-                "dd_warn": 0.15,
-            },
-        }
-        readiness_spec = readiness_specs.get(
-            profile_name,
-            readiness_specs["ra_2026_alpha_v2_expansion_live_candidate"],
-        )
+        from v2.control.profile_policy import build_live_readiness_snapshot
 
-        def _set_check(name: str, *, status: str, detail: Any) -> None:
-            checks[name] = {"status": status, "detail": detail}
-
-        _set_check(
-            "profile",
-            status="pass" if profile_name in readiness_specs else "warn",
-            detail=profile_name,
+        return build_live_readiness_snapshot(
+            self,
+            live_balance_source=live_balance_source,
+            private_error=private_error,
         )
-        _set_check(
-            "mode",
-            status="pass" if mode_name == "live" else "warn",
-            detail=mode_name,
-        )
-        _set_check(
-            "single_instance",
-            status="pass" if gate["single_instance_ok"] else "fail",
-            detail=bool(gate["single_instance_ok"]),
-        )
-        _set_check(
-            "dirty_recovery",
-            status="pass" if not gate["recovery_required"] else "fail",
-            detail={
-                "dirty_restart_detected": bool(self._dirty_restart_detected),
-                "recovery_required": bool(gate["recovery_required"]),
-                "recovery_reason": self._recovery_reason,
-            },
-        )
-        _set_check(
-            "state_uncertain",
-            status="pass" if not gate["state_uncertain"] else "fail",
-            detail={
-                "state_uncertain": bool(gate["state_uncertain"]),
-                "reason": self._state_uncertain_reason,
-            },
-        )
-        _set_check(
-            "strategy",
-            status="pass" if strategies == readiness_spec["strategy"] else "fail",
-            detail=strategies,
-        )
-        _set_check(
-            "symbols",
-            status="pass" if symbols == readiness_spec["symbols"] else "warn",
-            detail=symbols,
-        )
-        _set_check(
-            "margin_use_pct",
-            status="pass"
-            if margin_use_pct <= float(readiness_spec["margin_pass"])
-            else "warn"
-            if margin_use_pct <= float(readiness_spec["margin_warn"])
-            else "fail",
-            detail=round(float(margin_use_pct) * 100.0, 2),
-        )
-        _set_check(
-            "max_leverage",
-            status="pass"
-            if max_leverage <= float(readiness_spec["leverage_pass"])
-            else "warn"
-            if max_leverage <= float(readiness_spec["leverage_warn"])
-            else "fail",
-            detail=float(max_leverage),
-        )
-        _set_check(
-            "daily_loss_limit_pct",
-            status="pass"
-            if 0.0 < daily_limit <= float(readiness_spec["daily_pass"])
-            else "warn"
-            if daily_limit <= float(readiness_spec["daily_warn"])
-            else "fail",
-            detail=round(float(daily_limit) * 100.0, 2),
-        )
-        _set_check(
-            "dd_limit_pct",
-            status="pass"
-            if 0.0 < dd_limit <= float(readiness_spec["dd_pass"])
-            else "warn"
-            if dd_limit <= float(readiness_spec["dd_warn"])
-            else "fail",
-            detail=round(float(dd_limit) * 100.0, 2),
-        )
-        auto_risk_ok = _to_bool(self._risk.get("auto_risk_enabled"), default=True) and _to_bool(
-            self._risk.get("auto_safe_mode_on_risk"),
-            default=True,
-        )
-        if mode_name == "live":
-            auto_risk_ok = auto_risk_ok and _to_bool(
-                self._risk.get("auto_flatten_on_risk"),
-                default=True,
-            )
-        _set_check(
-            "auto_risk_circuit",
-            status="pass" if auto_risk_ok else "fail",
-            detail={
-                "auto_risk_enabled": _to_bool(self._risk.get("auto_risk_enabled"), default=True),
-                "auto_safe_mode_on_risk": _to_bool(
-                    self._risk.get("auto_safe_mode_on_risk"),
-                    default=True,
-                ),
-                "auto_flatten_on_risk": _to_bool(
-                    self._risk.get("auto_flatten_on_risk"),
-                    default=True,
-                ),
-            },
-        )
-        _set_check(
-            "scheduler_tick_sec",
-            status="pass" if 15.0 <= tick_sec <= 60.0 else "warn",
-            detail=float(tick_sec),
-        )
-        _set_check(
-            "startup_reconcile",
-            status="pass" if gate["last_reconcile_ok"] else "fail",
-            detail={
-                "startup_reconcile_ok": self._startup_reconcile_ok,
-                "last_reconcile_at": gate["freshness"]["last_reconcile_at"],
-                "age_sec": gate["freshness"]["reconcile_age_sec"],
-                "max_age_sec": gate["freshness"]["reconcile_max_age_sec"],
-            },
-        )
-        _set_check(
-            "submit_recovery",
-            status="pass" if gate["submission_recovery_ok"] else "fail",
-            detail=gate["submission_recovery"],
-        )
-        _set_check(
-            "user_ws_freshness",
-            status="pass" if gate["user_ws_ok"] else "fail",
-            detail={
-                "started": bool(self._user_stream_started),
-                "last_event_at": gate["freshness"]["last_user_ws_event_at"],
-                "last_private_ok_at": gate["freshness"]["last_private_stream_ok_at"],
-                "age_sec": gate["freshness"]["user_ws_age_sec"],
-                "stale": gate["freshness"]["user_ws_stale"],
-                "stale_sec": gate["freshness"]["user_ws_stale_sec"],
-            },
-        )
-        _set_check(
-            "market_data_freshness",
-            status="pass" if gate["market_data_ok"] else "fail",
-            detail={
-                "last_market_data_at": gate["freshness"]["last_market_data_at"],
-                "last_market_data_source_ok_at": gate["freshness"]["last_market_data_source_ok_at"],
-                "age_sec": gate["freshness"]["market_data_age_sec"],
-                "source_age_sec": gate["freshness"]["market_data_source_age_sec"],
-                "stale": gate["freshness"]["market_data_stale"],
-                "observer_stale": gate["freshness"]["market_data_observer_stale"],
-                "source_stale": gate["freshness"]["market_data_source_stale"],
-                "source_error": gate["freshness"]["last_market_data_source_error"],
-                "stale_sec": gate["freshness"]["market_data_stale_sec"],
-            },
-        )
-        _set_check(
-            "ops_mode",
-            status="pass" if (not gate["paused"] and not gate["safe_mode"]) else "fail",
-            detail={"paused": gate["paused"], "safe_mode": gate["safe_mode"]},
-        )
-
-        balance_status = "pass"
-        balance_detail: Any = live_balance_source or "fallback"
-        if mode_name != "live":
-            balance_status = "warn"
-        elif private_error:
-            balance_status = "fail"
-            balance_detail = private_error
-        elif not gate["private_auth_ok"]:
-            balance_status = "fail"
-            balance_detail = self._last_balance_error or "private_auth_unavailable"
-        _set_check(
-            "exchange_private",
-            status=balance_status,
-            detail=balance_detail,
-        )
-
-        statuses = [row["status"] for row in checks.values()]
-        overall = "ready"
-        if "fail" in statuses:
-            overall = "blocked"
-        elif "warn" in statuses:
-            overall = "caution"
-
-        return {
-            "target": str(readiness_spec["target"]),
-            "overall": overall,
-            "ready": bool(gate["ready"]),
-            "profile": profile_name,
-            "mode": mode_name,
-            "enabled_symbols": symbols,
-            "checks": checks,
-        }
 
     def _runtime_symbols(self) -> list[str]:
         symbols_raw = self._risk.get("universe_symbols")
@@ -1378,351 +933,31 @@ class RuntimeController:
                 logger.exception("auto_risk_flatten_failed symbol=%s reason=%s", symbol, cycle.reason)
 
     def _status_snapshot(self) -> dict[str, Any]:
-        state = self.state_store.get()
-        freshness = self._freshness_snapshot()
-        gate = self._gate_snapshot()
-        self._update_stale_transitions()
-        live_trading_enabled = self.cfg.mode == "live" and str(self.cfg.env) == "prod"
-        positions_payload: dict[str, dict[str, Any]] = {}
-        for symbol, position_amt, unrealized_pnl, entry_price in self._status_positions_source():
-            positions_payload[symbol] = {
-                "position_amt": position_amt,
-                "entry_price": entry_price,
-                "unrealized_pnl": unrealized_pnl,
-                "position_side": "LONG" if position_amt > 0 else "SHORT",
-            }
-        symbols, _mapping, effective_margin, leverage, expected_notional = self._runtime_budget_context()
-        live_available_usdt, live_wallet_usdt, live_balance_source = self._fetch_live_usdt_balance()
-        available_usdt = (
-            live_available_usdt if live_available_usdt is not None else effective_margin
-        )
-        wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else effective_margin
-        config = dict(self._risk)
-        config_summary = dict(self._risk)
-        config_summary["scheduler_tick_sec"] = float(self.scheduler.tick_seconds)
-        config_summary["scheduler_running"] = bool(self._running)
-        config_summary["scheduler_enabled"] = bool(self._running)
-        config_summary["active_strategy_timeframes"] = ["10m", "15m", "30m", "1h", "4h"]
-        config_summary["strategy_runtime"] = {
-            "trend_enter_adx_4h": self._risk.get("trend_enter_adx_4h", 22.0),
-            "trend_exit_adx_4h": self._risk.get("trend_exit_adx_4h", 18.0),
-            "regime_hold_bars_4h": self._risk.get("regime_hold_bars_4h", 2),
-            "breakout_buffer_bps": self._risk.get("breakout_buffer_bps", 8.0),
-            "breakout_bar_size_atr_max": self._risk.get("breakout_bar_size_atr_max", 1.6),
-            "min_volume_ratio_15m": self._risk.get("min_volume_ratio_15m", 1.2),
-            "range_enabled": self._risk.get("range_enabled", False),
-            "overheat_funding_abs": self._risk.get("overheat_funding_abs", 0.0008),
-            "overheat_long_short_ratio_cap": self._risk.get("overheat_long_short_ratio_cap", 1.8),
-            "overheat_long_short_ratio_floor": self._risk.get("overheat_long_short_ratio_floor", 0.56),
-        }
-        config_summary["risk_runtime"] = {
-            "daily_loss_used_pct": float(self._risk.get("daily_loss_used_pct") or 0.0),
-            "dd_used_pct": float(self._risk.get("dd_used_pct") or 0.0),
-            "lose_streak": int(self._risk.get("lose_streak") or 0),
-            "cooldown_until": self._risk.get("cooldown_until"),
-            "recent_blocks": dict(self._risk.get("recent_blocks") or {}),
-            "last_auto_risk_reason": self._risk.get("last_auto_risk_reason"),
-            "last_auto_risk_at": self._risk.get("last_auto_risk_at"),
-            "last_strategy_block_reason": self._risk.get("last_strategy_block_reason"),
-            "last_alpha_id": self._risk.get("last_alpha_id"),
-            "last_entry_family": self._risk.get("last_entry_family"),
-            "last_regime": self._risk.get("last_regime"),
-            "overheat_state": dict(self._risk.get("overheat_state") or {}),
-        }
-        return {
-            "profile": self.cfg.profile,
-            "mode": self.cfg.mode,
-            "env": self.cfg.env,
-            "live_trading_enabled": bool(live_trading_enabled),
-            "runtime_identity": {
-                "profile": self.cfg.profile,
-                "mode": self.cfg.mode,
-                "env": self.cfg.env,
-                "live_trading_enabled": bool(live_trading_enabled),
-                "surface_label": "실거래 활성" if live_trading_enabled else "모의/테스트 또는 비실거래",
-            },
-            "dry_run": self.cfg.mode == "shadow",
-            "dry_run_strict": False,
-            "state_uncertain": bool(self._state_uncertain),
-            "state_uncertain_reason": self._state_uncertain_reason,
-            "startup_reconcile_ok": self._startup_reconcile_ok,
-            "last_reconcile_at": state.last_reconcile_at,
-            "last_shutdown_marker": self._last_shutdown_marker,
-            "recovery_required": bool(self._recovery_required),
-            "recovery_reason": self._recovery_reason,
-            "dirty_restart_detected": bool(self._dirty_restart_detected),
-            "single_instance_lock_active": bool(self._runtime_lock_active),
-            "user_ws_stale": bool(freshness["user_ws_stale"]),
-            "market_data_stale": bool(freshness["market_data_stale"]),
-            "engine_state": {"state": state.status, "updated_at": state.last_transition_at},
-            "risk_config": dict(self._risk),
-            "config": config,
-            "config_summary": config_summary,
-            "scheduler": {
-                "tick_sec": float(self.scheduler.tick_seconds),
-                "running": bool(self._running),
-                **dict(self._last_cycle),
-            },
-            "watchdog": dict(self._watchdog_state),
-            "capital_snapshot": {
-                "symbol": self.cfg.behavior.exchange.default_symbol,
-                "available_usdt": available_usdt,
-                "budget_usdt": effective_margin,
-                "used_margin": 0.0,
-                "leverage": leverage,
-                "notional_usdt": expected_notional,
-                "mark_price": 0.0,
-                "est_qty": 0.0,
-                "blocked": not self.ops.can_open_new_entries(),
-                "block_reason": (
-                    self._risk.get("last_strategy_block_reason")
-                    or self._risk.get("last_auto_risk_reason")
-                    or ("ops_paused" if not self.ops.can_open_new_entries() else None)
-                ),
-            },
-            "binance": {
-                "enabled_symbols": list(
-                    self._risk.get("universe_symbols")
-                    or [self.cfg.behavior.exchange.default_symbol]
-                ),
-                "positions": positions_payload,
-                "usdt_balance": {
-                    "wallet": wallet_usdt,
-                    "available": available_usdt,
-                    "source": live_balance_source,
-                },
-                "startup_error": self._state_uncertain_reason if self.cfg.mode == "live" else None,
-                "private_error": self._last_balance_error,
-                "private_error_detail": self._last_balance_error_detail,
-            },
-            "pnl": {
-                "daily_pnl_pct": float(self._risk.get("daily_realized_pct") or 0.0) * 100.0,
-                "drawdown_pct": float(self._risk.get("dd_used_pct") or 0.0) * 100.0,
-                "lose_streak": int(self._risk.get("lose_streak") or 0),
-                "cooldown_until": self._risk.get("cooldown_until"),
-                "daily_realized_pnl": float(self._risk.get("daily_realized_pnl") or 0.0),
-                "daily_loss_used_pct": float(self._risk.get("daily_loss_used_pct") or 0.0),
-                "recent_blocks": dict(self._risk.get("recent_blocks") or {}),
-                "last_strategy_block_reason": self._risk.get("last_strategy_block_reason"),
-                "last_alpha_id": self._risk.get("last_alpha_id"),
-                "last_entry_family": self._risk.get("last_entry_family"),
-                "last_regime": self._risk.get("last_regime"),
-                "overheat_state": dict(self._risk.get("overheat_state") or {}),
-                "last_auto_risk_reason": self._risk.get("last_auto_risk_reason"),
-            },
-            "live_readiness": self._live_readiness_snapshot(
-                live_balance_source=live_balance_source,
-                private_error=self._last_balance_error,
-            ),
-            "user_stream": {
-                "started": bool(self._user_stream_started),
-                "started_at": self._user_stream_started_at,
-                "last_event_at": self._user_stream_last_event_at,
-                "last_private_ok_at": self._last_private_stream_ok_at,
-                "last_disconnect_at": self._user_stream_last_disconnect_at,
-                "last_error": self._user_stream_last_error,
-                "age_sec": freshness["user_ws_age_sec"],
-                "stale": freshness["user_ws_stale"],
-            },
-            "market_data": {
-                "last_market_data_at": freshness["last_market_data_at"],
-                "age_sec": freshness["market_data_age_sec"],
-                "stale": freshness["market_data_stale"],
-                "observer_stale": freshness["market_data_observer_stale"],
-                "source_stale": freshness["market_data_source_stale"],
-                "last_source_ok_at": freshness["last_market_data_source_ok_at"],
-                "last_source_fail_at": freshness["last_market_data_source_fail_at"],
-                "source_age_sec": freshness["market_data_source_age_sec"],
-                "source_error": freshness["last_market_data_source_error"],
-                "symbol_count": self._market_data_state.get("last_market_symbol_count"),
-            },
-            "submission_recovery": gate["submission_recovery"],
-            "boot_recovery": dict(self._boot_recovery),
-            "health": {
-                "ready": bool(gate["ready"]),
-                "single_instance_ok": bool(gate["single_instance_ok"]),
-                "private_auth_ok": bool(gate["private_auth_ok"]),
-                "submission_recovery_ok": bool(gate["submission_recovery_ok"]),
-            },
-            "last_error": self._last_cycle.get("last_error"),
-        }
+        return build_status_snapshot(self)
 
     def _healthz_snapshot(self) -> dict[str, Any]:
-        gate = self._gate_snapshot()
-        freshness = gate["freshness"]
-        return {
-            "ok": True,
-            "live": True,
-            "mode": self.cfg.mode,
-            "profile": self.cfg.profile,
-            "env": self.cfg.env,
-            "ready": bool(gate["ready"]),
-            "state_uncertain": bool(gate["state_uncertain"]),
-            "recovery_required": bool(gate["recovery_required"]),
-            "submission_recovery_ok": bool(gate["submission_recovery_ok"]),
-            "safe_mode": bool(gate["safe_mode"]),
-            "paused": bool(gate["paused"]),
-            "startup_reconcile_ok": self._startup_reconcile_ok,
-            "single_instance_ok": bool(gate["single_instance_ok"]),
-            "user_ws_stale": bool(freshness["user_ws_stale"]),
-            "market_data_stale": bool(freshness["market_data_stale"]),
-        }
+        return build_healthz_snapshot(self)
 
     def _readyz_snapshot(self) -> dict[str, Any]:
-        gate = self._gate_snapshot()
-        freshness = gate["freshness"]
-        return {
-            "ready": bool(gate["ready"]),
-            "mode": self.cfg.mode,
-            "profile": self.cfg.profile,
-            "env": self.cfg.env,
-            "single_instance_ok": bool(gate["single_instance_ok"]),
-            "state_uncertain": bool(gate["state_uncertain"]),
-            "state_uncertain_reason": self._state_uncertain_reason,
-            "recovery_required": bool(gate["recovery_required"]),
-            "recovery_reason": self._recovery_reason,
-            "submission_recovery_ok": bool(gate["submission_recovery_ok"]),
-            "submission_recovery": gate["submission_recovery"],
-            "startup_reconcile_ok": self._startup_reconcile_ok,
-            "last_reconcile_at": freshness["last_reconcile_at"],
-            "last_reconcile_age_sec": freshness["reconcile_age_sec"],
-            "last_reconcile_max_age_sec": freshness["reconcile_max_age_sec"],
-            "user_ws_stale": bool(freshness["user_ws_stale"]),
-            "last_user_ws_event_at": freshness["last_user_ws_event_at"],
-            "last_private_stream_ok_at": freshness["last_private_stream_ok_at"],
-            "user_ws_age_sec": freshness["user_ws_age_sec"],
-            "user_ws_stale_sec": freshness["user_ws_stale_sec"],
-            "market_data_stale": bool(freshness["market_data_stale"]),
-            "market_data_observer_stale": bool(freshness["market_data_observer_stale"]),
-            "market_data_source_stale": bool(freshness["market_data_source_stale"]),
-            "market_data_source_error": freshness["last_market_data_source_error"],
-            "last_market_data_at": freshness["last_market_data_at"],
-            "last_market_data_source_ok_at": freshness["last_market_data_source_ok_at"],
-            "market_data_age_sec": freshness["market_data_age_sec"],
-            "market_data_source_age_sec": freshness["market_data_source_age_sec"],
-            "market_data_stale_sec": freshness["market_data_stale_sec"],
-            "safe_mode": bool(gate["safe_mode"]),
-            "paused": bool(gate["paused"]),
-            "private_auth_ok": bool(gate["private_auth_ok"]),
-        }
+        return build_readyz_snapshot(self)
 
     def _cached_live_balance(
         self, *, max_age_sec: float
     ) -> tuple[float | None, float | None] | None:
-        fetched_at = self._last_balance_fetched_mono
-        if fetched_at is None:
-            return None
-        if (time.monotonic() - fetched_at) > max(0.0, float(max_age_sec)):
-            return None
-        if self._last_balance_available_usdt is None or self._last_balance_wallet_usdt is None:
-            return None
-        return self._last_balance_available_usdt, self._last_balance_wallet_usdt
+        return get_cached_live_balance(self, max_age_sec=max_age_sec)
 
-    def _cached_or_fallback_balance(self) -> tuple[float | None, float | None, str]:
-        cached = self._cached_live_balance(max_age_sec=1800.0)
-        if cached is None:
-            return None, None, "fallback"
-        available, wallet = cached
-        self._last_balance_error = None
-        self._last_balance_error_detail = "served_from_recent_cache"
-        return available, wallet, "exchange_cached"
+    def _cached_or_fallback_balance(
+        self,
+        *,
+        preserve_private_error: bool = False,
+    ) -> tuple[float | None, float | None, str]:
+        return get_cached_or_fallback_balance(
+            self,
+            preserve_private_error=preserve_private_error,
+        )
 
     def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, str]:
-        fresh_cache = self._cached_live_balance(max_age_sec=20.0)
-        if fresh_cache is not None:
-            self._last_balance_error = None
-            self._last_balance_error_detail = None
-            available, wallet = fresh_cache
-            return available, wallet, "exchange"
-
-        if self.rest_client is None:
-            self._last_balance_error = "rest_client_unavailable"
-            self._last_balance_error_detail = "balance_rest_client_not_configured"
-            return self._cached_or_fallback_balance()
-        rest_client: Any = self.rest_client
-        assert rest_client is not None
-        payload: Any = None
-        fetch_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
-                fetch_exc = None
-                break
-            except Exception as exc:  # noqa: BLE001
-                fetch_exc = exc
-                if attempt == 0:
-                    time.sleep(0.35)
-                    continue
-        try:
-            if fetch_exc is not None:
-                raise fetch_exc
-        except FutureTimeoutError:
-            logger.warning("live_balance_fetch_timed_out")
-            self._last_balance_error = "balance_fetch_timeout"
-            self._last_balance_error_detail = "fetch_timeout_over_8s"
-            return self._cached_or_fallback_balance()
-        except BinanceRESTError as e:
-            logger.warning(
-                "live_balance_fetch_rest_error",
-                extra={
-                    "status_code": e.status_code,
-                    "code": e.code,
-                    "path": e.path,
-                },
-            )
-            if e.code in {-2014, -2015} or e.status_code in {401, 403}:
-                self._last_balance_error = "balance_auth_failed"
-            elif e.status_code == 429 or e.code in {-1003}:
-                self._last_balance_error = "balance_rate_limited"
-            else:
-                self._last_balance_error = "balance_fetch_failed"
-            self._last_balance_error_detail = (
-                f"status={e.status_code} code={e.code} path={e.path} msg={e.message}"
-            )
-            return self._cached_or_fallback_balance()
-        except Exception:  # noqa: BLE001
-            logger.exception("live_balance_fetch_failed")
-            self._last_balance_error = "balance_fetch_failed"
-            self._last_balance_error_detail = "unexpected_exception"
-            return self._cached_or_fallback_balance()
-
-        if not isinstance(payload, list):
-            self._last_balance_error = "balance_payload_invalid"
-            self._last_balance_error_detail = f"payload_type={type(payload).__name__}"
-            return self._cached_or_fallback_balance()
-
-        target: dict[str, Any] | None = None
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            asset = str(item.get("asset") or item.get("coin") or "").upper()
-            if asset == "USDT":
-                target = item
-                break
-
-        if target is None:
-            self._last_balance_error = "usdt_asset_missing"
-            self._last_balance_error_detail = "asset_usdt_not_found"
-            return self._cached_or_fallback_balance()
-
-        available = _to_float(
-            target.get("availableBalance")
-            or target.get("withdrawAvailable")
-            or target.get("balance"),
-            default=0.0,
-        )
-        wallet = _to_float(
-            target.get("walletBalance")
-            or target.get("crossWalletBalance")
-            or target.get("balance"),
-            default=0.0,
-        )
-        self._last_balance_available_usdt = available
-        self._last_balance_wallet_usdt = wallet
-        self._last_balance_fetched_mono = time.monotonic()
-        self._last_balance_error = None
-        self._last_balance_error_detail = None
-        return available, wallet, "exchange"
+        return fetch_live_usdt_balance(self)
 
     def _resolve_bracket_config_for_cycle(
         self,
@@ -1894,60 +1129,15 @@ class RuntimeController:
 
     def _fetch_live_positions(
         self,
-    ) -> tuple[dict[str, float], dict[str, dict[str, Any]], bool]:
-        rest_client = self.rest_client
-        if rest_client is None or not hasattr(rest_client, "get_positions"):
-            return {}, {}, False
-        rest_client_any: Any = rest_client
-        try:
-            payload = _run_async_blocking(lambda: rest_client_any.get_positions(), timeout_sec=8.0)
-        except FutureTimeoutError:
-            logger.warning("live_positions_fetch_timed_out")
-            return {}, {}, False
-        except Exception:  # noqa: BLE001
-            logger.exception("live_positions_fetch_failed")
-            return {}, {}, False
-        if not isinstance(payload, list):
-            return {}, {}, False
-        out: dict[str, float] = {}
-        rows_by_symbol: dict[str, dict[str, Any]] = {}
-        for row in payload:
-            if not isinstance(row, dict):
-                continue
-            symbol = str(row.get("symbol") or "").strip().upper()
-            if not symbol:
-                continue
-            position_amt = _to_float(row.get("positionAmt"), default=0.0)
-            out[symbol] = position_amt
-            rows_by_symbol[symbol] = dict(row)
-        return out, rows_by_symbol, True
+    ) -> tuple[dict[str, float], dict[str, dict[str, Any]], bool, str | None]:
+        from v2.control.cycle import fetch_live_positions
+
+        return fetch_live_positions(self)
 
     def _is_live_reentry_blocked(self) -> bool:
-        allow_reentry = _to_bool(
-            self._risk.get("allow_reentry"),
-            default=bool(self.cfg.behavior.engine.allow_reentry),
-        )
-        if allow_reentry:
-            return False
-        if self.cfg.mode != "live":
-            return False
-        if not self._running:
-            return False
+        from v2.control.cycle import is_live_reentry_blocked
 
-        symbols_raw = self._risk.get("universe_symbols")
-        if isinstance(symbols_raw, list):
-            symbols = [str(sym).strip().upper() for sym in symbols_raw if str(sym).strip()]
-        else:
-            symbols = [self.cfg.behavior.exchange.default_symbol]
-        if len(symbols) > 1:
-            return False
-
-        positions, _rows, ok = self._fetch_live_positions()
-        if not ok:
-            return False
-        return any(
-            abs(_to_float(position_amt, default=0.0)) > 0.0 for position_amt in positions.values()
-        )
+        return is_live_reentry_blocked(self)
 
     def _maybe_trigger_symbol_sl_flatten(self, *, trigger_symbol: str) -> None:
         symbol = str(trigger_symbol).strip().upper()
@@ -2192,7 +1382,7 @@ class RuntimeController:
         if not tracked:
             return
 
-        positions, position_rows, positions_ok = self._fetch_live_positions()
+        positions, position_rows, positions_ok, _position_error = self._fetch_live_positions()
         for row in tracked:
             symbol = str(row.get("symbol") or "").strip().upper()
             if not symbol:
@@ -2287,253 +1477,26 @@ class RuntimeController:
         self._bracket_thread.start()
 
     def _run_cycle_once_locked(self) -> dict[str, Any]:
-        self._cycle_seq += 1
-        cycle_seq = self._cycle_seq
-        self._last_cycle["tick_started_at"] = _utcnow_iso()
-        self._last_cycle["last_error"] = None
-        self._last_cycle["bracket"] = None
-        try:
-            self._refresh_runtime_risk_context()
-            self._sync_kernel_runtime_overrides()
-            if hasattr(self.kernel, "set_tick"):
-                self.kernel.set_tick(cycle_seq)
-            self._update_stale_transitions()
-            freshness = self._freshness_snapshot()
-            submission_recovery = self._submission_recovery_snapshot()
-            if bool(freshness["market_data_stale"]):
-                self._maybe_probe_market_data()
-                self._update_stale_transitions()
-                freshness = self._freshness_snapshot()
-                submission_recovery = self._submission_recovery_snapshot()
-            if self._recovery_required:
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="recovery_required",
-                    candidate=None,
-                )
-            elif not bool(submission_recovery["ok"]):
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="submit_recovery_required",
-                    candidate=None,
-                )
-            elif self._state_uncertain:
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="state_uncertain",
-                    candidate=None,
-                )
-            elif bool(freshness["user_ws_stale"]):
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="user_ws_stale",
-                    candidate=None,
-                )
-            elif bool(freshness["market_data_stale"]):
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="market_data_stale",
-                    candidate=None,
-                )
-            elif self._is_live_reentry_blocked():
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="position_open",
-                    candidate=None,
-                )
-            else:
-                cycle = self.kernel.run_once()
-            portfolio_cycle = None
-            portfolio_reader = getattr(self.kernel, "last_portfolio_cycle", None)
-            if callable(portfolio_reader):
-                try:
-                    portfolio_cycle = portfolio_reader()
-                except Exception:  # noqa: BLE001
-                    logger.exception("portfolio_cycle_read_failed")
-            self.scheduler.run_once()
-            portfolio_results = (
-                portfolio_cycle.results
-                if portfolio_cycle is not None and isinstance(portfolio_cycle.results, list)
-                else []
-            )
-            actionable_cycles = [
-                item
-                for item in portfolio_results
-                if isinstance(item, KernelCycleResult) and item.state in {"executed", "dry_run"}
-            ]
-            if not actionable_cycles and cycle.state in {"executed", "dry_run"}:
-                actionable_cycles = [cycle]
+        from v2.control.cycle import run_cycle_once_locked
 
-            if self.ops.can_open_new_entries() and self._running and not self._thread_stop.is_set():
-                for actionable in actionable_cycles:
-                    submit_symbol = (
-                        actionable.candidate.symbol
-                        if actionable.candidate is not None
-                        and str(actionable.candidate.symbol).strip()
-                        else self.cfg.behavior.exchange.default_symbol
-                    )
-                    self.order_manager.submit({"symbol": submit_symbol, "mode": self.cfg.mode})
-
-            for actionable in actionable_cycles:
-                self._place_brackets_for_cycle(cycle=actionable)
-
-            self._last_cycle["tick_finished_at"] = _utcnow_iso()
-            self._last_cycle["last_action"] = cycle.state
-            self._last_cycle["last_decision_reason"] = cycle.reason
-            self._last_cycle["candidate"] = (
-                {
-                    "symbol": cycle.candidate.symbol,
-                    "side": cycle.candidate.side,
-                    "score": cycle.candidate.score,
-                    "source": getattr(cycle.candidate, "source", None),
-                    "alpha_id": getattr(cycle.candidate, "alpha_id", None),
-                    "entry_family": getattr(cycle.candidate, "entry_family", None),
-                    "regime_hint": getattr(cycle.candidate, "regime_hint", None),
-                    "regime_strength": getattr(cycle.candidate, "regime_strength", None),
-                    "volatility_hint": getattr(cycle.candidate, "volatility_hint", None),
-                }
-                if cycle.candidate is not None
-                else None
-            )
-            self._last_cycle["last_candidate"] = self._last_cycle["candidate"]
-            self._last_cycle["portfolio"] = (
-                {
-                    "slots_used": int(
-                        _to_float(getattr(portfolio_cycle, "open_position_count", 0), default=0.0)
-                    )
-                    + len(actionable_cycles),
-                    "slots_total": int(
-                        _to_float(getattr(portfolio_cycle, "max_open_positions", 0), default=0.0)
-                    ),
-                    "selected_candidates": [
-                        {
-                            "symbol": item.symbol,
-                            "side": item.side,
-                            "score": item.score,
-                            "portfolio_score": getattr(item, "portfolio_score", None),
-                            "bucket": getattr(item, "portfolio_bucket", None),
-                            "alpha_id": getattr(item, "alpha_id", None),
-                        }
-                        for item in getattr(portfolio_cycle, "selected_candidates", [])
-                        if item is not None
-                    ],
-                    "blocked_reasons": dict(getattr(portfolio_cycle, "blocked_reasons", {}) or {}),
-                }
-                if portfolio_cycle is not None
-                else None
-            )
-            self._risk["last_alpha_id"] = (
-                getattr(cycle.candidate, "alpha_id", None) if cycle.candidate is not None else None
-            )
-            self._risk["last_entry_family"] = (
-                getattr(cycle.candidate, "entry_family", None) if cycle.candidate is not None else None
-            )
-            self._risk["last_regime"] = (
-                getattr(cycle.candidate, "regime_hint", None) if cycle.candidate is not None else None
-            )
-            if cycle.state in {"blocked", "risk_rejected", "no_candidate"}:
-                self._risk["last_strategy_block_reason"] = cycle.reason
-            elif cycle.state in {"executed", "dry_run"}:
-                self._risk["last_strategy_block_reason"] = None
-            overheat_reason = cycle.reason if str(cycle.reason).startswith("overheat_") else None
-            self._risk["overheat_state"] = {
-                "blocked": overheat_reason is not None,
-                "reason": overheat_reason,
-            }
-            cycle_error = cycle.reason if cycle.state == "execution_failed" else None
-            existing_error = str(self._last_cycle.get("last_error") or "").strip()
-            self._last_cycle["last_error"] = existing_error or cycle_error
-            if cycle.state == "execution_failed" and "REVIEW_REQUIRED" in str(cycle.reason).upper():
-                self._set_state_uncertain(
-                    reason="submit_recovery_required",
-                    engage_safe_mode=True,
-                )
-
-            self._report_stats["total_records"] += 1
-            if cycle.state in {"executed", "dry_run"}:
-                self._report_stats["entries"] += 1
-            if cycle.state == "execution_failed":
-                self._report_stats["errors"] += 1
-            if cycle.state in {"blocked", "risk_rejected"}:
-                self._report_stats["blocks"] += 1
-                self._record_recent_block(cycle.reason)
-            self._maybe_apply_auto_risk_circuit(cycle)
-            self._persist_risk_config()
-            ok = True
-            error_message = None
-            self._cycle_done_seq = cycle_seq
-        except Exception as exc:  # noqa: BLE001
-            detail = str(exc).strip()
-            if detail:
-                error_message = f"cycle_failed:{type(exc).__name__}:{detail}"
-            else:
-                error_message = f"cycle_failed:{type(exc).__name__}"
-            logger.exception("runtime_cycle_failed")
-            self._last_cycle["tick_finished_at"] = _utcnow_iso()
-            self._last_cycle["last_action"] = "error"
-            self._last_cycle["last_decision_reason"] = error_message
-            self._last_cycle["candidate"] = None
-            self._last_cycle["last_candidate"] = None
-            self._last_cycle["portfolio"] = None
-            self._last_cycle["last_error"] = error_message
-            self._last_cycle["bracket"] = None
-            self._report_stats["total_records"] += 1
-            self._report_stats["errors"] += 1
-            ok = False
-            self._cycle_done_seq = cycle_seq
-
-        self._emit_status_update()
-
-        out: dict[str, Any] = {
-            "ok": ok,
-            "tick_sec": float(self.scheduler.tick_seconds),
-            "snapshot": dict(self._last_cycle),
-        }
-        if error_message is not None:
-            out["error"] = error_message
-        return out
+        return run_cycle_once_locked(self)
 
     def _status_summary(self) -> str:
-        state_raw = str(self.state_store.get().status)
-        state_ko = {
-            "RUNNING": "실행중",
-            "PAUSED": "일시정지",
-            "STOPPED": "중지",
-            "KILLED": "강제중지",
-        }.get(state_raw, state_raw)
-        live_trading_enabled = self.cfg.mode == "live" and str(self.cfg.env) == "prod"
-        last_action = humanize_action_token(str(self._last_cycle.get("last_action") or "-"))
-        reason = humanize_reason_token(str(self._last_cycle.get("last_decision_reason") or "-"))
-        portfolio_summary = self._portfolio_slot_summary()
-        position_summary, pnl_summary = self._status_pnl_summary()
-        return (
-            "상태 알림: "
-            f"프로필={self.cfg.profile}, 모드={self.cfg.mode}, 환경={self.cfg.env}, "
-            f"실거래활성={'예' if live_trading_enabled else '아니오'}, "
-            f"엔진={state_ko}, 마지막판단={last_action}, 사유={reason}, "
-            f"포지션={position_summary}, 슬롯={portfolio_summary}, {pnl_summary}"
-        )
+        return build_status_summary(self)
 
     def _portfolio_slot_summary(self) -> str:
-        portfolio = self._last_cycle.get("portfolio")
-        if not isinstance(portfolio, dict):
-            return "-"
-        slots_used = int(_to_float(portfolio.get("slots_used"), default=0.0))
-        slots_total = int(_to_float(portfolio.get("slots_total"), default=0.0))
-        if slots_total <= 0:
-            return "-"
-        return f"{slots_used}/{slots_total}"
+        return build_portfolio_slot_summary(self._last_cycle.get("portfolio"))
 
     @staticmethod
     def _fmt_signed(value: float) -> str:
-        return f"{float(value):+.4f}"
+        return format_signed(value)
 
     @staticmethod
     def _position_side_label(position_amt: float) -> str:
-        return "롱" if position_amt > 0 else "숏"
+        return position_side_label(position_amt)
 
     def _status_positions_source(self) -> list[tuple[str, float, float, float]]:
-        live_positions, live_rows, live_ok = self._fetch_live_positions()
+        live_positions, live_rows, live_ok, _live_error = self._fetch_live_positions()
         if live_ok and live_rows:
             out_live: list[tuple[str, float, float, float]] = []
             for symbol, row in sorted(live_rows.items()):
@@ -2569,52 +1532,14 @@ class RuntimeController:
         return out_state
 
     def _status_pnl_summary(self) -> tuple[str, str]:
-        positions = self._status_positions_source()
-        total_unrealized = 0.0
-        per_symbol: list[str] = []
-        position_labels: list[str] = []
-        for symbol, position_amt, pnl, _entry_price in positions:
-            total_unrealized += pnl
-            per_symbol.append(f"{symbol}:{self._fmt_signed(pnl)}")
-            position_labels.append(f"{symbol}[{self._position_side_label(position_amt)}]")
-
-        parts = [f"미실현PnL={self._fmt_signed(total_unrealized)} USDT"]
-        if per_symbol:
-            preview = ", ".join(per_symbol[:3])
-            if len(per_symbol) > 3:
-                preview = f"{preview}, ..."
-            parts.append(f"포지션별={preview}")
-
-        latest_realized: float | None = None
-        for fill in self.state_store.get().last_fills:
-            if fill.realized_pnl is None:
-                continue
-            latest_realized = _to_float(fill.realized_pnl, default=0.0)
-            break
-        if latest_realized is not None:
-            parts.append(f"최근실현PnL={self._fmt_signed(latest_realized)} USDT")
-
-        position_summary = ", ".join(position_labels[:3]) if position_labels else "없음"
-        if len(position_labels) > 3:
-            position_summary = f"{position_summary}, ..."
-
-        return position_summary, ", ".join(parts)
+        return build_status_pnl_summary(
+            positions=self._status_positions_source(),
+            fills=self.state_store.get().last_fills,
+        )
 
     @staticmethod
     def _translate_status_token(raw: str, labels: dict[str, str]) -> str:
-        value = str(raw or "").strip()
-        if not value or value == "-":
-            return "-"
-        direct = labels.get(value)
-        if direct is not None:
-            return direct
-        head, sep, tail = value.partition(":")
-        head_ko = labels.get(head)
-        if head_ko is None:
-            return value
-        if sep:
-            return f"{head_ko}:{tail}"
-        return head_ko
+        return translate_status_token(raw, labels)
 
     def _emit_status_update(self, *, force: bool = False) -> bool:
         notify_interval = max(
@@ -2659,36 +1584,57 @@ class RuntimeController:
                 self._run_cycle_once_locked()
             self._thread_stop.wait(timeout=max(0.2, float(self.scheduler.tick_seconds)))
 
+    def _active_worker_thread_locked(self) -> threading.Thread | None:
+        thread = self._thread
+        if thread is not None and not thread.is_alive():
+            self._thread = None
+            return None
+        return thread
+
+    def _join_worker_thread(self, thread: threading.Thread | None, *, timeout_sec: float = 2.0) -> None:
+        if thread is None or thread is threading.current_thread():
+            return
+        if thread.is_alive():
+            thread.join(timeout=timeout_sec)
+        with self._lock:
+            if self._thread is thread and not thread.is_alive():
+                self._thread = None
+
     def start(self) -> dict[str, Any]:
+        thread_to_start: threading.Thread | None = None
         with self._lock:
             self._auto_reconcile_if_recovery_required(reason="operator_start")
+            active_thread = self._active_worker_thread_locked()
+            if self._running and active_thread is not None:
+                state = capture_runtime_state(self.state_store)
+                return build_state_response(runtime_state=state)
             self.state_store.set(status="RUNNING")
             self.ops.resume()
-            if self._running:
-                state = self.state_store.get()
-                return {"state": state.status, "updated_at": state.last_transition_at}
             self._running = True
             self._thread_stop.clear()
-            self._thread = threading.Thread(target=self._loop_worker, daemon=True)
-            self._thread.start()
+            thread_to_start = threading.Thread(target=self._loop_worker, daemon=True)
+            self._thread = thread_to_start
             self._log_event("runtime_start", running=True)
-            state = self.state_store.get()
-            return {"state": state.status, "updated_at": state.last_transition_at}
+            state = capture_runtime_state(self.state_store)
+            result = build_state_response(runtime_state=state)
+        assert thread_to_start is not None
+        thread_to_start.start()
+        return result
 
     def stop(self) -> dict[str, Any]:
-        acquired = self._lock.acquire(timeout=1.0)
-        try:
+        thread_to_join: threading.Thread | None = None
+        with self._lock:
             self._running = False
             self._thread_stop.set()
             self.ops.pause()
             self.state_store.set(status="PAUSED")
+            thread_to_join = self._thread
             self._log_event("runtime_stop", running=False)
-            self._emit_status_update(force=True)
-            state = self.state_store.get()
-            return {"state": state.status, "updated_at": state.last_transition_at}
-        finally:
-            if acquired:
-                self._lock.release()
+            state = capture_runtime_state(self.state_store)
+            result = build_state_response(runtime_state=state)
+        self._join_worker_thread(thread_to_join)
+        self._emit_status_update(force=True)
+        return result
 
     async def panic(self) -> dict[str, Any]:
         self.stop()
@@ -2702,58 +1648,51 @@ class RuntimeController:
             action="panic_flatten",
             symbol=result.symbol,
         )
-        state = self.state_store.get()
+        state = capture_runtime_state(self.state_store)
         self._report_stats["closes"] += 1
-        return {
-            "engine_state": {"state": state.status, "updated_at": state.last_transition_at},
-            "panic_result": {
-                "ok": True,
-                "canceled_orders_ok": True,
-                "close_ok": True,
-                "errors": [],
-                "closed_symbol": result.symbol,
-                "closed_qty": abs(result.position_amt),
-            },
-        }
+        return build_panic_response(
+            runtime_state=state,
+            flatten_result=result,
+        )
 
     def get_risk(self) -> dict[str, Any]:
         with self._lock:
             self._refresh_runtime_risk_context()
             self._sync_kernel_runtime_overrides()
-            return dict(self._risk)
+            return build_risk_response(capture_public_risk_config(self))
 
     def set_value(self, *, key: str, value: str) -> dict[str, Any]:
         with self._lock:
+            normalized_key = _normalize_runtime_risk_key(key)
             parsed = _parse_value(value)
-            if key == "universe_symbols":
+            if normalized_key == "universe_symbols":
                 if isinstance(parsed, str):
                     parsed = [item.strip().upper() for item in parsed.split(",") if item.strip()]
                 elif isinstance(parsed, list):
                     parsed = [str(item).strip().upper() for item in parsed if str(item).strip()]
                 else:
                     parsed = [self.cfg.behavior.exchange.default_symbol]
-            if key in {"notify_interval_sec", "scheduler_tick_sec"}:
+            if normalized_key in {"notify_interval_sec", "scheduler_tick_sec"}:
                 parsed = max(1, int(_to_float(parsed, default=1.0)))
 
-            self._risk[key] = parsed
+            self._risk[normalized_key] = parsed
             self._refresh_runtime_risk_context()
             self._sync_kernel_runtime_overrides()
 
-            if key == "scheduler_tick_sec":
+            if normalized_key == "scheduler_tick_sec":
                 self.scheduler.tick_seconds = int(
                     _to_float(parsed, default=float(self.scheduler.tick_seconds))
                 )
 
             self._persist_risk_config()
-            if key == "notify_interval_sec":
+            if normalized_key == "notify_interval_sec":
                 self._emit_status_update(force=True)
-            return {
-                "key": key,
-                "requested_value": value,
-                "applied_value": self._risk.get(key),
-                "summary": f"Applied {key}={self._risk.get(key)}",
-                "risk_config": dict(self._risk),
-            }
+            return build_set_value_response(
+                key=normalized_key,
+                requested_value=value,
+                applied_value=self._risk.get(normalized_key),
+                risk_config=capture_public_risk_config(self),
+            )
 
     def set_symbol_leverage(self, *, symbol: str, leverage: float) -> dict[str, Any]:
         with self._lock:
@@ -2769,14 +1708,13 @@ class RuntimeController:
             self._refresh_runtime_risk_context()
             self._sync_kernel_runtime_overrides()
             self._persist_risk_config()
-            return dict(self._risk)
+            return build_risk_response(capture_public_risk_config(self))
 
     def get_scheduler(self) -> dict[str, Any]:
-        return {
-            "tick_sec": float(self.scheduler.tick_seconds),
-            "running": bool(self._running),
-            "min_tick_sec": 1.0,
-        }
+        return build_scheduler_response(
+            tick_sec=float(self.scheduler.tick_seconds),
+            running=bool(self._running),
+        )
 
     async def _handle_user_stream_event(self, event: dict[str, Any]) -> None:
         await asyncio.to_thread(
@@ -2854,14 +1792,13 @@ class RuntimeController:
             self._perform_startup_reconcile(reason="manual_reconcile")
             if not self._state_uncertain:
                 self._recover_brackets_on_boot(reason="manual_reconcile")
-            state = self.state_store.get()
-            return {
-                "ok": not self._state_uncertain,
-                "state_uncertain": bool(self._state_uncertain),
-                "state_uncertain_reason": self._state_uncertain_reason,
-                "startup_reconcile_ok": self._startup_reconcile_ok,
-                "last_reconcile_at": state.last_reconcile_at,
-            }
+            state = capture_runtime_state(self.state_store)
+            return build_reconcile_response(
+                state_uncertain=bool(self._state_uncertain),
+                state_uncertain_reason=self._state_uncertain_reason,
+                startup_reconcile_ok=bool(self._startup_reconcile_ok),
+                last_reconcile_at=state.last_reconcile_at,
+            )
 
     def set_scheduler_interval(self, tick_sec: float) -> dict[str, Any]:
         with self._lock:
@@ -2869,11 +1806,10 @@ class RuntimeController:
             self.scheduler.tick_seconds = sec
             self._risk["scheduler_tick_sec"] = sec
             self._persist_risk_config()
-            return {
-                "tick_sec": float(self.scheduler.tick_seconds),
-                "running": bool(self._running),
-                "min_tick_sec": 1.0,
-            }
+            return build_scheduler_response(
+                tick_sec=float(self.scheduler.tick_seconds),
+                running=bool(self._running),
+            )
 
     def tick_scheduler_now(self) -> dict[str, Any]:
         if self._lock.acquire(blocking=False):
@@ -2888,14 +1824,13 @@ class RuntimeController:
             target_seq = max(1, int(self._cycle_seq))
             while time.monotonic() < deadline:
                 if int(self._cycle_done_seq) >= target_seq:
-                    snapshot = dict(self._last_cycle)
-                    snapshot["coalesced"] = True
-                    return {
-                        "ok": True,
-                        "tick_sec": float(self.scheduler.tick_seconds),
-                        "snapshot": snapshot,
-                        "error": None,
-                    }
+                    snapshot = capture_last_cycle_snapshot(self._last_cycle, coalesced=True)
+                    return build_tick_scheduler_response(
+                        ok=True,
+                        tick_sec=float(self.scheduler.tick_seconds),
+                        snapshot=snapshot,
+                        error=None,
+                    )
                 if self._lock.acquire(timeout=0.1):
                     try:
                         return self._run_cycle_once_locked()
@@ -2903,72 +1838,39 @@ class RuntimeController:
                         self._lock.release()
                 time.sleep(0.1)
 
-            self._last_cycle["tick_finished_at"] = _utcnow_iso()
-            self._last_cycle["last_action"] = "blocked"
-            self._last_cycle["last_decision_reason"] = "tick_busy"
-            self._last_cycle["last_error"] = "tick_busy"
-            self._last_cycle["candidate"] = None
-            self._last_cycle["last_candidate"] = None
-            self._last_cycle["portfolio"] = None
-            return {
-                "ok": False,
-                "tick_sec": float(self.scheduler.tick_seconds),
-                "snapshot": dict(self._last_cycle),
-                "error": "tick_busy",
-            }
+            snapshot = apply_tick_busy_cycle_state(self._last_cycle, finished_at=_utcnow_iso())
+            return build_tick_scheduler_response(
+                ok=False,
+                tick_sec=float(self.scheduler.tick_seconds),
+                snapshot=snapshot,
+                error="tick_busy",
+            )
 
         if self._lock.acquire(timeout=6.0):
             try:
                 return self._run_cycle_once_locked()
             finally:
                 self._lock.release()
-        self._last_cycle["tick_finished_at"] = _utcnow_iso()
-        self._last_cycle["last_action"] = "blocked"
-        self._last_cycle["last_decision_reason"] = "tick_busy"
-        self._last_cycle["last_error"] = "tick_busy"
-        self._last_cycle["candidate"] = None
-        self._last_cycle["last_candidate"] = None
-        self._last_cycle["portfolio"] = None
-        return {
-            "ok": False,
-            "tick_sec": float(self.scheduler.tick_seconds),
-            "snapshot": dict(self._last_cycle),
-            "error": "tick_busy",
-        }
+        snapshot = apply_tick_busy_cycle_state(self._last_cycle, finished_at=_utcnow_iso())
+        return build_tick_scheduler_response(
+            ok=False,
+            tick_sec=float(self.scheduler.tick_seconds),
+            snapshot=snapshot,
+            error="tick_busy",
+        )
 
     @staticmethod
     def _format_daily_report_message(payload: dict[str, Any]) -> str:
-        detail_raw = payload.get("detail")
-        detail = detail_raw if isinstance(detail_raw, dict) else {}
-        entries = int(_to_float(detail.get("entries"), default=0.0))
-        closes = int(_to_float(detail.get("closes"), default=0.0))
-        errors = int(_to_float(detail.get("errors"), default=0.0))
-        canceled = int(_to_float(detail.get("canceled"), default=0.0))
-        blocks = int(_to_float(detail.get("blocks"), default=0.0))
-        total_records = int(_to_float(detail.get("total_records"), default=0.0))
-
-        lines = [
-            f"[{str(payload.get('kind') or 'DAILY_REPORT')}]",
-            f"일자: {str(payload.get('day') or '-')}",
-            f"엔진 상태: {str(payload.get('engine_state') or '-')}",
-            f"보고 시각: {str(payload.get('reported_at') or '-')}",
-            f"진입/청산: {entries} / {closes}",
-            f"오류/취소: {errors} / {canceled}",
-            f"차단/총건수: {blocks} / {total_records}",
-        ]
-        return "\n".join(lines)
+        return build_daily_report_message(payload)
 
     def send_daily_report(self) -> dict[str, Any]:
-        payload = {
-            "kind": "DAILY_REPORT",
-            "day": datetime.now(timezone.utc).date().isoformat(),
-            "engine_state": self.state_store.get().status,
-            "detail": dict(self._report_stats),
-            "notifier_enabled": bool(self.notifier.enabled),
-            "notifier_sent": False,
-            "notifier_error": None,
-            "reported_at": _utcnow_iso(),
-        }
+        payload = build_daily_report_payload(
+            day=datetime.now(timezone.utc).date().isoformat(),
+            engine_state=capture_runtime_state(self.state_store).status,
+            detail=dict(self._report_stats),
+            notifier_enabled=bool(self.notifier.enabled),
+            reported_at=_utcnow_iso(),
+        )
         message = self._format_daily_report_message(payload)
         result = self.notifier.send_with_result(message)
         payload["notifier_sent"] = bool(result.sent)
@@ -2981,31 +1883,22 @@ class RuntimeController:
             profile = str(name).strip().lower()
             if profile == "conservative":
                 self._risk["max_leverage"] = 5.0
-                self._risk["per_trade_risk_pct"] = 5.0
+                self._risk["risk_per_trade_pct"] = 5.0
             elif profile == "normal":
                 self._risk["max_leverage"] = 10.0
-                self._risk["per_trade_risk_pct"] = 10.0
+                self._risk["risk_per_trade_pct"] = 10.0
             elif profile == "aggressive":
                 self._risk["max_leverage"] = 20.0
-                self._risk["per_trade_risk_pct"] = 20.0
+                self._risk["risk_per_trade_pct"] = 20.0
             self._sync_kernel_runtime_overrides()
             self._persist_risk_config()
-            return dict(self._risk)
+            return build_risk_response(capture_public_risk_config(self))
 
     async def close_position(self, *, symbol: str) -> dict[str, Any]:
         self._log_event("flatten_requested", action="close_position", symbol=symbol.upper())
         result = await self.ops.flatten(symbol=symbol)
         self._report_stats["closes"] += 1
-        return {
-            "symbol": result.symbol,
-            "detail": {
-                "open_regular_orders": result.open_regular_orders,
-                "open_algo_orders": result.open_algo_orders,
-                "position_amt": result.position_amt,
-                "paused": result.paused,
-                "safe_mode": result.safe_mode,
-            },
-        }
+        return build_trade_close_response(flatten_result=result)
 
     async def close_all(self) -> dict[str, Any]:
         self._log_event("flatten_requested", action="close_all")
@@ -3017,7 +1910,7 @@ class RuntimeController:
         details: list[dict[str, Any]] = []
         for symbol in sorted({str(s).upper() for s in symbols if str(s).strip()}):
             details.append(await self.close_position(symbol=symbol))
-        return {"symbol": "ALL", "detail": {"results": details}}
+        return build_trade_close_all_response(results=details)
 
     def clear_cooldown(self) -> dict[str, Any]:
         with self._lock:
@@ -3041,132 +1934,14 @@ class RuntimeController:
             self._risk["overheat_state"] = {"blocked": False, "reason": None}
             self._persist_risk_config()
             self._sync_kernel_runtime_overrides()
-            return {
-                "day": datetime.now(timezone.utc).date().isoformat(),
-                "daily_realized_pnl": float(self._risk.get("daily_realized_pnl") or 0.0),
-                "equity_peak": float(self._risk.get("runtime_equity_peak_usdt") or 0.0),
-                "daily_pnl_pct": float(self._risk.get("daily_realized_pct") or 0.0) * 100.0,
-                "drawdown_pct": float(self._risk.get("dd_used_pct") or 0.0) * 100.0,
-                "lose_streak": int(self._risk.get("lose_streak") or 0),
-                "cooldown_until": self._risk.get("cooldown_until"),
-                "last_block_reason": self._risk.get("last_block_reason"),
-                "last_strategy_block_reason": self._risk.get("last_strategy_block_reason"),
-                "last_auto_risk_reason": self._risk.get("last_auto_risk_reason"),
-            }
+            return build_clear_cooldown_response(
+                day=datetime.now(timezone.utc).date().isoformat(),
+                risk_config=self._risk,
+            )
 
 
-class SetValueRequest(BaseModel):
-    key: str
-    value: str
-
-
-class SetSymbolLeverageRequest(BaseModel):
-    symbol: str
-    leverage: float
-
-
-class SchedulerIntervalRequest(BaseModel):
-    tick_sec: float
-
-
-class PresetRequest(BaseModel):
-    name: str
-
-
-class TradeCloseRequest(BaseModel):
-    symbol: str
-
-
-def create_control_http_app(*, controller: RuntimeController) -> FastAPI:
-    @asynccontextmanager
-    async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
-        _ = _app
-        await controller.start_live_services()
-        try:
-            yield
-        finally:
-            await controller.stop_live_services()
-
-    app = FastAPI(title="auto-trader-v2-control", version="0.1.0", lifespan=_lifespan)
-
-    @app.get("/status")
-    async def status() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._status_snapshot)
-
-    @app.get("/healthz")
-    async def healthz() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._healthz_snapshot)
-
-    @app.get("/readyz")
-    async def readyz() -> JSONResponse:
-        payload = await asyncio.to_thread(controller._readyz_snapshot)
-        return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
-
-    @app.get("/risk")
-    async def risk() -> dict[str, Any]:
-        return controller.get_risk()
-
-    @app.get("/readiness")
-    async def readiness() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._live_readiness_snapshot)
-
-    @app.post("/start")
-    async def start() -> dict[str, Any]:
-        return controller.start()
-
-    @app.post("/stop")
-    async def stop() -> dict[str, Any]:
-        return controller.stop()
-
-    @app.post("/panic")
-    async def panic() -> dict[str, Any]:
-        return await controller.panic()
-
-    @app.post("/cooldown/clear")
-    async def clear_cooldown() -> dict[str, Any]:
-        return controller.clear_cooldown()
-
-    @app.post("/reconcile")
-    async def reconcile() -> dict[str, Any]:
-        return await controller.reconcile_now()
-
-    @app.post("/set")
-    async def set_value(payload: SetValueRequest) -> dict[str, Any]:
-        return controller.set_value(key=payload.key, value=payload.value)
-
-    @app.post("/symbol-leverage")
-    async def set_symbol_leverage(payload: SetSymbolLeverageRequest) -> dict[str, Any]:
-        return controller.set_symbol_leverage(symbol=payload.symbol, leverage=payload.leverage)
-
-    @app.get("/scheduler")
-    async def get_scheduler() -> dict[str, Any]:
-        return controller.get_scheduler()
-
-    @app.post("/scheduler/interval")
-    async def scheduler_interval(payload: SchedulerIntervalRequest) -> dict[str, Any]:
-        return controller.set_scheduler_interval(payload.tick_sec)
-
-    @app.post("/scheduler/tick")
-    async def scheduler_tick() -> dict[str, Any]:
-        return controller.tick_scheduler_now()
-
-    @app.post("/report")
-    async def report() -> dict[str, Any]:
-        return controller.send_daily_report()
-
-    @app.post("/preset")
-    async def preset(payload: PresetRequest) -> dict[str, Any]:
-        return controller.preset(payload.name)
-
-    @app.post("/trade/close")
-    async def close(payload: TradeCloseRequest) -> dict[str, Any]:
-        return await controller.close_position(symbol=payload.symbol)
-
-    @app.post("/trade/close_all")
-    async def close_all() -> dict[str, Any]:
-        return await controller.close_all()
-
-    return app
+def create_control_http_app(*, controller: RuntimeController):
+    return _create_control_http_app(controller=controller)
 
 
 def build_runtime_controller(

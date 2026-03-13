@@ -27,9 +27,9 @@ def _run_dry_run(*args: str) -> str:
     return completed.stdout
 
 
-def test_install_systemd_stack_defaults_to_alpha_live_candidate_profile() -> None:
+def test_install_systemd_stack_defaults_to_verified_q070_profile() -> None:
     stdout = _run_dry_run()
-    assert "--profile ra_2026_alpha_v2_expansion_live_candidate" in stdout
+    assert "--profile ra_2026_alpha_v2_expansion_verified_q070" in stdout
 
 
 def test_install_systemd_stack_forwards_explicit_profile_to_run_stack() -> None:

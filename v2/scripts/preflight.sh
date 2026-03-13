@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 cd "$REPO_ROOT"
 
 PROJECT=auto-trader
-PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
+PROFILE="ra_2026_alpha_v2_expansion_verified_q070"
 MODE="shadow"
 ENVIRONMENT="testnet"
 CONFIG_PATH="config/config.yaml"
@@ -36,7 +36,7 @@ Usage:
   bash v2/scripts/preflight.sh [options]
 
 Options:
-  --profile <ra_2026_alpha_v2_expansion_live_candidate>
+  --profile <ra_2026_alpha_v2_expansion_verified_q070>
   --mode <shadow|live>
   --env <testnet|prod>
   --config <path>
@@ -48,9 +48,9 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
-  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --report-file reports/readiness.md
-  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --report-file reports/readiness.md
+  bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --test-scope full
 EOF
 }
 

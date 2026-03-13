@@ -26,7 +26,7 @@ def test_v2_shadow_startup_prints_effective_config(capsys) -> None:  # type: ign
     assert "[v2] effective config" in out
     assert "[v2] runtime banner" in out
     assert '"live_trading_enabled": false' in out
-    assert '"profile": "ra_2026_alpha_v2_expansion_live_candidate"' in out
+    assert '"profile": "ra_2026_alpha_v2_expansion_verified_q070"' in out
     assert "[v2] started" in out
 
 
@@ -137,7 +137,7 @@ def test_runtime_preflight_reports_good_and_bad_gate() -> None:
             return {"overall": "ready" if self._ready else "blocked"}
 
     cfg = load_effective_config(
-        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
         mode="live",
         env="prod",
         env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
@@ -163,9 +163,51 @@ def test_deploy_prep_parser_defaults_to_runtime_test_scope() -> None:
     parser = _build_parser()
     args = parser.parse_args([])
     assert args.test_scope == "runtime"
+    assert args.profile == "ra_2026_alpha_v2_expansion_verified_q070"
 
 
 def test_deploy_prep_parser_accepts_full_test_scope() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--test-scope", "full"])
     assert args.test_scope == "full"
+
+
+def test_live_prod_direct_boot_is_blocked(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        mode="live",
+        env="prod",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+
+    monkeypatch.setattr("v2.run.load_effective_config", lambda **_: cfg)
+    monkeypatch.setattr("v2.run._boot", lambda *_, **__: pytest.fail("unexpected direct boot"))
+
+    rc = main(["--mode", "live", "--env", "prod"])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "direct boot" in out
+    assert "--control-http" in out
+
+
+def test_live_prod_ops_http_is_blocked(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        mode="live",
+        env="prod",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+
+    monkeypatch.setattr("v2.run.load_effective_config", lambda **_: cfg)
+    monkeypatch.setattr(
+        "v2.run._serve_ops_http",
+        lambda *_, **__: pytest.fail("unexpected ops-http start"),
+    )
+
+    rc = main(["--mode", "live", "--env", "prod", "--ops-http"])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "--ops-http" in out
+    assert "--control-http" in out

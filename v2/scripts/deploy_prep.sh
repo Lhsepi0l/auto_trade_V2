@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 
-PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
+PROFILE="ra_2026_alpha_v2_expansion_verified_q070"
 MODE="shadow"
 ENVIRONMENT="testnet"
 CONFIG_PATH="config/config.yaml"
@@ -20,7 +20,7 @@ Usage:
   bash v2/scripts/deploy_prep.sh [options]
 
 Options:
-  --profile <ra_2026_alpha_v2_expansion_live_candidate>
+  --profile <ra_2026_alpha_v2_expansion_verified_q070>
   --mode <shadow|live>
   --env <testnet|prod>
   --config <path>
@@ -30,9 +30,9 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
-  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --keep-reports 30
-  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --test-scope full
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --keep-reports 30
+  bash v2/scripts/deploy_prep.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --test-scope full
 EOF
 }
 
@@ -118,6 +118,35 @@ python -m v2.run \
   --control-http-port 8101
 
 echo "[deploy-prep] running runtime smoke"
-python -m v2.run --profile "$PROFILE" --mode shadow --env testnet --env-file .env
+if [[ "$MODE" == "live" && "$ENVIRONMENT" == "prod" ]]; then
+  echo "[deploy-prep] running runtime smoke (live/prod guard path)"
+  if python -m v2.run \
+    --profile "$PROFILE" \
+    --mode "$MODE" \
+    --env "$ENVIRONMENT" \
+    --env-file .env \
+    --config "$RUNTIME_PREFLIGHT_CONFIG"; then
+    echo "[deploy-prep] expected live/prod direct boot to be blocked"
+    exit 1
+  fi
+
+  if python -m v2.run \
+    --profile "$PROFILE" \
+    --mode "$MODE" \
+    --env "$ENVIRONMENT" \
+    --env-file .env \
+    --config "$RUNTIME_PREFLIGHT_CONFIG" \
+    --ops-http; then
+    echo "[deploy-prep] expected live/prod --ops-http path to be blocked"
+    exit 1
+  fi
+else
+  python -m v2.run \
+    --profile "$PROFILE" \
+    --mode "$MODE" \
+    --env "$ENVIRONMENT" \
+    --env-file .env \
+    --config "$RUNTIME_PREFLIGHT_CONFIG"
+fi
 
 echo "[deploy-prep] done"
