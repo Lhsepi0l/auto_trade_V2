@@ -188,7 +188,7 @@ class RA2026AlphaV2Params:
             raw_symbols = source.get(name, default)
             if isinstance(raw_symbols, str):
                 tokens = [token.strip().upper() for token in raw_symbols.split(",") if token.strip()]
-            elif isinstance(raw_symbols, list):
+            elif isinstance(raw_symbols, (list, tuple)):
                 tokens = [str(token).strip().upper() for token in raw_symbols if str(token).strip()]
             else:
                 tokens = []
@@ -204,7 +204,7 @@ class RA2026AlphaV2Params:
             raw_alphas = source.get(name, default)
             if isinstance(raw_alphas, str):
                 tokens = [token.strip().lower() for token in raw_alphas.split(",") if token.strip()]
-            elif isinstance(raw_alphas, list):
+            elif isinstance(raw_alphas, (list, tuple)):
                 tokens = [str(token).strip().lower() for token in raw_alphas if str(token).strip()]
             else:
                 tokens = []

@@ -140,6 +140,21 @@ def test_alpha_v2_candidate_selector_syncs_strategy_supported_symbols() -> None:
     assert decision["reason"] != "unsupported_symbol"
 
 
+def test_alpha_v2_runtime_updates_preserve_supported_symbols() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "supported_symbols": ["ETHUSDT"],
+        }
+    )
+
+    strategy.set_runtime_params(trend_adx_min_4h=18.0)
+
+    assert strategy._cfg.supported_symbols == ("ETHUSDT",)
+    decision = strategy.decide({"symbol": "ETHUSDT", "market": _flat_market()})
+    assert decision["reason"] != "unsupported_symbol"
+
+
 def test_alpha_v2_pullback_signal_emits_pullback_alpha() -> None:
     strategy = RA2026AlphaV2(params={"enabled_alphas": ["alpha_pullback"], "pullback_touch_atr_mult": 1.0})
 

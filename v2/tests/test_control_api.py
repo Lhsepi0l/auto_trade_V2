@@ -303,6 +303,23 @@ def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> No
     assert kwargs["expansion_quality_score_v2_min"] == 0.7
 
 
+def test_universe_symbols_runtime_sync_preserves_strategy_supported_symbols(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+
+    set_uni = controller.set_value(key="universe_symbols", value="ETHUSDT")
+    assert set_uni["applied_value"] == ["ETHUSDT"]
+
+    selector = getattr(controller.kernel, "_selector", None)
+    strategy = getattr(selector, "_strategy", None)
+    assert getattr(selector, "_symbols", None) == ["ETHUSDT"]
+    assert getattr(getattr(strategy, "_cfg", None), "supported_symbols", None) == ("ETHUSDT",)
+
+    controller.set_value(key="trend_enter_adx_4h", value="24")
+    assert getattr(getattr(strategy, "_cfg", None), "supported_symbols", None) == ("ETHUSDT",)
+
+
 def test_legacy_strategy_runtime_defaults_migrate_to_profile_values(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_migrate.sqlite3")

@@ -2459,3 +2459,32 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - 이번 bounded tuning에서는 `volume gate 완화`가 성과 개선을 만들지 못했다.
     - 최선의 미세 개선은 `expansion_body_ratio_min=0.30`, `expansion_close_location_min=0.55`였고, 개선 폭은 작지만 `return/PF/MDD/fee efficiency`가 모두 baseline보다 좋아졌다.
     - 따라서 q070의 다음 최종 후보는 `body=0.30`, `close=0.55`로 정리하고, 추가 무한 튜닝 없이 여기서 멈추는 것이 맞다.
+- 2026-03-14 최종 운영 결론:
+  - 같은 날 여러 bounded 실험이 있었지만, 최종 채택안은 `ra_2026_alpha_v2_expansion_verified_q070`의 canonical 설정을 `squeeze_percentile_threshold=0.35`, `expansion_body_ratio_min=0.25`, `expansion_close_location_min=0.45`, `expansion_quality_score_v2_min=0.70`으로 유지하는 쪽으로 확정했다.
+  - 이유:
+    - `qv2=0.0` 제거안은 1Y는 강했지만 3Y가 확실히 나빠져 탈락했다.
+    - `body=0.30`, `close=0.55` 미세조정안은 개선 폭이 너무 작고, 이미 커밋/배포까지 이어진 canonical q070 `squeeze=0.35` 대비 승격할 만큼의 우위가 없다고 최종 판단했다.
+  - fresh 기준 최종 참고 수치:
+    - q070 baseline 1Y: `+8.856970%`
+    - deployed canonical q070 (`squeeze=0.35`) 1Y: `+10.985713%`
+    - q070 baseline 3Y: `+29.927917%`
+    - deployed canonical q070 (`squeeze=0.35`) 3Y: `+30.076130%`
+  - 코드/문서 반영 및 푸시:
+    - commit: `e0db116`
+    - message: `fix: retune q070 bounded backtest defaults`
+  - 다음 액션:
+    - 추가 튜닝은 중단하고 Raspberry Pi에 업데이트 후 최소 24시간 실전 관찰한다.
+    - 재평가 시에는 `last_decision_reason`, `last_strategy_block_reason`, 실제 진입 수, 체결 후 익절/손절 품질을 우선 본다.
+- 2026-03-14 멀티 심볼 `unsupported_symbol` 실전 버그 재수정:
+  - ETH 등 다른 심볼로 `universe_symbols`를 바꾼 뒤 패널 `즉시 판단`을 누르면 여전히 `unsupported_symbol`이 나오는 실전 버그를 재현했다.
+  - 원인은 `RA2026AlphaV2.set_runtime_params()` 내부 재파싱 경로였다. `supported_symbols`가 tuple 상태일 때 `RA2026AlphaV2Params.from_params()`의 `_symbols()`가 tuple을 읽지 못해 빈 토큰으로 처리했고, 그 결과 class default `("BTCUSDT",)`로 되돌아갔다.
+  - 이 때문에 `controller.set_value("universe_symbols", "ETHUSDT")` 직후 selector `_symbols`는 `["ETHUSDT"]`로 바뀌어도, 뒤이어 들어가는 strategy runtime sync에서 전략 내부 `supported_symbols`만 다시 `("BTCUSDT",)`가 되어 즉시판단에서 `unsupported_symbol`이 발생했다.
+  - 수정:
+    - `v2/strategies/ra_2026_alpha_v2.py`의 `_symbols()` / `_alphas()`가 `list`뿐 아니라 `tuple`도 정상 파싱하도록 수정
+  - 회귀 테스트 추가:
+    - `v2/tests/test_ra_2026_alpha_v2.py`에 unrelated runtime update 후에도 `supported_symbols=("ETHUSDT",)`가 유지되는지 검증 추가
+    - `v2/tests/test_control_api.py`에 `set_value("universe_symbols", "ETHUSDT")` 이후 전략 내부 `supported_symbols`가 유지되고, 추가 runtime sync 뒤에도 다시 `BTCUSDT`로 회귀하지 않는지 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py -k 'supported_symbols_override_allows_eth or candidate_selector_syncs_strategy_supported_symbols or runtime_updates_preserve_supported_symbols'` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'universe_symbols_runtime_sync_preserves_strategy_supported_symbols or set_strategy_runtime_values_syncs_kernel_runtime_params'` 통과
+    - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py` 통과
