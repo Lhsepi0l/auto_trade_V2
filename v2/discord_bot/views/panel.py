@@ -1038,10 +1038,16 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
         view: "PanelViewBase",
         current_budget: float | None = None,
         current_leverage: float | None = None,
+        current_margin_use_pct: float | None = None,
     ) -> None:
         super().__init__(timeout=300)
         self._api = api
         self._view = view
+        self._current_margin_use_pct = (
+            max(0.0, float(current_margin_use_pct))
+            if current_margin_use_pct is not None
+            else None
+        )
         if current_budget is not None:
             pretty = _fmt_money(current_budget, digits=4)
             self.amount_usdt.default = pretty
@@ -1072,9 +1078,15 @@ class MarginBudgetModal(discord.ui.Modal, title="증거금 설정"):
 
         _ = await interaction.response.defer(ephemeral=True, thinking=True)
         try:
+            margin_use_pct = (
+                self._current_margin_use_pct
+                if self._current_margin_use_pct is not None
+                else 1.0
+            )
+            base_budget = amount / margin_use_pct if margin_use_pct > 0.0 else amount
             payload: JSONPayload = {
                 "capital_mode": "MARGIN_BUDGET_USDT",
-                "margin_budget_usdt": amount,
+                "margin_budget_usdt": base_budget,
             }
             if leverage_value is not None:
                 payload["max_leverage"] = leverage_value
@@ -1663,14 +1675,21 @@ class PanelViewBase(discord.ui.View):
     async def _open_margin_budget_modal(self, interaction: discord.Interaction) -> None:
         current_budget = None
         current_leverage = None
+        current_margin_use_pct = None
         payload = self._get_cached_status(max_age_sec=3600.0) or {}
         cfg = _as_dict(payload.get("risk_config"))
-        cur = cfg.get("margin_budget_usdt")
+        cap = _as_dict(payload.get("capital_snapshot"))
+        cur = cap.get("budget_usdt")
+        if cur is None:
+            cur = cfg.get("margin_budget_usdt")
         if cur is not None:
             current_budget = _coerce_float(cur, default=0.0)
         lev = cfg.get("max_leverage")
         if lev is not None:
             current_leverage = _coerce_float(lev, default=0.0)
+        margin_use_raw = cfg.get("margin_use_pct")
+        if margin_use_raw is not None:
+            current_margin_use_pct = max(0.0, _coerce_float(margin_use_raw, default=0.0))
 
         _ = await interaction.response.send_modal(
             MarginBudgetModal(
@@ -1678,6 +1697,7 @@ class PanelViewBase(discord.ui.View):
                 view=self,
                 current_budget=current_budget,
                 current_leverage=current_leverage,
+                current_margin_use_pct=current_margin_use_pct,
             )
         )
 

@@ -1393,14 +1393,21 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
         self._overheat_fetcher = overheat_fetcher
         self._journal_logger = journal_logger
         self._last_no_candidate_reason: str | None = None
+        self._sync_strategy_supported_symbols()
 
     def get_last_no_candidate_reason(self) -> str | None:
         return self._last_no_candidate_reason
+
+    def _sync_strategy_supported_symbols(self) -> None:
+        updater = getattr(self._strategy, "set_runtime_params", None)
+        if callable(updater):
+            updater(supported_symbols=list(self._symbols))
 
     def set_symbols(self, symbols: list[str]) -> None:
         normalized = [str(sym).strip().upper() for sym in symbols if str(sym).strip()]
         if normalized:
             self._symbols = normalized
+            self._sync_strategy_supported_symbols()
 
     def set_strategy_runtime_params(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
         updater = getattr(self._strategy, "set_runtime_params", None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from v2.strategies.ra_2026_alpha_v2 import RA2026AlphaV2
+from v2.clean_room.contracts import KernelContext
+from v2.strategies.ra_2026_alpha_v2 import RA2026AlphaV2, RA2026AlphaV2CandidateSelector
 
 
 def _bars(
@@ -101,6 +102,42 @@ def test_alpha_v2_breakout_signal_emits_breakout_alpha() -> None:
     assert decision["alpha_id"] == "alpha_breakout"
     assert decision["entry_family"] == "breakout"
     assert decision["execution"]["time_stop_bars"] == 24
+
+
+def test_alpha_v2_runtime_supported_symbols_override_allows_eth() -> None:
+    strategy = RA2026AlphaV2(params={})
+    strategy.set_runtime_params(supported_symbols=["BTCUSDT", "ETHUSDT"])
+
+    decision = strategy.decide({"symbol": "ETHUSDT", "market": _flat_market()})
+
+    assert decision["reason"] != "unsupported_symbol"
+
+
+def test_alpha_v2_candidate_selector_syncs_strategy_supported_symbols() -> None:
+    strategy = RA2026AlphaV2(params={})
+    selector = RA2026AlphaV2CandidateSelector(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        snapshot_provider=lambda: {
+            "symbols": {
+                "ETHUSDT": _flat_market(),
+            }
+        },
+    )
+
+    selector.set_symbols(["ETHUSDT"])
+    _ = selector.select(
+        context=KernelContext(
+            mode="shadow",
+            profile="ra_2026_alpha_v2_expansion_verified_q070",
+            symbol="BTCUSDT",
+            tick=1,
+            dry_run=True,
+        )
+    )
+    decision = strategy.decide({"symbol": "ETHUSDT", "market": _flat_market()})
+
+    assert decision["reason"] != "unsupported_symbol"
 
 
 def test_alpha_v2_pullback_signal_emits_pullback_alpha() -> None:

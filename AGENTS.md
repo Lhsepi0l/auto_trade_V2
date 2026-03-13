@@ -101,6 +101,7 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 ### Collaboration Preferences (Observed)
 - Default response language for this operator should be Korean.
 - User prefers direct action: patch -> verify -> commit/push cadence with minimal conversational delay.
+- User expects code changes to be optimization-conscious by default: avoid unnecessary repeated work, redundant I/O/network calls, and obviously inefficient paths when a simpler efficient implementation is available.
 - For urgent runtime issues, prioritize root-cause fix over theoretical explanation.
 - Keep explanations practical and panel/operator-centric; include what changed and how to verify quickly.
 - Treat Discord panel "즉시 판단" as a live trading action in production mode (it can place real orders immediately when signal conditions are met).
@@ -2320,10 +2321,45 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - focused lint/tests/smoke: 통과
     - control-http import/runtime guard: 통과
     - live/prod direct boot safety: 차단 유지
-    - canary go/no-go: 아직 shadow soak 증거 확보 전이므로 `보류`
+    - canary go/no-go: shadow soak 24시간 실증 기록은 운영자가 보유하며, 최종 판정은 해당 기록 기준으로 관리
   - 운영자가 바로 실행해야 하는 최소 순서:
     - `bash v2/scripts/preflight.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet`
     - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --runtime-preflight --control-http-host 127.0.0.1 --control-http-port 8101`
     - `python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --control-http --control-http-host 127.0.0.1 --control-http-port 8101`
     - `bash v2/scripts/shadow_soak_snapshot.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --label kickoff`
     - `t30m / t1h / t6h` snapshot 저장 후 `bash v2/scripts/shadow_soak_bundle.sh`
+- 2026-03-13 세션 마감 상태:
+  - 구조정리 1차 + shadow soak 운영 검증 준비를 `main` 브랜치 커밋 `93aad15` (`chore: finalize phase1 structure cleanup and soak prep`)로 마감했고, `origin/main`까지 push 완료했다.
+  - push 직전 재검증 기준:
+    - `python -m pytest -q v2/tests/test_control_api.py v2/tests/test_v2_run_smoke.py v2/tests/test_run_stack_lock.py v2/tests/test_install_systemd_stack.py v2/tests/test_v2_discord_bot_smoke.py` 통과
+    - `bash -n v2/scripts/shadow_soak_snapshot.sh v2/scripts/shadow_soak_bundle.sh` 통과
+    - `python -m v2.run --help` 통과
+    - `python -c "from v2.control import create_control_http_app, build_runtime_controller; print('control_import_ok')"` 통과
+  - 세션 종료 시점에는 tracked/untracked build/review 아티팩트(`__pycache__`, review pack/tar/meta)를 모두 정리해 worktree clean 상태로 맞췄다.
+  - 현재 운영 판단:
+    - code / refactor phase-1: 완료
+    - GitHub main sync: 완료
+    - local worktree hygiene: 완료
+    - shadow soak evidence collection tooling: 완료
+    - canary go/no-go: shadow soak 24시간 실증 기록은 운영자가 보유하며, 최종 판정은 해당 기록 기준으로 관리
+- 2026-03-13 패널 증거금 반영 확인/수정:
+  - `/panel`의 `증거금 설정` 모달은 사용자 입력을 실제 사용 증거금처럼 안내했지만, 내부적으로는 `margin_budget_usdt` 원값만 그대로 저장하고 `margin_use_pct`를 고려하지 않아 `verified_q070`의 기본 `margin_use_pct=0.10` 환경에서 입력 대비 실제 사용 증거금이 10배 작게 적용되는 혼선이 있었다.
+  - `v2/discord_bot/views/panel.py`에서 모달 기본값은 `risk_config.margin_budget_usdt` 대신 `capital_snapshot.budget_usdt`(실사용 증거금)를 우선 표시하도록 바꿨고, 제출 시에는 현재 `margin_use_pct`를 기준으로 입력한 실사용 증거금을 내부 `margin_budget_usdt` 원값으로 역환산해 저장하도록 수정했다.
+  - 이 변경으로 패널에서 `10 USDT`를 입력하면 q070 기준에서도 패널 표시/런타임 sizing/체감 증거금이 같은 의미로 맞춰지며, `margin_use_pct` 정책 자체는 그대로 유지된다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_discord_panel_budget_ui.py`에 modal prefill이 `capital_snapshot.budget_usdt`를 쓰는지 검증 추가
+    - 같은 파일에 `current_margin_use_pct=0.1`일 때 입력 `12`가 내부 `margin_budget_usdt=120`으로 환산되는지 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_discord_panel_budget_ui.py v2/tests/test_discord_panel.py` 통과
+    - `python -m ruff check v2/discord_bot/views/panel.py v2/tests/test_discord_panel_budget_ui.py v2/tests/test_discord_panel.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or smoke'` 통과
+- 2026-03-13 멀티 심볼 `unsupported_symbol` 수정:
+  - `/panel` 또는 `/set universe_symbols`로 `ETHUSDT` 같은 심볼을 추가하면 control API와 kernel selector의 유니버스는 갱신됐지만, `RA2026AlphaV2` 전략 내부 `supported_symbols`는 기본 `("BTCUSDT",)`로 남아 있어 전략 단계에서 `unsupported_symbol`로 막히는 불일치가 있었다.
+  - `v2/strategies/ra_2026_alpha_v2.py`의 `RA2026AlphaV2CandidateSelector`가 초기화 시점과 `set_symbols(...)` 호출 시점마다 전략 `set_runtime_params(supported_symbols=...)`를 같이 호출하도록 수정해, selector 유니버스와 전략 허용 심볼이 항상 동기화되게 했다.
+  - 이 변경으로 ETH 등 추가 심볼을 넣었을 때 전략이 same snapshot path에서 실제 평가까지 들어가며, `unsupported_symbol`은 더 이상 기본 불일치 때문에 나오지 않는다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_ra_2026_alpha_v2.py`에 runtime `supported_symbols` override로 ETH가 더 이상 `unsupported_symbol`이 아닌지 검증 추가
+    - 같은 파일에 candidate selector `set_symbols(...)`가 전략 `supported_symbols`까지 동기화하는지 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py -k 'supported_symbols_override_allows_eth or candidate_selector_syncs_strategy_supported_symbols or control_api_syncs_kernel_runtime_overrides or persists_risk_config_across_restart or status_notional_tracks_effective_budget_leverage'` 통과
+    - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py` 통과

@@ -112,6 +112,38 @@ async def test_admin_click_opens_modal_and_submit_calls_set_config(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_margin_budget_modal_prefills_effective_budget_from_capital_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "engine_state": {"state": "RUNNING"},
+        "risk_config": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 100.0,
+            "margin_use_pct": 0.1,
+            "max_leverage": 5.0,
+        },
+        "capital_snapshot": {
+            "budget_usdt": 10.0,
+        },
+    }
+    api = SimpleNamespace(
+        set_config=AsyncMock(),
+        get_status=AsyncMock(return_value=payload),
+    )
+    view = PanelView(api=api, initial_payload=payload)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it_click = _FakeInteraction()
+    await _find_button(view, MARGIN_BUDGET_BUTTON_LABEL).callback(it_click)  # type: ignore[arg-type]
+    modal = it_click.response.modal
+    assert isinstance(modal, MarginBudgetModal)
+    assert modal.amount_usdt.default == "10.0000"
+    assert modal._current_margin_use_pct == 0.1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_margin_modal_submit_includes_optional_leverage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,6 +166,36 @@ async def test_margin_modal_submit_includes_optional_leverage(
             "capital_mode": "MARGIN_BUDGET_USDT",
             "margin_budget_usdt": 120.0,
             "max_leverage": 12.0,
+        }
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_margin_modal_submit_converts_effective_budget_using_margin_use_pct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        set_config=AsyncMock(),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "RUNNING"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = MarginBudgetModal(
+        api=api,
+        view=view,
+        current_margin_use_pct=0.1,
+    )  # type: ignore[arg-type]
+    modal.amount_usdt._value = "12"  # type: ignore[attr-defined]
+
+    it_submit = _FakeInteraction()
+    await modal.on_submit(it_submit)  # type: ignore[arg-type]
+
+    api.set_config.assert_awaited_once_with(
+        {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 120.0,
         }
     )
 
