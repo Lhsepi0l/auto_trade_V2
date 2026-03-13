@@ -42,6 +42,8 @@ def _write_fake_python(
             bot_base_url = pathlib.Path({str(bot_base_url)!r})
             ready_delay_sec = float(os.environ.get("FAKE_READY_DELAY_SEC", "0"))
             bot_import_ok = os.environ.get("FAKE_BOT_IMPORT_OK", "1") == "1"
+            ready_requires_start = os.environ.get("FAKE_READY_REQUIRES_START", "0") == "1"
+            start_state = {{"requested": False}}
 
             if len(sys.argv) > 1 and sys.argv[1] == "-c":
                 if bot_import_ok:
@@ -77,7 +79,9 @@ def _write_fake_python(
 
             class _Handler(BaseHTTPRequestHandler):
                 def do_GET(self):
-                    ready = (time.monotonic() - started_at) >= ready_delay_sec
+                    ready = (time.monotonic() - started_at) >= ready_delay_sec and (
+                        start_state["requested"] or not ready_requires_start
+                    )
                     if self.path == "/readyz":
                         payload = json.dumps({{"ready": ready}}).encode("utf-8")
                         self.send_response(200 if ready else 503)
@@ -91,6 +95,19 @@ def _write_fake_python(
                     self.send_header("Content-Length", str(len(payload)))
                     self.end_headers()
                     self.wfile.write(payload)
+
+                def do_POST(self):
+                    if self.path == "/start":
+                        start_state["requested"] = True
+                        payload = b'{{"state":"RUNNING"}}'
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
+                    self.send_response(404)
+                    self.end_headers()
 
                 def log_message(self, format, *args):
                     return
@@ -197,6 +214,46 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
         time.sleep(0.2)
         assert bot_started.exists() is False
 
+        _wait_for_file(bot_started, timeout_sec=3.0)
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3.0)
+
+
+def test_run_stack_posts_start_before_requiring_readyz(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo_root = Path(__file__).resolve().parents[2]
+    fake_python = tmp_path / "fake_python.py"
+    control_started = tmp_path / "control.started"
+    bot_started = tmp_path / "bot.started"
+    bot_base_url = tmp_path / "bot.base_url"
+    lock_path = tmp_path / "stack.lock"
+    _write_fake_python(
+        target=fake_python,
+        control_started=control_started,
+        bot_started=bot_started,
+        bot_base_url=bot_base_url,
+    )
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = str(fake_python)
+    env["STACK_LOCK_FILE"] = str(lock_path)
+    env["FAKE_READY_DELAY_SEC"] = "0.2"
+    env["FAKE_READY_REQUIRES_START"] = "1"
+
+    proc = subprocess.Popen(  # noqa: S603
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_file(control_started)
         _wait_for_file(bot_started, timeout_sec=3.0)
     finally:
         proc.send_signal(signal.SIGTERM)

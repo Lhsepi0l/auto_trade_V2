@@ -2375,3 +2375,14 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or control_api_syncs_kernel_runtime_overrides or persists_risk_config_across_restart'` 통과
     - `python -m ruff check v2/control/api.py v2/control/profile_policy.py v2/control/status_payloads.py v2/discord_bot/commands/base.py v2/tests/test_control_api.py` 통과
+- 2026-03-14 stack bootstrap dirty-restart loop 수정:
+  - Raspberry Pi systemd `v2-stack.service`가 dirty restart 이후 `control API did not become ready via /readyz within 30s`로 반복 재시작되는 문제가 있었다.
+  - 원인은 `run_stack.sh`가 `/readyz=true`만 기다리는데, live mode에서는 dirty restart 시 `recovery_required=true`가 남아 `/start`가 한 번 호출되기 전까지 ready가 절대 true가 되지 않는 구조였다.
+  - `v2/scripts/run_stack.sh`를 수정해 control API가 응답하기 시작하면 stack bootstrap 단계에서 localhost `/start`를 자동으로 1회 호출한 뒤 `/readyz`를 기다리도록 바꿨다.
+  - 이 변경으로 manual operator intervention 없이도 dirty restart -> manual_reconcile -> ready 전환 경로를 stack bring-up이 자체 수행한다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_run_stack_lock.py`에 fake control server가 `/start` 요청 전에는 절대 ready가 되지 않는 조건에서 stack script가 자동으로 `/start`를 호출해 bot까지 정상 기동하는지 검증 추가
+  - 검증:
+    - `bash -n v2/scripts/run_stack.sh` 통과
+    - `python -m pytest -q v2/tests/test_run_stack_lock.py` 통과
+    - `python -m ruff check v2/tests/test_run_stack_lock.py` 통과

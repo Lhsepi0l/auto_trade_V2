@@ -176,10 +176,12 @@ verify_bot_import() {
 
 wait_for_control_ready() {
     local ready_url="http://${CONTROL_HOST}:${CONTROL_PORT}/readyz"
+    local start_url="http://${CONTROL_HOST}:${CONTROL_PORT}/start"
     local start_ts
     local now_ts
     local elapsed
     local ready_output=""
+    local start_attempted=0
 
     start_ts="$(date +%s)"
     while true; do
@@ -219,6 +221,23 @@ except Exception as exc:
 PY
         ); then
             return 0
+        fi
+
+        if (( start_attempted == 0 )) && [[ "$ready_output" != request_error:* ]]; then
+            if "$PYTHON_BIN" - "$start_url" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+url = sys.argv[1]
+request = urllib.request.Request(url, method="POST")
+with urllib.request.urlopen(request, timeout=5.0) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+            then
+                start_attempted=1
+            fi
         fi
 
         now_ts="$(date +%s)"
