@@ -149,7 +149,6 @@ def build_status_summary(controller: RuntimeController) -> str:
         "STOPPED": "중지",
         "KILLED": "강제중지",
     }.get(state_raw, state_raw)
-    live_trading_enabled = controller.cfg.mode == "live" and str(controller.cfg.env) == "prod"
     last_action = humanize_action_token(str(controller._last_cycle.get("last_action") or "-"))
     reason = humanize_reason_token(str(controller._last_cycle.get("last_decision_reason") or "-"))
     portfolio_summary = build_portfolio_slot_summary(controller._last_cycle.get("portfolio"))
@@ -159,9 +158,7 @@ def build_status_summary(controller: RuntimeController) -> str:
     )
     return (
         "상태 알림: "
-        f"프로필={controller.cfg.profile}, 모드={controller.cfg.mode}, 환경={controller.cfg.env}, "
-        f"실거래활성={'예' if live_trading_enabled else '아니오'}, "
-        f"엔진={state_ko}, 마지막판단={last_action}, 사유={reason}, "
+        f"엔진={state_ko}, 판단={last_action}, 사유={reason}, "
         f"포지션={position_summary}, 슬롯={portfolio_summary}, {pnl_summary}"
     )
 

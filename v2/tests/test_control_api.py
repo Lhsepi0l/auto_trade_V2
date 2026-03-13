@@ -665,8 +665,10 @@ def test_status_summary_translates_action_and_reason_to_korean(tmp_path) -> None
     controller._last_cycle["last_action"] = "no_candidate"
     controller._last_cycle["last_decision_reason"] = "no_candidate"
     summary = controller._status_summary()
-    assert "마지막판단=대기" in summary
+    assert "판단=대기" in summary
     assert "사유=현재 진입 후보가 없습니다" in summary
+    assert "프로필=" not in summary
+    assert "실거래활성=" not in summary
 
 
 def test_status_summary_translates_prefixed_reason_head(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -736,7 +738,7 @@ def test_status_summary_translates_strategy_block_reason_to_korean(tmp_path) -> 
     controller._last_cycle["last_action"] = "no_candidate"
     controller._last_cycle["last_decision_reason"] = "regime_adx_rising_missing"
     summary = controller._status_summary()
-    assert "마지막판단=대기" in summary
+    assert "판단=대기" in summary
     assert "사유=레짐 ADX 상승 추세 조건 미충족" in summary
 
 

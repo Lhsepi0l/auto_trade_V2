@@ -2394,3 +2394,12 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values'` 통과
     - `python -m ruff check v2/control/profile_policy.py v2/tests/test_control_api.py` 통과
+- 2026-03-14 상태 알림 한 줄 요약 축약:
+  - 운영자 피드백에 따라 `build_status_summary()`의 Discord 상태 알림 한 줄에서 `프로필/모드/환경/실거래활성`을 제거했다.
+  - 새 포맷은 `엔진`, `판단`, `사유`, `포지션`, `슬롯`, `미실현PnL`만 유지해 훨씬 짧게 보이도록 정리했다.
+  - `미실현PnL`은 그대로 남겼고, 다중 포지션일 때의 `포지션별=...`, 최근 체결의 `최근실현PnL=...` 보조 정보는 기존대로 유지했다.
+  - 회귀 테스트 업데이트:
+    - `v2/tests/test_control_api.py`에서 `판단=...` 표기와 `프로필=`/`실거래활성=` 제거를 검증하도록 갱신
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'status_summary'` 통과
+    - `python -m ruff check v2/control/presentation.py v2/tests/test_control_api.py` 통과
