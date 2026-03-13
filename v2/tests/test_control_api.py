@@ -219,6 +219,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert risk.status_code == 200
     risk_payload = risk.json()
     assert risk_payload["margin_use_pct"] == 0.1
+    assert risk_payload["max_leverage"] == 50.0
     assert risk_payload["risk_score_min"] == 0.6
     assert risk_payload["lose_streak_n"] == 2
     assert risk_payload["cooldown_hours"] == 4
@@ -241,6 +242,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert payload["checks"]["symbols"]["status"] == "pass"
     assert payload["checks"]["margin_use_pct"]["status"] == "pass"
     assert payload["checks"]["max_leverage"]["status"] == "pass"
+    assert payload["checks"]["max_leverage"]["detail"] == 50.0
     assert payload["checks"]["mode"]["status"] == "warn"
 
     status = client.get("/status")

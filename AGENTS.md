@@ -2386,3 +2386,11 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `bash -n v2/scripts/run_stack.sh` 통과
     - `python -m pytest -q v2/tests/test_run_stack_lock.py` 통과
     - `python -m ruff check v2/tests/test_run_stack_lock.py` 통과
+- 2026-03-14 q070 레버리지 기준 상향:
+  - 운영자 의도에 맞춰 canonical live profile `ra_2026_alpha_v2_expansion_verified_q070`의 runtime override `max_leverage`를 `50.0`으로 상향했다.
+  - 같은 프로필의 live readiness `max_leverage` 판정 기준도 `50.0`까지 `pass`가 뜨도록 맞췄다. 따라서 `50x` 설정 시 readiness의 leverage 항목이 더 이상 `fail`로 뜨지 않는다.
+  - 회귀 테스트 업데이트:
+    - `v2/tests/test_control_api.py`에서 q070 `/risk` 기본값이 `max_leverage=50.0`인지, `/readiness`의 `checks.max_leverage`가 `pass` + `detail=50.0`인지 검증하도록 갱신
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values'` 통과
+    - `python -m ruff check v2/control/profile_policy.py v2/tests/test_control_api.py` 통과

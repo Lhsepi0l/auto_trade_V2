@@ -46,7 +46,7 @@ def profile_runtime_risk_overrides(controller: Any, *, sched_sec: int) -> dict[s
     profile = str(controller.cfg.profile or "").strip().lower()
     profile_overrides: dict[str, dict[str, Any]] = {
         CANONICAL_LIVE_PROFILE: {
-            "max_leverage": 5.0,
+            "max_leverage": 50.0,
             "daily_loss_limit_pct": -0.015,
             "dd_limit_pct": -0.12,
             "risk_score_min": 0.60,
@@ -108,8 +108,8 @@ def build_live_readiness_snapshot(
             "symbols": ["BTCUSDT"],
             "margin_pass": 0.10,
             "margin_warn": 0.15,
-            "leverage_pass": 5.0,
-            "leverage_warn": 8.0,
+            "leverage_pass": 50.0,
+            "leverage_warn": 50.0,
             "daily_pass": 0.015,
             "daily_warn": 0.02,
             "dd_pass": 0.12,
