@@ -2363,3 +2363,15 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py -k 'supported_symbols_override_allows_eth or candidate_selector_syncs_strategy_supported_symbols or control_api_syncs_kernel_runtime_overrides or persists_risk_config_across_restart or status_notional_tracks_effective_budget_leverage'` 통과
     - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py` 통과
+- 2026-03-13 alpha_v2 전략 런타임 기본값/동기화 drift 수정:
+  - control API가 `ra_2026_alpha_v2`에 런타임 파라미터를 밀어넣을 때 현재 프로필(`live_candidate`, `verified_q070`)의 실제 전략 params가 아니라 오래된 하드코딩 기본값(`trend_enter_adx_4h=22`, `breakout_buffer_bps=8`, `min_volume_ratio_15m=1.2`) 일부를 사용하고 있었다.
+  - 그 결과 `/risk`/`/status`에서 보이는 전략 런타임 값과 실제 프로필 의도가 어긋날 수 있었고, 특히 `expansion` 단일 알파 운영에서 `min_volume_ratio_15m` 같은 필터가 의도보다 더 빡세게 들어갈 수 있었다.
+  - `v2/control/api.py`에서 현재 활성 `ra_2026_alpha_v2` profile params를 기준으로 전략 런타임 기본값을 시드하고, kernel `set_strategy_runtime_params(...)`도 같은 실제 키(`trend_adx_min_4h`, `trend_adx_rising_*`, `expansion_*`, `min_volume_ratio_15m`, `expected_move_cost_mult` 등)로 동기화하도록 수정했다.
+  - 기존 runtime DB에 남아 있던 legacy seed 값은 load 시 현재 profile 값으로 자동 보정되게 했고, `trend_enter_adx_4h`는 `trend_adx_min_4h` alias로 흡수되도록 정리했다.
+  - `v2/control/status_payloads.py`의 `config_summary.strategy_runtime`도 이제 실제 alpha_v2 전략 키를 노출하고, `v2/discord_bot/commands/base.py`의 `/set` allowlist에도 관련 전략 키를 추가했다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_control_api.py`에 `verified_q070`가 실제 전략 런타임 기본값(`trend_adx_min_4h=14`, `min_volume_ratio_15m=1.0`, `expansion_buffer_bps=2.0`, `expansion_quality_score_v2_min=0.70`)을 시드/노출하는지 검증 추가
+    - 같은 파일에 `trend_enter_adx_4h` legacy 입력이 `trend_adx_min_4h`로 동기화되는지, 그리고 legacy persisted default가 restart 시 profile 값으로 migration 되는지 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or control_api_syncs_kernel_runtime_overrides or persists_risk_config_across_restart'` 통과
+    - `python -m ruff check v2/control/api.py v2/control/profile_policy.py v2/control/status_payloads.py v2/discord_bot/commands/base.py v2/tests/test_control_api.py` 통과

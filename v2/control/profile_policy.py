@@ -14,6 +14,7 @@ PRIVATE_REST_UNSAFE_ERRORS = {
 }
 _RUNTIME_RISK_KEY_ALIASES = {
     "per_trade_risk_pct": "risk_per_trade_pct",
+    "trend_enter_adx_4h": "trend_adx_min_4h",
 }
 
 

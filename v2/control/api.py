@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -65,9 +66,41 @@ from v2.engine import EngineStateStore, OrderManager
 from v2.exchange.types import ResyncSnapshot
 from v2.notify import Notifier
 from v2.ops import OpsController
+from v2.strategies.ra_2026_alpha_v2 import RA2026AlphaV2Params
 from v2.tpsl import BracketConfig, BracketPlanner, BracketService
 
 logger = logging.getLogger(__name__)
+
+_ALPHA_V2_RUNTIME_DEFAULTS = RA2026AlphaV2Params().__dict__.copy()
+_ALPHA_V2_RUNTIME_PARAM_KEYS = (
+    "enabled_alphas",
+    "trend_adx_min_4h",
+    "trend_adx_max_4h",
+    "trend_adx_rising_lookback_4h",
+    "trend_adx_rising_min_delta_4h",
+    "breakout_buffer_bps",
+    "expansion_buffer_bps",
+    "expansion_body_ratio_min",
+    "expansion_close_location_min",
+    "expansion_width_expansion_min",
+    "expansion_break_distance_atr_min",
+    "expansion_breakout_efficiency_min",
+    "expansion_breakout_stability_score_min",
+    "expansion_breakout_stability_edge_score_min",
+    "expansion_quality_score_min",
+    "expansion_quality_score_v2_min",
+    "min_volume_ratio_15m",
+    "expansion_range_atr_min",
+    "squeeze_percentile_threshold",
+    "expected_move_cost_mult",
+    "max_spread_bps",
+    "min_expected_move_floor",
+)
+_LEGACY_CONTROLLER_SEEDED_STRATEGY_DEFAULTS = {
+    "trend_adx_min_4h": 22.0,
+    "breakout_buffer_bps": 8.0,
+    "min_volume_ratio_15m": 1.2,
+}
 
 
 def _utcnow_iso() -> str:
@@ -517,8 +550,11 @@ class RuntimeController:
         normalized = _normalize_runtime_risk_config(persisted)
         if not normalized:
             return
+        normalized, changed = self._migrate_legacy_strategy_runtime_defaults(normalized)
         for key, value in normalized.items():
             self._risk[key] = value
+        if changed:
+            self._persist_risk_config()
 
     def _persist_risk_config(self) -> None:
         try:
@@ -530,6 +566,56 @@ class RuntimeController:
 
     def _public_risk_config(self) -> dict[str, Any]:
         return _serialize_runtime_risk_config(self._risk)
+
+    def _alpha_v2_profile_params(self) -> dict[str, Any]:
+        for entry in self.cfg.behavior.strategies:
+            if not bool(getattr(entry, "enabled", False)):
+                continue
+            if str(getattr(entry, "name", "")).strip() != "ra_2026_alpha_v2":
+                continue
+            params = getattr(entry, "params", None)
+            if isinstance(params, dict):
+                return dict(params)
+            return {}
+        return {}
+
+    def _strategy_runtime_defaults(self) -> dict[str, Any]:
+        strategy_params = self._alpha_v2_profile_params()
+        if not strategy_params:
+            return {}
+        defaults: dict[str, Any] = {}
+        for key in _ALPHA_V2_RUNTIME_PARAM_KEYS:
+            base = copy.deepcopy(_ALPHA_V2_RUNTIME_DEFAULTS[key])
+            defaults[key] = copy.deepcopy(strategy_params.get(key, base))
+        return defaults
+
+    def _strategy_runtime_snapshot(self) -> dict[str, Any]:
+        defaults = self._strategy_runtime_defaults()
+        if not defaults:
+            return {}
+        snapshot: dict[str, Any] = {}
+        for key, default in defaults.items():
+            snapshot[key] = copy.deepcopy(self._risk.get(key, default))
+        return snapshot
+
+    def _migrate_legacy_strategy_runtime_defaults(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        defaults = self._strategy_runtime_defaults()
+        if not defaults:
+            return dict(payload), False
+        migrated = dict(payload)
+        changed = False
+        for key, legacy_default in _LEGACY_CONTROLLER_SEEDED_STRATEGY_DEFAULTS.items():
+            if key not in migrated or key not in defaults:
+                continue
+            current = migrated.get(key)
+            profile_default = defaults[key]
+            if current == legacy_default and profile_default != legacy_default:
+                migrated[key] = copy.deepcopy(profile_default)
+                changed = True
+        return migrated, changed
 
     def _sync_kernel_runtime_overrides(self) -> None:
         symbols, mapping, effective_margin, effective_leverage, _expected_notional = (
@@ -560,30 +646,10 @@ class RuntimeController:
                 fallback_notional=fallback_notional,
                 max_notional=capped_notional,
             )
-        if hasattr(self.kernel, "set_strategy_runtime_params"):
+        strategy_runtime = self._strategy_runtime_snapshot()
+        if hasattr(self.kernel, "set_strategy_runtime_params") and strategy_runtime:
             self.kernel.set_strategy_runtime_params(  # type: ignore[attr-defined]
-                trend_enter_adx_4h=_to_float(self._risk.get("trend_enter_adx_4h"), default=22.0),
-                trend_exit_adx_4h=_to_float(self._risk.get("trend_exit_adx_4h"), default=18.0),
-                regime_hold_bars_4h=max(
-                    1,
-                    int(_to_float(self._risk.get("regime_hold_bars_4h"), default=2.0)),
-                ),
-                breakout_buffer_bps=_to_float(self._risk.get("breakout_buffer_bps"), default=8.0),
-                breakout_bar_size_atr_max=_to_float(
-                    self._risk.get("breakout_bar_size_atr_max"),
-                    default=1.6,
-                ),
-                min_volume_ratio_15m=_to_float(self._risk.get("min_volume_ratio_15m"), default=1.2),
-                range_enabled=_to_bool(self._risk.get("range_enabled"), default=False),
-                overheat_funding_abs=_to_float(self._risk.get("overheat_funding_abs"), default=0.0008),
-                overheat_long_short_ratio_cap=_to_float(
-                    self._risk.get("overheat_long_short_ratio_cap"),
-                    default=1.8,
-                ),
-                overheat_long_short_ratio_floor=_to_float(
-                    self._risk.get("overheat_long_short_ratio_floor"),
-                    default=0.56,
-                ),
+                **strategy_runtime,
             )
         if hasattr(self.kernel, "set_runtime_context"):
             self.kernel.set_runtime_context(  # type: ignore[attr-defined]
@@ -729,6 +795,7 @@ class RuntimeController:
             "last_regime": None,
             "overheat_state": {"blocked": False, "reason": None},
         }
+        config.update(self._strategy_runtime_defaults())
         config.update(self._profile_runtime_risk_overrides(sched_sec=sched_sec))
         return config
 

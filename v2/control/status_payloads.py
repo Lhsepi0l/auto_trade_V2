@@ -28,18 +28,7 @@ def _config_summary_payload(controller: RuntimeController) -> dict[str, Any]:
     config_summary["scheduler_running"] = bool(controller._running)
     config_summary["scheduler_enabled"] = bool(controller._running)
     config_summary["active_strategy_timeframes"] = ["10m", "15m", "30m", "1h", "4h"]
-    config_summary["strategy_runtime"] = {
-        "trend_enter_adx_4h": controller._risk.get("trend_enter_adx_4h", 22.0),
-        "trend_exit_adx_4h": controller._risk.get("trend_exit_adx_4h", 18.0),
-        "regime_hold_bars_4h": controller._risk.get("regime_hold_bars_4h", 2),
-        "breakout_buffer_bps": controller._risk.get("breakout_buffer_bps", 8.0),
-        "breakout_bar_size_atr_max": controller._risk.get("breakout_bar_size_atr_max", 1.6),
-        "min_volume_ratio_15m": controller._risk.get("min_volume_ratio_15m", 1.2),
-        "range_enabled": controller._risk.get("range_enabled", False),
-        "overheat_funding_abs": controller._risk.get("overheat_funding_abs", 0.0008),
-        "overheat_long_short_ratio_cap": controller._risk.get("overheat_long_short_ratio_cap", 1.8),
-        "overheat_long_short_ratio_floor": controller._risk.get("overheat_long_short_ratio_floor", 0.56),
-    }
+    config_summary["strategy_runtime"] = controller._strategy_runtime_snapshot()
     config_summary["risk_runtime"] = {
         "daily_loss_used_pct": float(controller._risk.get("daily_loss_used_pct") or 0.0),
         "dd_used_pct": float(controller._risk.get("dd_used_pct") or 0.0),

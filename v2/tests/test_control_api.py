@@ -223,6 +223,11 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert risk_payload["lose_streak_n"] == 2
     assert risk_payload["cooldown_hours"] == 4
     assert risk_payload["universe_symbols"] == ["BTCUSDT"]
+    assert risk_payload["trend_adx_min_4h"] == 14.0
+    assert risk_payload["trend_adx_rising_lookback_4h"] == 0
+    assert risk_payload["min_volume_ratio_15m"] == 1.0
+    assert risk_payload["expansion_buffer_bps"] == 2.0
+    assert risk_payload["expansion_quality_score_v2_min"] == 0.7
 
     readiness = client.get("/readiness")
     assert readiness.status_code == 200
@@ -242,6 +247,9 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert status.status_code == 200
     status_payload = status.json()
     assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
+    assert status_payload["config_summary"]["strategy_runtime"]["trend_adx_min_4h"] == 14.0
+    assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 1.0
+    assert status_payload["config_summary"]["strategy_runtime"]["expansion_quality_score_v2_min"] == 0.7
 
 
 def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -280,16 +288,61 @@ def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> No
     assert resp.status_code == 200
     kernel.set_strategy_runtime_params.assert_called()
     kwargs = kernel.set_strategy_runtime_params.call_args.kwargs
-    assert kwargs["trend_enter_adx_4h"] == 24.0
-    assert kwargs["trend_exit_adx_4h"] == 18.0
-    assert kwargs["regime_hold_bars_4h"] == 2
-    assert kwargs["breakout_buffer_bps"] == 8.0
-    assert kwargs["breakout_bar_size_atr_max"] == 1.6
-    assert kwargs["min_volume_ratio_15m"] == 1.2
-    assert kwargs["range_enabled"] is False
-    assert kwargs["overheat_funding_abs"] == 0.0008
-    assert kwargs["overheat_long_short_ratio_cap"] == 1.8
-    assert kwargs["overheat_long_short_ratio_floor"] == 0.56
+    assert kwargs["trend_adx_min_4h"] == 24.0
+    assert kwargs["trend_adx_rising_lookback_4h"] == 0
+    assert kwargs["breakout_buffer_bps"] == 3.0
+    assert kwargs["min_volume_ratio_15m"] == 1.0
+    assert kwargs["expansion_buffer_bps"] == 2.0
+    assert kwargs["expansion_range_atr_min"] == 0.7
+    assert kwargs["expected_move_cost_mult"] == 1.6
+    assert kwargs["expansion_quality_score_v2_min"] == 0.7
+
+
+def test_legacy_strategy_runtime_defaults_migrate_to_profile_values(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_migrate.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.save_runtime_risk_config(
+        config={
+            "trend_enter_adx_4h": 22.0,
+            "breakout_buffer_bps": 8.0,
+            "min_volume_ratio_15m": 1.2,
+        }
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    risk = controller.get_risk()
+    assert risk["trend_adx_min_4h"] == 14.0
+    assert risk["breakout_buffer_bps"] == 3.0
+    assert risk["min_volume_ratio_15m"] == 1.0
+
+    persisted = state_store.load_runtime_risk_config()
+    assert persisted["trend_adx_min_4h"] == 14.0
+    assert persisted["breakout_buffer_bps"] == 3.0
+    assert persisted["min_volume_ratio_15m"] == 1.0
 
 
 def test_set_value_waits_for_controller_lock(tmp_path) -> None:  # type: ignore[no-untyped-def]
