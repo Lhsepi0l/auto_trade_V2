@@ -550,16 +550,19 @@ class RuntimeController:
         normalized = _normalize_runtime_risk_config(persisted)
         if not normalized:
             return
+        normalized, stripped_changed = self._strip_persisted_strategy_runtime_overrides(
+            normalized
+        )
         normalized, changed = self._migrate_legacy_strategy_runtime_defaults(normalized)
         for key, value in normalized.items():
             self._risk[key] = value
-        if changed:
+        if changed or stripped_changed:
             self._persist_risk_config()
 
     def _persist_risk_config(self) -> None:
         try:
             self.state_store.save_runtime_risk_config(
-                config=_normalize_runtime_risk_config(self._risk)
+                config=self._persistent_risk_config()
             )
         except Exception:  # noqa: BLE001
             logger.exception("runtime_risk_config_save_failed")
@@ -597,6 +600,25 @@ class RuntimeController:
         for key, default in defaults.items():
             snapshot[key] = copy.deepcopy(self._risk.get(key, default))
         return snapshot
+
+    def _persistent_risk_config(self) -> dict[str, Any]:
+        payload = _normalize_runtime_risk_config(self._risk)
+        for key in _ALPHA_V2_RUNTIME_PARAM_KEYS:
+            payload.pop(key, None)
+        return payload
+
+    def _strip_persisted_strategy_runtime_overrides(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        stripped = dict(payload)
+        changed = False
+        for key in _ALPHA_V2_RUNTIME_PARAM_KEYS:
+            if key not in stripped:
+                continue
+            stripped.pop(key, None)
+            changed = True
+        return stripped, changed
 
     def _migrate_legacy_strategy_runtime_defaults(
         self,

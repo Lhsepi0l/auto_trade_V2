@@ -362,9 +362,114 @@ def test_legacy_strategy_runtime_defaults_migrate_to_profile_values(tmp_path) ->
     assert risk["min_volume_ratio_15m"] == 1.0
 
     persisted = state_store.load_runtime_risk_config()
-    assert persisted["trend_adx_min_4h"] == 14.0
-    assert persisted["breakout_buffer_bps"] == 3.0
-    assert persisted["min_volume_ratio_15m"] == 1.0
+    assert "trend_adx_min_4h" not in persisted
+    assert "breakout_buffer_bps" not in persisted
+    assert "min_volume_ratio_15m" not in persisted
+
+
+def test_strategy_runtime_profile_change_resets_to_current_profile_defaults(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_profile_reset.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.save_runtime_risk_config(
+        config={
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_quality_score_v2_min": 0.70,
+            "min_volume_ratio_15m": 1.0,
+        }
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    risk = controller.get_risk()
+    assert risk["squeeze_percentile_threshold"] == 0.3
+    assert risk["expansion_quality_score_v2_min"] == 0.0
+    assert risk["min_volume_ratio_15m"] == 1.0
+
+    persisted = state_store.load_runtime_risk_config()
+    assert "squeeze_percentile_threshold" not in persisted
+    assert "expansion_quality_score_v2_min" not in persisted
+    assert "min_volume_ratio_15m" not in persisted
+
+
+def test_strategy_runtime_same_profile_drops_persisted_override(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_profile_preserve.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.save_runtime_risk_config(
+        config={
+            "squeeze_percentile_threshold": 0.28,
+            "min_volume_ratio_15m": 0.95,
+        }
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    risk = controller.get_risk()
+    assert risk["squeeze_percentile_threshold"] == 0.3
+    assert risk["min_volume_ratio_15m"] == 1.0
+
+    persisted = state_store.load_runtime_risk_config()
+    assert "squeeze_percentile_threshold" not in persisted
+    assert "min_volume_ratio_15m" not in persisted
+
+
+def test_set_value_strategy_runtime_override_is_runtime_only(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
+
+    result = controller.set_value(key="min_volume_ratio_15m", value="0.95")
+    assert result["applied_value"] == 0.95
+    assert controller.get_risk()["min_volume_ratio_15m"] == 0.95
+
+    persisted = controller.state_store.load_runtime_risk_config()
+    assert "min_volume_ratio_15m" not in persisted
+
+    rebuilt = _build_controller(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
+    assert rebuilt.get_risk()["min_volume_ratio_15m"] == 1.0
 
 
 def test_set_value_waits_for_controller_lock(tmp_path) -> None:  # type: ignore[no-untyped-def]

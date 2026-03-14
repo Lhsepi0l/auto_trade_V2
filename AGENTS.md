@@ -2488,3 +2488,23 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py -k 'supported_symbols_override_allows_eth or candidate_selector_syncs_strategy_supported_symbols or runtime_updates_preserve_supported_symbols'` 통과
     - `python -m pytest -q v2/tests/test_control_api.py -k 'universe_symbols_runtime_sync_preserves_strategy_supported_symbols or set_strategy_runtime_values_syncs_kernel_runtime_params'` 통과
     - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_control_api.py` 통과
+- 2026-03-14 live_candidate 무진입 조사 및 프로필 런타임 누수 차단:
+  - 실전에서 12시간 동안 `거래량 조건 미충족`, `방향성 바이어스 조건 미충족`, `확장 품질 점수 V2 기준 미충족`만 반복되며 무진입이 나온 사례를 기준으로 점검했다.
+  - 원인 분리 결과, `live_candidate` 프로필 자체보다 "이전 프로필의 전략 런타임 값이 runtime DB에 남아 다음 프로필에도 이어지는 문제"가 더 위험했다. 특히 `verified_q070`에서 쓰던 `expansion_quality_score_v2_min=0.70` 같은 값이 `live_candidate`로 바꿔도 계속 살아 있으면, 의도하지 않은 품질 게이트가 추가된다.
+  - 최종 대응은 더 강하게 가져갔다. `v2/control/api.py`에서 alpha_v2 전략 런타임 키(`trend_adx_min_4h`, `expansion_*`, `min_volume_ratio_15m`, `squeeze_percentile_threshold`, `expected_move_cost_mult` 등)는 아예 runtime DB에 저장하지 않도록 바꿨고, 부팅 시 persisted payload에 남아 있던 값도 전부 scrub 하도록 수정했다.
+  - 따라서 이제는 cross-profile bleed뿐 아니라 same-profile의 과거 세션 전략 override도 재시작 후 남지 않는다. alpha_v2 전략 런타임 값은 항상 "현재 프로필 defaults"만 부팅 기준값이 된다.
+  - 최근 60일 BTC 재확인 결과:
+    - intended `live_candidate` baseline: `return=5.918437%`, `trades=19`, `pf=8.911965`, top blocks=`volume_missing 1278`, `trigger_missing 623`, `bias_missing 452`
+    - leaked q070-style gate (`squeeze=0.35`, `qv2=0.70`) 가정: `return=3.844653%`, `trades=15`, `pf=7.686823`, `quality_score_v2_missing=5`
+    - `squeeze=0.35`만 반영한 완화안도 최근 60일 기준 `return=3.610917%`, `trades=17`로 baseline보다 약했다.
+    - `min_volume_ratio_15m=0.95` 완화는 최근 60일 기준 `return/trades` 개선이 없었다.
+  - 결론:
+    - 이번 턴에서는 `live_candidate`의 canonical threshold를 추가 완화하지 않았다.
+    - 우선순위는 `live_candidate`가 정말 `live_candidate` 값으로만 동작하게 만드는 것, 즉 alpha_v2 전략 런타임 override의 restart persistence 자체를 제거하는 것이다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_control_api.py`에 persisted legacy/q070-style 전략 키가 있더라도 부팅 후 `live_candidate`가 `squeeze=0.30`, `qv2=0.0`으로 복원되고 DB에서는 해당 키가 제거되는지 검증 추가
+    - 같은 file에 동일 profile에서 persisted override(`squeeze=0.28`, `min_volume_ratio_15m=0.95`)도 부팅 후 유지되지 않고 defaults로 돌아가는지 검증 추가
+    - 같은 file에 `/set min_volume_ratio_15m=0.95`는 현재 프로세스에서는 반영되지만 persisted DB에는 저장되지 않고, 재부팅 후 `1.0`으로 복원되는지 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or strategy_runtime_profile_change_resets_to_current_profile_defaults or strategy_runtime_same_profile_drops_persisted_override or set_value_strategy_runtime_override_is_runtime_only'` 통과
+    - `python -m ruff check v2/control/api.py v2/tests/test_control_api.py` 통과
