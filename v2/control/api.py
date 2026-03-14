@@ -101,6 +101,28 @@ _LEGACY_CONTROLLER_SEEDED_STRATEGY_DEFAULTS = {
     "breakout_buffer_bps": 8.0,
     "min_volume_ratio_15m": 1.2,
 }
+_RUNTIME_DERIVED_RISK_KEYS = (
+    "daily_loss_used_pct",
+    "dd_used_pct",
+    "daily_realized_pnl",
+    "daily_realized_pct",
+    "lose_streak",
+    "cooldown_until",
+    "risk_day",
+    "recent_blocks",
+    "daily_lock",
+    "dd_lock",
+    "runtime_equity_now_usdt",
+    "runtime_equity_peak_usdt",
+    "last_auto_risk_reason",
+    "last_auto_risk_at",
+    "last_block_reason",
+    "last_strategy_block_reason",
+    "last_alpha_id",
+    "last_entry_family",
+    "last_regime",
+    "overheat_state",
+)
 
 
 def _utcnow_iso() -> str:
@@ -601,9 +623,16 @@ class RuntimeController:
             snapshot[key] = copy.deepcopy(self._risk.get(key, default))
         return snapshot
 
+    def _non_persistent_risk_keys(self) -> set[str]:
+        keys = set(_ALPHA_V2_RUNTIME_PARAM_KEYS)
+        keys.update(_RUNTIME_DERIVED_RISK_KEYS)
+        sched_sec = int(_to_float(self._risk.get("scheduler_tick_sec"), default=float(self.scheduler.tick_seconds)))
+        keys.update(self._profile_runtime_risk_overrides(sched_sec=sched_sec).keys())
+        return keys
+
     def _persistent_risk_config(self) -> dict[str, Any]:
         payload = _normalize_runtime_risk_config(self._risk)
-        for key in _ALPHA_V2_RUNTIME_PARAM_KEYS:
+        for key in self._non_persistent_risk_keys():
             payload.pop(key, None)
         return payload
 
@@ -613,7 +642,7 @@ class RuntimeController:
     ) -> tuple[dict[str, Any], bool]:
         stripped = dict(payload)
         changed = False
-        for key in _ALPHA_V2_RUNTIME_PARAM_KEYS:
+        for key in self._non_persistent_risk_keys():
             if key not in stripped:
                 continue
             stripped.pop(key, None)
@@ -1699,6 +1728,8 @@ class RuntimeController:
                 return build_state_response(runtime_state=state)
             self.state_store.set(status="RUNNING")
             self.ops.resume()
+            if self._risk.get("last_block_reason") == "ops_paused":
+                self._risk["last_block_reason"] = None
             self._running = True
             self._thread_stop.clear()
             thread_to_start = threading.Thread(target=self._loop_worker, daemon=True)
@@ -2016,6 +2047,7 @@ class RuntimeController:
             )
             self._risk["last_auto_risk_reason"] = None
             self._risk["last_auto_risk_at"] = None
+            self._risk["last_block_reason"] = None
             self._risk["last_strategy_block_reason"] = None
             self._risk["last_alpha_id"] = None
             self._risk["last_entry_family"] = None

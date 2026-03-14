@@ -2493,6 +2493,13 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 원인 분리 결과, `live_candidate` 프로필 자체보다 "이전 프로필의 전략 런타임 값이 runtime DB에 남아 다음 프로필에도 이어지는 문제"가 더 위험했다. 특히 `verified_q070`에서 쓰던 `expansion_quality_score_v2_min=0.70` 같은 값이 `live_candidate`로 바꿔도 계속 살아 있으면, 의도하지 않은 품질 게이트가 추가된다.
   - 최종 대응은 더 강하게 가져갔다. `v2/control/api.py`에서 alpha_v2 전략 런타임 키(`trend_adx_min_4h`, `expansion_*`, `min_volume_ratio_15m`, `squeeze_percentile_threshold`, `expected_move_cost_mult` 등)는 아예 runtime DB에 저장하지 않도록 바꿨고, 부팅 시 persisted payload에 남아 있던 값도 전부 scrub 하도록 수정했다.
   - 따라서 이제는 cross-profile bleed뿐 아니라 same-profile의 과거 세션 전략 override도 재시작 후 남지 않는다. alpha_v2 전략 런타임 값은 항상 "현재 프로필 defaults"만 부팅 기준값이 된다.
+  - 후속으로 runtime persistence 경계를 한 번 더 분리했다. q070 같은 profile-owned risk keys(`max_leverage`, `margin_use_pct`, `universe_symbols`, `risk_score_min`, `spread_max_pct`, `cooldown_hours`, watchdog 관련 등)도 persisted override에 밀리지 않도록 non-persistent로 돌렸고, `dd_lock`, `dd_used_pct`, `last_auto_risk_reason`, `last_block_reason`, `recent_blocks`, `runtime_equity_peak_usdt` 같은 계산/상태성 필드도 재시작 간 carry-over 되지 않게 했다.
+  - 이 변경으로 재시작 후에는:
+    - 현재 profile이 소유한 risk/runtime 값은 항상 profile defaults로 복원된다.
+    - alpha_v2 strategy runtime 값도 항상 profile defaults로 복원된다.
+    - auto-risk / stale block derived state는 DB에서 복원되지 않고 현재 state/fills 기준으로만 다시 계산된다.
+    - 단, `margin_budget_usdt` 같은 operator-owned 일반 설정은 계속 persisted override로 유지된다.
+  - `RuntimeController.start()`와 `clear_cooldown()`도 `last_block_reason=ops_paused` stale 흔적을 같이 지우도록 손봤다.
   - 최근 60일 BTC 재확인 결과:
     - intended `live_candidate` baseline: `return=5.918437%`, `trades=19`, `pf=8.911965`, top blocks=`volume_missing 1278`, `trigger_missing 623`, `bias_missing 452`
     - leaked q070-style gate (`squeeze=0.35`, `qv2=0.70`) 가정: `return=3.844653%`, `trades=15`, `pf=7.686823`, `quality_score_v2_missing=5`
@@ -2505,6 +2512,8 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `v2/tests/test_control_api.py`에 persisted legacy/q070-style 전략 키가 있더라도 부팅 후 `live_candidate`가 `squeeze=0.30`, `qv2=0.0`으로 복원되고 DB에서는 해당 키가 제거되는지 검증 추가
     - 같은 file에 동일 profile에서 persisted override(`squeeze=0.28`, `min_volume_ratio_15m=0.95`)도 부팅 후 유지되지 않고 defaults로 돌아가는지 검증 추가
     - 같은 file에 `/set min_volume_ratio_15m=0.95`는 현재 프로세스에서는 반영되지만 persisted DB에는 저장되지 않고, 재부팅 후 `1.0`으로 복원되는지 검증 추가
+    - 같은 file에 q070 profile에서 `/set max_leverage=35`, `/set margin_use_pct=0.2`, `/set universe_symbols=BTCUSDT,ETHUSDT`가 현재 프로세스에선 반영되더라도 persisted DB에는 저장되지 않고 재부팅 후 `50x / 0.1 / BTC-only`로 복원되는지 검증 추가
+    - 같은 file에 persisted `dd_lock=true`, `dd_used_pct=0.21`, `last_auto_risk_reason=drawdown_limit`, `last_block_reason=ops_paused`가 있어도 부팅 후 복원되지 않는지 검증 추가
   - 검증:
-    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or strategy_runtime_profile_change_resets_to_current_profile_defaults or strategy_runtime_same_profile_drops_persisted_override or set_value_strategy_runtime_override_is_runtime_only'` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or strategy_runtime_profile_change_resets_to_current_profile_defaults or strategy_runtime_same_profile_drops_persisted_override or set_value_strategy_runtime_override_is_runtime_only or q070_profile_owned_risk_overrides_are_runtime_only or derived_risk_state_is_not_restored_from_persistence'` 통과
     - `python -m ruff check v2/control/api.py v2/tests/test_control_api.py` 통과

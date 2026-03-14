@@ -472,6 +472,141 @@ def test_set_value_strategy_runtime_override_is_runtime_only(tmp_path) -> None: 
     assert rebuilt.get_risk()["min_volume_ratio_15m"] == 1.0
 
 
+def test_q070_profile_owned_risk_overrides_are_runtime_only(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
+    sqlite_path = str(tmp_path / "control_q070_runtime_only.sqlite3")
+    cfg.behavior.storage.sqlite_path = sqlite_path
+
+    storage1 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage1.ensure_schema()
+    state_store1 = EngineStateStore(storage=storage1, mode=cfg.mode)
+    event_bus1 = EventBus()
+    scheduler1 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus1)
+    ops1 = OpsController(state_store=state_store1, exchange=None)
+    kernel1 = build_default_kernel(
+        state_store=state_store1,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller1 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store1,
+        ops=ops1,
+        kernel=kernel1,
+        scheduler=scheduler1,
+        event_bus=event_bus1,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    app1 = create_control_http_app(controller=controller1)
+    client1 = TestClient(app1)
+
+    assert client1.post("/set", json={"key": "max_leverage", "value": "35"}).status_code == 200
+    assert client1.post("/set", json={"key": "margin_use_pct", "value": "0.2"}).status_code == 200
+    assert client1.post("/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"}).status_code == 200
+
+    runtime_payload = client1.get("/risk").json()
+    assert runtime_payload["max_leverage"] == 35.0
+    assert runtime_payload["margin_use_pct"] == 0.2
+    assert runtime_payload["universe_symbols"] == ["BTCUSDT", "ETHUSDT"]
+
+    persisted = state_store1.load_runtime_risk_config()
+    assert "max_leverage" not in persisted
+    assert "margin_use_pct" not in persisted
+    assert "universe_symbols" not in persisted
+
+    storage2 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage2.ensure_schema()
+    state_store2 = EngineStateStore(storage=storage2, mode=cfg.mode)
+    event_bus2 = EventBus()
+    scheduler2 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus2)
+    ops2 = OpsController(state_store=state_store2, exchange=None)
+    kernel2 = build_default_kernel(
+        state_store=state_store2,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller2 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store2,
+        ops=ops2,
+        kernel=kernel2,
+        scheduler=scheduler2,
+        event_bus=event_bus2,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    payload = create_control_http_app(controller=controller2)
+    risk = TestClient(payload).get("/risk").json()
+    assert risk["max_leverage"] == 50.0
+    assert risk["margin_use_pct"] == 0.1
+    assert risk["universe_symbols"] == ["BTCUSDT"]
+
+
+def test_derived_risk_state_is_not_restored_from_persistence(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_derived.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.save_runtime_risk_config(
+        config={
+            "dd_lock": True,
+            "dd_used_pct": 0.21,
+            "last_auto_risk_reason": "drawdown_limit",
+            "last_auto_risk_at": "2026-03-14T00:00:00+00:00",
+            "last_block_reason": "ops_paused",
+            "last_strategy_block_reason": "volume_missing",
+            "runtime_equity_peak_usdt": 100.0,
+            "runtime_equity_now_usdt": 80.0,
+            "recent_blocks": {"ops_paused": 3},
+        }
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    risk = controller.get_risk()
+    assert risk["dd_lock"] is False
+    assert risk["dd_used_pct"] == 0.0
+    assert risk["last_auto_risk_reason"] is None
+    assert risk.get("last_block_reason") is None
+    assert risk.get("last_strategy_block_reason") is None
+    assert risk.get("recent_blocks", {}) == {}
+
+    persisted = state_store.load_runtime_risk_config()
+    assert "dd_lock" not in persisted
+    assert "dd_used_pct" not in persisted
+    assert "last_auto_risk_reason" not in persisted
+    assert "last_block_reason" not in persisted
+    assert "last_strategy_block_reason" not in persisted
+    assert "runtime_equity_peak_usdt" not in persisted
+
+
 def test_set_value_waits_for_controller_lock(tmp_path) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
 
