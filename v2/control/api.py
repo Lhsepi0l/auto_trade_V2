@@ -1199,6 +1199,48 @@ class RuntimeController:
             cycle=cycle,
             entry_price=entry_price,
         )
+        tracked_runtime = next(
+            (
+                row
+                for row in self._list_tracked_brackets()
+                if str(row.get("symbol") or "").strip().upper() == symbol
+                and str(row.get("state") or "").strip().upper() in {"CREATED", "PLACED", "ACTIVE"}
+            ),
+            None,
+        )
+        if tracked_runtime is not None:
+            tracked_ids = {
+                str(tracked_runtime.get("tp_order_client_id") or "").strip(),
+                str(tracked_runtime.get("sl_order_client_id") or "").strip(),
+            }
+            tracked_ids = {cid for cid in tracked_ids if cid}
+            active_tracked_ids = set(tracked_ids)
+            if self.cfg.mode == "live" and self.rest_client is not None and tracked_ids:
+                rest_client_any: Any = self.rest_client
+                try:
+                    open_orders = _run_async_blocking(
+                        lambda s=symbol: rest_client_any.get_open_algo_orders(symbol=s),
+                        timeout_sec=8.0,
+                    )
+                    open_ids = {
+                        str(item.get("clientAlgoId") or item.get("clientOrderId") or "").strip()
+                        for item in (open_orders or [])
+                        if isinstance(item, dict)
+                    }
+                    active_tracked_ids = {cid for cid in tracked_ids if cid in open_ids}
+                except FutureTimeoutError:
+                    logger.warning("existing_bracket_fetch_timed_out symbol=%s", symbol)
+                except Exception:  # noqa: BLE001
+                    logger.exception("existing_bracket_fetch_failed symbol=%s", symbol)
+            if active_tracked_ids:
+                self._last_cycle["bracket"] = {
+                    "state": "active",
+                    "symbol": symbol,
+                    "policy": bracket_meta,
+                    "reused": True,
+                }
+                return
+
         runtime_bracket_service = BracketService(
             planner=BracketPlanner(cfg=bracket_cfg),
             storage=self.state_store.runtime_storage(),
@@ -1379,6 +1421,11 @@ class RuntimeController:
         self._trailing_state.pop(symbol, None)
         return True
 
+    @staticmethod
+    def _is_managed_bracket_algo_id(value: str | None) -> bool:
+        text = str(value or "").strip().lower()
+        return text.startswith("v2tp") or text.startswith("v2sl")
+
     def _list_tracked_brackets(self) -> list[dict[str, Any]]:
         rows = self.state_store.runtime_storage().list_bracket_states()
         tracked: list[dict[str, Any]] = []
@@ -1530,6 +1577,25 @@ class RuntimeController:
                     cid = str(item.get("clientAlgoId") or item.get("clientOrderId") or "").strip()
                     if cid:
                         open_ids.add(cid)
+            extra_managed_ids = {
+                cid
+                for cid in open_ids
+                if cid not in {tp_id, sl_id} and self._is_managed_bracket_algo_id(cid)
+            }
+            for cid in sorted(extra_managed_ids):
+                try:
+                    _ = _run_async_blocking(
+                        lambda s=symbol, current_id=cid: rest_client_any.cancel_algo_order(
+                            params={"symbol": s, "clientAlgoId": current_id}
+                        ),
+                        timeout_sec=8.0,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "extra_bracket_algo_cancel_failed symbol=%s client_algo_id=%s",
+                        symbol,
+                        cid,
+                    )
 
             if positions_ok:
                 position_amt = _to_float(positions.get(symbol), default=0.0)

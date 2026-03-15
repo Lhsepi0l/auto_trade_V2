@@ -2517,3 +2517,16 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 검증:
     - `python -m pytest -q v2/tests/test_control_api.py -k 'verified_q070_profile_seeds_runtime_defaults_and_readiness or set_strategy_runtime_values_syncs_kernel_runtime_params or legacy_strategy_runtime_defaults_migrate_to_profile_values or strategy_runtime_profile_change_resets_to_current_profile_defaults or strategy_runtime_same_profile_drops_persisted_override or set_value_strategy_runtime_override_is_runtime_only or q070_profile_owned_risk_overrides_are_runtime_only or derived_risk_state_is_not_restored_from_persistence'` 통과
     - `python -m ruff check v2/control/api.py v2/tests/test_control_api.py` 통과
+- 2026-03-15 실전 레버리지/브래킷 중복 버그 수정:
+  - 실전에서 `max_leverage=50`으로 운영 중인데도 포지션이 `Isolated 10X`로 체결되는 현상을 추적한 결과, 원인은 거래소 레버리지 세팅 실패가 아니라 `ra_2026_alpha_v2` 전략 payload가 기본값 `max_effective_leverage=10.0`을 항상 내보내며 런타임 `max_leverage`를 내부적으로 clamp 하고 있던 숨은 전략 캡이었다.
+  - 대응으로 `v2/config/config.yaml`의 canonical alpha defaults와 `v2/strategies/ra_2026_alpha_v2.py` dataclass 기본값을 `max_effective_leverage=0.0`으로 바꾸고, 값이 `> 0`일 때만 payload에 포함하도록 수정했다. 이제 별도 전략 캡을 명시하지 않으면 operator/runtime `max_leverage`가 그대로 sizing/leverage 기준이 된다.
+  - 동시에 실전에서 `Conditional (122)`처럼 TP/SL 조건부 주문이 누적된 원인은 `v2/control/api.py`의 브래킷 배치 경로가 "같은 심볼에 이미 ACTIVE 브래킷이 있는지" 확인하지 않고 매 `executed` 사이클마다 새 브래킷을 또 생성하던 점이었다.
+  - 대응으로 `_place_brackets_for_cycle()`에 기존 tracked/open bracket 재사용 가드를 추가했고, `_poll_brackets_once()`에는 현재 tracked pair 외의 managed algo 주문(`v2tp*`, `v2sl*`)을 자동 취소하는 orphan cleanup을 넣었다. 이로써 반복 실행/재판단이 와도 TP/SL pair가 계속 증식하지 않는다.
+  - 회귀 테스트 추가:
+    - `v2/tests/test_v2_config_loader.py`에 alpha base profile 기본 `max_effective_leverage=0.0` 검증 추가
+    - `v2/tests/test_dynamic_notional_sizer.py`에 candidate cap이 없으면 runtime `max_leverage`를 그대로 쓰는지 검증 추가
+    - `v2/tests/test_control_api.py`에 active bracket 중복 생성 방지 및 extra managed algo cleanup 검증 추가
+  - 검증:
+    - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_dynamic_notional_sizer.py v2/tests/test_control_api.py -k 'alpha_base_profile_loads or risk_aware_sizer_uses_runtime_max_leverage_when_candidate_cap_missing or tick_places_tpsl_brackets_after_live_execution or tick_does_not_duplicate_active_brackets_for_same_symbol or bracket_poller_cancels_extra_managed_algo_orders or bracket_poller_cleans_counterpart_when_one_leg_missing'` 통과
+    - `python -m pytest -q v2/tests/test_live_execution_service.py v2/tests/test_tpsl_brackets.py -k 'live_execution_places_market_order or live_execution_reuses_existing_submission_for_same_intent or create_and_place_shadow_persists_active_without_rest or cleanup_if_flat_cancels_all_open_algo_orders_for_symbol or recover_sets_active_when_open_algo_order_exists'` 통과
+    - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/control/api.py v2/tests/test_v2_config_loader.py v2/tests/test_dynamic_notional_sizer.py v2/tests/test_control_api.py` 통과

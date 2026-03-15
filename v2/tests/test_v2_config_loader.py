@@ -16,6 +16,8 @@ def test_alpha_base_profile_loads() -> None:
     assert cfg.behavior.exchange.default_symbol == "BTCUSDT"
     assert cfg.behavior.risk.max_leverage == 8.0
     assert [entry.name for entry in cfg.behavior.strategies if entry.enabled] == ["ra_2026_alpha_v2"]
+    enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
+    assert enabled[0].params["max_effective_leverage"] == 0.0
 
 def test_alpha_expansion_candidate_profile_loads() -> None:
     cfg = load_effective_config(

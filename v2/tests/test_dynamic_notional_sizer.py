@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from v2.clean_room.contracts import Candidate, KernelContext, RiskDecision
-from v2.clean_room.defaults import DynamicNotionalSizer
+from v2.clean_room.defaults import DynamicNotionalSizer, RiskAwareSizer
 
 
 def _context() -> KernelContext:
@@ -21,3 +21,14 @@ def test_dynamic_notional_sizer_updates_default_leverage_on_runtime_change() -> 
 
     assert after.leverage == 12.0
     assert after.notional == 20.0
+
+
+def test_risk_aware_sizer_uses_runtime_max_leverage_when_candidate_cap_missing() -> None:
+    sizer = RiskAwareSizer(fallback_notional=20.0, default_leverage=5.0)
+    sizer.set_leverage_config(symbol_leverage_map={}, max_leverage=50.0)
+    candidate = Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
+    risk = RiskDecision(allow=True, reason="ok", max_notional=None)
+
+    sized = sizer.size(candidate=candidate, risk=risk, context=_context())
+
+    assert sized.leverage == 50.0

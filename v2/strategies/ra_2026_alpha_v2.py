@@ -137,7 +137,7 @@ class RA2026AlphaV2Params:
     min_stop_distance_frac: float = 0.002
 
     risk_per_trade_pct: float = 0.012
-    max_effective_leverage: float = 12.0
+    max_effective_leverage: float = 0.0
     stop_atr_mult: float = 1.5
     take_profit_r: float = 2.0
     time_stop_bars: int = 24
@@ -325,7 +325,7 @@ class RA2026AlphaV2Params:
             risk_per_trade_pct=max(_f("risk_per_trade_pct", cls.risk_per_trade_pct), 0.0),
             max_effective_leverage=max(
                 _f("max_effective_leverage", cls.max_effective_leverage),
-                1.0,
+                0.0,
             ),
             stop_atr_mult=max(_f("stop_atr_mult", cls.stop_atr_mult), 0.1),
             take_profit_r=max(_f("take_profit_r", cls.take_profit_r), 0.5),
@@ -880,7 +880,8 @@ def _build_entry_payload(
     payload["stop_price_hint"] = float(stop_price)
     payload["stop_distance_frac"] = float(stop_distance_frac)
     payload["risk_per_trade_pct"] = float(cfg.risk_per_trade_pct)
-    payload["max_effective_leverage"] = float(cfg.max_effective_leverage)
+    if float(cfg.max_effective_leverage) > 0.0:
+        payload["max_effective_leverage"] = float(cfg.max_effective_leverage)
     payload["expected_move_frac"] = float(ctx.expected_move_frac)
     payload["required_move_frac"] = float(ctx.required_move_frac)
     payload["regime_strength"] = float(ctx.regime_strength)

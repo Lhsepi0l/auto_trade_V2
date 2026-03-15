@@ -71,7 +71,7 @@ base:
         stop_exit_cooldown_bars: 12
         profit_exit_cooldown_bars: 0
         risk_per_trade_pct: 0.012
-        max_effective_leverage: 10.0
+        max_effective_leverage: 0.0
   storage:
     sqlite_path: data/v2_runtime.sqlite3
     journal_table: runtime_journal
@@ -133,7 +133,7 @@ profiles:
           stop_exit_cooldown_bars: 12
           profit_exit_cooldown_bars: 0
           risk_per_trade_pct: 0.012
-          max_effective_leverage: 10.0
+          max_effective_leverage: 0.0
   ra_2026_alpha_v2_expansion:
     inherits: ra_2026_alpha_v2
     strategies:

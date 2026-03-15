@@ -1263,6 +1263,93 @@ def test_control_api_tick_places_tpsl_brackets_after_live_execution(tmp_path) ->
     assert algo_types == {"TAKE_PROFIT_MARKET", "STOP_MARKET"}
 
 
+def test_control_api_tick_does_not_duplicate_active_brackets_for_same_symbol(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_dedup.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=1.0,
+                    reason="test",
+                    entry_price=70000.0,
+                ),
+                size=SizePlan(
+                    symbol="BTCUSDT",
+                    qty=0.002,
+                    leverage=5.0,
+                    notional=140.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(ok=True, order_id="oid-1", reason="live_order_submitted"),
+            )
+
+    class _AlgoREST:
+        def __init__(self) -> None:
+            self.algo_orders: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            payload = dict(params)
+            self.algo_orders.append(payload)
+            return {"clientAlgoId": str(payload.get("clientAlgoId") or "")}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            symbol_u = str(symbol or "").upper()
+            return [
+                {
+                    "symbol": str(row.get("symbol") or ""),
+                    "clientAlgoId": str(row.get("clientAlgoId") or ""),
+                }
+                for row in self.algo_orders
+                if not symbol_u or str(row.get("symbol") or "").upper() == symbol_u
+            ]
+
+    rest = _AlgoREST()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    first = client.post("/scheduler/tick")
+    second = client.post("/scheduler/tick")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(rest.algo_orders) == 2
+    assert second.json()["snapshot"]["bracket"]["state"] == "active"
+    assert second.json()["snapshot"]["bracket"]["reused"] is True
+
+
 def test_control_api_tick_reports_bracket_failure_in_last_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_live_candidate",
@@ -1469,6 +1556,84 @@ def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
     assert rows[0]["state"] == "CLEANED"
     assert len(rest.cancel_calls) == 1
     assert str(rest.cancel_calls[0].get("clientAlgoId") or "") == "tp-1"
+
+
+def test_control_api_bracket_poller_cancels_extra_managed_algo_orders(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_extra.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="v2tp-current",
+        sl_order_client_id="v2sl-current",
+        state="ACTIVE",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="no_candidate",
+                candidate=None,
+            )
+
+    class _AlgoRESTPoller:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2tp-current"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2sl-current"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2tp-old"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2sl-old"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "manual-order"},
+            ]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+    rest = _AlgoRESTPoller()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "ACTIVE"
+    canceled_ids = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
+    assert canceled_ids == {"v2tp-old", "v2sl-old"}
 
 
 def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
