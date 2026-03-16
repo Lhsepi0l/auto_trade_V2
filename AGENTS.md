@@ -2530,3 +2530,11 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_dynamic_notional_sizer.py v2/tests/test_control_api.py -k 'alpha_base_profile_loads or risk_aware_sizer_uses_runtime_max_leverage_when_candidate_cap_missing or tick_places_tpsl_brackets_after_live_execution or tick_does_not_duplicate_active_brackets_for_same_symbol or bracket_poller_cancels_extra_managed_algo_orders or bracket_poller_cleans_counterpart_when_one_leg_missing'` 통과
     - `python -m pytest -q v2/tests/test_live_execution_service.py v2/tests/test_tpsl_brackets.py -k 'live_execution_places_market_order or live_execution_reuses_existing_submission_for_same_intent or create_and_place_shadow_persists_active_without_rest or cleanup_if_flat_cancels_all_open_algo_orders_for_symbol or recover_sets_active_when_open_algo_order_exists'` 통과
     - `python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/control/api.py v2/tests/test_v2_config_loader.py v2/tests/test_dynamic_notional_sizer.py v2/tests/test_control_api.py` 통과
+- 2026-03-17 Discord `/panel` 현재 증거금 실시간 반영 수정:
+  - 원인은 `v2/discord_bot/views/panel.py`의 간단 패널 임베드가 `capital_snapshot.budget_usdt`만 `현재 증거금`으로 표시하고, 이미 `/status`에 포함되어 있던 실시간 `binance.usdt_balance.available`를 전혀 쓰지 않던 점이었다.
+  - 대응으로 `현재 증거금` 필드는 이제 실시간 사용가능 USDT를 우선 표시하고, 운영 설정 기준값은 `설정 기준 ... USDT`로 함께 노출하도록 변경했다.
+  - `source=exchange_cached`는 `(최근 캐시)`로 구분하고, `source=fallback` 등 실시간 조회 실패 경로에서는 실시간 숫자를 현재값처럼 오인하지 않도록 `실시간 조회 실패` + `설정 기준`만 표시한다.
+  - 회귀 테스트로 패널 임베드가 live/exchange, fallback, no-live payload 각각에서 올바른 증거금 문구를 내는지 `v2/tests/test_discord_panel.py`에 추가/수정했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_discord_panel.py` 통과
+    - `python -m ruff check v2/discord_bot/views/panel.py v2/tests/test_discord_panel.py` 통과

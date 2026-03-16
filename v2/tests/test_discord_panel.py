@@ -155,7 +155,10 @@ async def test_simple_embed_description_is_korean() -> None:
         assert label in str(em.description)
     assert any("엔진 상태" in str(field.name) for field in em.fields)
     assert any(
-        "현재 증거금" in str(field.value) or "운영 주기" in str(field.value) for field in em.fields
+        "현재 증거금" in str(field.name)
+        or "설정 기준" in str(field.value)
+        or "운영 주기" in str(field.value)
+        for field in em.fields
     )
     assert any(
         str(field.name) == "마지막 결과" and str(field.value).startswith("마지막 판단:")
@@ -348,7 +351,69 @@ async def test_build_embed_shows_failure_reason() -> None:
     em = _build_embed(payload, mode="simple")
     text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
     assert "차단 - 사유:" in text
-    assert "현재 증거금 32.0000 USDT" in text
+    assert "설정 기준 32.0000 USDT" in text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_embed_shows_live_available_margin_and_config_budget() -> None:
+    payload = {
+        "engine_state": {"state": "RUNNING"},
+        "scheduler": {
+            "last_action": "hold",
+            "last_error": None,
+        },
+        "config": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 32,
+        },
+        "capital_snapshot": {
+            "budget_usdt": 32,
+            "notional_usdt": 32,
+        },
+        "binance": {
+            "usdt_balance": {
+                "available": 123.45,
+                "wallet": 130.12,
+                "source": "exchange",
+            }
+        },
+    }
+    em = _build_embed(payload, mode="simple")
+    text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
+    assert "실시간 사용가능 123.4500 USDT" in text
+    assert "설정 기준 32.0000 USDT" in text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_embed_keeps_config_budget_when_live_balance_is_fallback() -> None:
+    payload = {
+        "engine_state": {"state": "RUNNING"},
+        "scheduler": {
+            "last_action": "hold",
+            "last_error": None,
+        },
+        "config": {
+            "capital_mode": "MARGIN_BUDGET_USDT",
+            "margin_budget_usdt": 32,
+        },
+        "capital_snapshot": {
+            "budget_usdt": 32,
+            "notional_usdt": 32,
+        },
+        "binance": {
+            "usdt_balance": {
+                "available": 123.45,
+                "wallet": 130.12,
+                "source": "fallback",
+            }
+        },
+    }
+    em = _build_embed(payload, mode="simple")
+    text = " ".join(str(v) for field in em.fields for v in [field.value, field.name])
+    assert "실시간 조회 실패" in text
+    assert "설정 기준 32.0000 USDT" in text
 
 
 @pytest.mark.unit

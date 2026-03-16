@@ -556,6 +556,25 @@ def _budget_display(payload: JSONPayload) -> tuple[str, str]:
     return _fmt_money(budget), _fmt_money(order_amt)
 
 
+def _build_current_margin_line(payload: JSONPayload) -> str:
+    budget_text, _order_amt = _budget_display(payload)
+    binance = _as_dict(payload.get("binance"))
+    usdt = _as_dict(binance.get("usdt_balance"))
+    source = str(usdt.get("source") or "").strip().lower()
+    available = usdt.get("available")
+
+    if source and source not in {"exchange", "exchange_cached"}:
+        return f"실시간 조회 실패\n설정 기준 {budget_text} USDT"
+
+    if available is None:
+        return f"설정 기준 {budget_text} USDT"
+
+    live_line = f"실시간 사용가능 {_fmt_money(available)} USDT"
+    if source == "exchange_cached":
+        live_line += " (최근 캐시)"
+    return f"{live_line}\n설정 기준 {budget_text} USDT"
+
+
 def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, str]:
     eng = _as_dict(payload.get("engine_state"))
     dry_run = bool(payload.get("dry_run", False))
@@ -578,8 +597,8 @@ def _build_simple_lines(payload: JSONPayload) -> tuple[str, str, str, str, str, 
 
     decision_hint = f"엔진: {state}\n드라이런: {'ON' if dry_run else 'OFF'}"
     next_decision = _next_decision_eta(payload)
-    budget, order_amt = _budget_display(payload)
-    margin_line = f"현재 증거금 {budget} USDT"
+    _budget, order_amt = _budget_display(payload)
+    margin_line = _build_current_margin_line(payload)
     expect_line = f"예상 주문금액: {order_amt} USDT"
 
     scan_interval = _scan_interval_label(payload)
