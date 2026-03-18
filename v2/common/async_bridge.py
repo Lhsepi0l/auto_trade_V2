@@ -103,7 +103,11 @@ def run_async_blocking(
     except RuntimeError:
         running_loop = None
 
-    if running_loop is not None:
+    if (
+        running_loop is not None
+        and _bridge_thread is not None
+        and threading.get_ident() == _bridge_thread.ident
+    ):
         return _run_in_helper_thread(thunk, timeout_sec=timeout_sec)
 
     if (
