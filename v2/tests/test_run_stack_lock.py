@@ -45,10 +45,11 @@ def _write_fake_python(
             ready_delay_sec = float(os.environ.get("FAKE_READY_DELAY_SEC", "0"))
             bot_import_ok = os.environ.get("FAKE_BOT_IMPORT_OK", "1") == "1"
             ready_requires_start = os.environ.get("FAKE_READY_REQUIRES_START", "0") == "1"
+            ready_requires_reconcile = os.environ.get("FAKE_READY_REQUIRES_RECONCILE", "0") == "1"
 
             def _load_state():
                 if not control_state.exists():
-                    return {{"started_at": 0.0, "requested": False}}
+                    return {{"started_at": 0.0, "requested": False, "reconciled": False}}
                 return json.loads(control_state.read_text(encoding="utf-8"))
 
             def _save_state(payload):
@@ -67,12 +68,20 @@ def _write_fake_python(
                     ready = (time.time() - float(state.get("started_at", 0.0))) >= ready_delay_sec and (
                         bool(state.get("requested")) or not ready_requires_start
                     )
-                    body = json.dumps({{"ready": ready}})
+                    recovery_required = bool(ready_requires_reconcile and not state.get("reconciled"))
+                    if recovery_required:
+                        ready = False
+                    body = json.dumps({{"ready": ready, "recovery_required": recovery_required}})
                     print(body)
                     raise SystemExit(0 if ready else 1)
                 if url.endswith("/start"):
                     state = _load_state()
                     state["requested"] = True
+                    _save_state(state)
+                    raise SystemExit(0)
+                if url.endswith("/reconcile"):
+                    state = _load_state()
+                    state["reconciled"] = True
                     _save_state(state)
                     raise SystemExit(0)
 
@@ -95,7 +104,7 @@ def _write_fake_python(
                 while True:
                     time.sleep(0.1)
 
-            _save_state({{"started_at": time.time(), "requested": False}})
+            _save_state({{"started_at": time.time(), "requested": False, "reconciled": False}})
             control_started.write_text("started", encoding="utf-8")
 
             def _shutdown(_signum, _frame):
@@ -224,6 +233,45 @@ def test_run_stack_posts_start_before_requiring_readyz(tmp_path) -> None:  # typ
     env["STACK_LOCK_FILE"] = str(lock_path)
     env["FAKE_READY_DELAY_SEC"] = "0.2"
     env["FAKE_READY_REQUIRES_START"] = "1"
+
+    proc = subprocess.Popen(  # noqa: S603
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_file(control_started)
+        _wait_for_file(bot_started, timeout_sec=3.0)
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3.0)
+
+
+def test_run_stack_auto_reconciles_dirty_restart_before_starting_bot(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo_root = Path(__file__).resolve().parents[2]
+    fake_python = tmp_path / "fake_python.py"
+    control_started = tmp_path / "control.started"
+    bot_started = tmp_path / "bot.started"
+    bot_base_url = tmp_path / "bot.base_url"
+    lock_path = tmp_path / "stack.lock"
+    _write_fake_python(
+        target=fake_python,
+        control_started=control_started,
+        bot_started=bot_started,
+        bot_base_url=bot_base_url,
+    )
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = str(fake_python)
+    env["STACK_LOCK_FILE"] = str(lock_path)
+    env["FAKE_READY_REQUIRES_RECONCILE"] = "1"
 
     proc = subprocess.Popen(  # noqa: S603
         ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod"],

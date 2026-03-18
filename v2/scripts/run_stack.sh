@@ -176,11 +176,13 @@ verify_bot_import() {
 
 wait_for_control_ready() {
     local ready_url="http://${CONTROL_HOST}:${CONTROL_PORT}/readyz"
+    local reconcile_url="http://${CONTROL_HOST}:${CONTROL_PORT}/reconcile"
     local start_url="http://${CONTROL_HOST}:${CONTROL_PORT}/start"
     local start_ts
     local now_ts
     local elapsed
     local ready_output=""
+    local reconcile_attempted=0
     local start_attempted=0
 
     start_ts="$(date +%s)"
@@ -221,6 +223,39 @@ except Exception as exc:
 PY
         ); then
             return 0
+        fi
+
+        if (( reconcile_attempted == 0 )) && [[ "$ready_output" != request_error:* ]]; then
+            if READY_OUTPUT="$ready_output" "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(os.environ.get("READY_OUTPUT", ""))
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if bool(payload.get("recovery_required")) else 1)
+PY
+            then
+                if "$PYTHON_BIN" - "$reconcile_url" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+url = sys.argv[1]
+request = urllib.request.Request(url, method="POST")
+with urllib.request.urlopen(request, timeout=10.0) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+                then
+                    reconcile_attempted=1
+                    sleep "$READY_POLL_SEC"
+                    continue
+                fi
+            fi
         fi
 
         if (( start_attempted == 0 )) && [[ "$ready_output" != request_error:* ]]; then
