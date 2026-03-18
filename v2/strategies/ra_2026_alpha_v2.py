@@ -60,6 +60,7 @@ class _AlphaEvaluation:
     reason: str
     score: float = 0.0
     payload: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ class RA2026AlphaV2Params:
     expansion_breakout_stability_edge_score_min: float = 0.0
     expansion_quality_score_min: float = 0.0
     expansion_quality_score_v2_min: float = 0.0
-    min_volume_ratio_15m: float = 1.0
+    min_volume_ratio_15m: float = 0.9
     pullback_touch_atr_mult: float = 0.35
     expansion_range_atr_min: float = 1.1
     squeeze_percentile_threshold: float = 0.35
@@ -444,6 +445,13 @@ def _decision_none(
             for alpha_id, meta in alpha_diagnostics.items()
             if str(meta.get("state") or "").strip() != "candidate"
             and str(meta.get("reason") or "").strip()
+        }
+        payload["alpha_reject_metrics"] = {
+            str(alpha_id): copy.deepcopy(meta.get("metrics") or {})
+            for alpha_id, meta in alpha_diagnostics.items()
+            if str(meta.get("state") or "").strip() != "candidate"
+            and isinstance(meta.get("metrics"), dict)
+            and meta.get("metrics")
         }
     return payload
 
@@ -894,6 +902,14 @@ def _build_entry_payload(
         if str(meta.get("state") or "").strip() != "candidate"
         and str(meta.get("reason") or "").strip()
     }
+    payload["alpha_reject_metrics"] = {
+        str(alpha_id_key): copy.deepcopy(meta.get("metrics") or {})
+        for alpha_id_key, meta in alpha_diagnostics.items()
+        if str(alpha_id_key) != str(alpha_id)
+        and str(meta.get("state") or "").strip() != "candidate"
+        and isinstance(meta.get("metrics"), dict)
+        and meta.get("metrics")
+    }
     payload["sl_tp"] = {
         "take_profit": float(take_profit),
         "stop_loss": float(stop_price),
@@ -955,25 +971,41 @@ class RA2026AlphaV2(StrategyPlugin):
         if ctx.bias_side != ctx.regime_side:
             return _AlphaEvaluation(alpha_id="alpha_breakout", reason="bias_missing")
         if ctx.vol_ratio_15m < float(cfg.min_volume_ratio_15m):
-            return _AlphaEvaluation(alpha_id="alpha_breakout", reason="volume_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_breakout",
+                reason="volume_missing",
+                diagnostics={
+                    "vol_ratio_15m": float(ctx.vol_ratio_15m),
+                    "min_volume_ratio_15m": float(cfg.min_volume_ratio_15m),
+                },
+            )
 
         previous_channel = donchian(ctx.candles_15m[:-1], cfg.donchian_period_15m)
         if previous_channel is None:
             return _AlphaEvaluation(alpha_id="alpha_breakout", reason="trigger_missing")
         upper, lower = previous_channel
         buffer = float(cfg.breakout_buffer_bps) / 10000.0
+        long_breakout_level = float(upper) * (1.0 + buffer)
+        short_breakout_level = float(lower) * (1.0 - buffer)
         long_trigger = (
             ctx.regime_side == "LONG"
-            and float(ctx.current_bar.close) > (float(upper) * (1.0 + buffer))
-            and float(ctx.current_bar.close) > float(ctx.current_bar.open)
+            and float(ctx.current_bar.close) > float(long_breakout_level)
         )
         short_trigger = (
             ctx.regime_side == "SHORT"
-            and float(ctx.current_bar.close) < (float(lower) * (1.0 - buffer))
-            and float(ctx.current_bar.close) < float(ctx.current_bar.open)
+            and float(ctx.current_bar.close) < float(short_breakout_level)
         )
         if not long_trigger and not short_trigger:
-            return _AlphaEvaluation(alpha_id="alpha_breakout", reason="trigger_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_breakout",
+                reason="trigger_missing",
+                diagnostics={
+                    "close": float(ctx.current_bar.close),
+                    "breakout_level_long": float(long_breakout_level),
+                    "breakout_level_short": float(short_breakout_level),
+                    "regime_side": ctx.regime_side,
+                },
+            )
 
         side: AllowedSideName = "LONG" if long_trigger else "SHORT"
         entry_price = float(ctx.current_bar.close)
@@ -1027,11 +1059,18 @@ class RA2026AlphaV2(StrategyPlugin):
         if ctx.bias_side != ctx.regime_side:
             return _AlphaEvaluation(alpha_id="alpha_pullback", reason="bias_missing")
         if ctx.vol_ratio_15m < float(cfg.min_volume_ratio_15m):
-            return _AlphaEvaluation(alpha_id="alpha_pullback", reason="volume_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_pullback",
+                reason="volume_missing",
+                diagnostics={
+                    "vol_ratio_15m": float(ctx.vol_ratio_15m),
+                    "min_volume_ratio_15m": float(cfg.min_volume_ratio_15m),
+                },
+            )
 
         touch_band = float(ctx.atr_15m) * float(cfg.pullback_touch_atr_mult)
-        recent = ctx.candles_15m[-4:-1]
-        if len(recent) < 3:
+        recent = ctx.candles_15m[-6:-1]
+        if len(recent) < 5:
             return _AlphaEvaluation(alpha_id="alpha_pullback", reason="trigger_missing")
 
         long_touch = any(float(bar.low) <= float(ctx.ema_15m) + touch_band for bar in recent)
@@ -1041,17 +1080,27 @@ class RA2026AlphaV2(StrategyPlugin):
             and long_touch
             and float(ctx.current_bar.close) > float(ctx.ema_15m)
             and float(ctx.current_bar.high) > float(ctx.prev_bar.high)
-            and float(ctx.current_bar.close) > float(ctx.current_bar.open)
         )
         short_trigger = (
             ctx.regime_side == "SHORT"
             and short_touch
             and float(ctx.current_bar.close) < float(ctx.ema_15m)
             and float(ctx.current_bar.low) < float(ctx.prev_bar.low)
-            and float(ctx.current_bar.close) < float(ctx.current_bar.open)
         )
         if not long_trigger and not short_trigger:
-            return _AlphaEvaluation(alpha_id="alpha_pullback", reason="trigger_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_pullback",
+                reason="trigger_missing",
+                diagnostics={
+                    "touch_band": float(touch_band),
+                    "ema_15m": float(ctx.ema_15m),
+                    "recent_touch_long": bool(long_touch),
+                    "recent_touch_short": bool(short_touch),
+                    "close": float(ctx.current_bar.close),
+                    "prev_high": float(ctx.prev_bar.high),
+                    "prev_low": float(ctx.prev_bar.low),
+                },
+            )
 
         side: AllowedSideName = "LONG" if long_trigger else "SHORT"
         entry_price = float(ctx.current_bar.close)
@@ -1100,7 +1149,14 @@ class RA2026AlphaV2(StrategyPlugin):
         if ctx.bias_side == "NONE":
             return _AlphaEvaluation(alpha_id="alpha_expansion", reason="bias_missing")
         if ctx.vol_ratio_15m < float(cfg.min_volume_ratio_15m):
-            return _AlphaEvaluation(alpha_id="alpha_expansion", reason="volume_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_expansion",
+                reason="volume_missing",
+                diagnostics={
+                    "vol_ratio_15m": float(ctx.vol_ratio_15m),
+                    "min_volume_ratio_15m": float(cfg.min_volume_ratio_15m),
+                },
+            )
 
         closes = [float(bar.close) for bar in ctx.candles_15m]
         widths: list[float] = []
@@ -1171,35 +1227,61 @@ class RA2026AlphaV2(StrategyPlugin):
             (float(ctx.current_bar.close) - float(ctx.current_bar.low)) / max(true_range, 1e-9),
             0.0,
         )
+        squeeze_ready = float(previous_width) <= float(squeeze_threshold)
+        width_ready = float(width_expansion_frac) >= float(cfg.expansion_width_expansion_min)
+        body_ready = float(body_ratio) >= float(cfg.expansion_body_ratio_min)
+        close_ready = float(favored_close_long) >= float(cfg.expansion_close_location_min)
+        short_close_ready = float(favored_close_short) >= float(cfg.expansion_close_location_min)
+        breakout_distance_ready_long = float(breakout_distance_atr_long) >= float(
+            cfg.expansion_break_distance_atr_min
+        )
+        breakout_distance_ready_short = float(breakout_distance_atr_short) >= float(
+            cfg.expansion_break_distance_atr_min
+        )
         long_trigger = (
             ctx.bias_side == "LONG"
-            and float(previous_width) <= float(squeeze_threshold)
-            and float(current_width) > float(previous_width)
-            and float(width_expansion_frac) >= float(cfg.expansion_width_expansion_min)
             and float(range_atr) >= float(cfg.expansion_range_atr_min)
             and float(ctx.current_bar.close) > float(long_breakout_level)
-            and float(breakout_distance_atr_long) >= float(cfg.expansion_break_distance_atr_min)
-            and float(body_ratio) >= float(cfg.expansion_body_ratio_min)
-            and float(favored_close_long) >= float(cfg.expansion_close_location_min)
         )
         short_trigger = (
             ctx.bias_side == "SHORT"
-            and float(previous_width) <= float(squeeze_threshold)
-            and float(current_width) > float(previous_width)
-            and float(width_expansion_frac) >= float(cfg.expansion_width_expansion_min)
             and float(range_atr) >= float(cfg.expansion_range_atr_min)
             and float(ctx.current_bar.close) < float(short_breakout_level)
-            and float(breakout_distance_atr_short) >= float(cfg.expansion_break_distance_atr_min)
-            and float(body_ratio) >= float(cfg.expansion_body_ratio_min)
-            and float(favored_close_short) >= float(cfg.expansion_close_location_min)
         )
         if not long_trigger and not short_trigger:
-            return _AlphaEvaluation(alpha_id="alpha_expansion", reason="trigger_missing")
+            return _AlphaEvaluation(
+                alpha_id="alpha_expansion",
+                reason="trigger_missing",
+                diagnostics={
+                    "bias_side": ctx.bias_side,
+                    "range_atr": float(range_atr),
+                    "expansion_range_atr_min": float(cfg.expansion_range_atr_min),
+                    "close": float(ctx.current_bar.close),
+                    "breakout_level_long": float(long_breakout_level),
+                    "breakout_level_short": float(short_breakout_level),
+                    "squeeze_ready": bool(squeeze_ready),
+                    "width_ready": bool(width_ready),
+                    "body_ready": bool(body_ready),
+                    "close_ready": bool(close_ready),
+                    "short_close_ready": bool(short_close_ready),
+                    "breakout_distance_ready_long": bool(breakout_distance_ready_long),
+                    "breakout_distance_ready_short": bool(breakout_distance_ready_short),
+                    "width_expansion_frac": float(width_expansion_frac),
+                    "body_ratio": float(body_ratio),
+                    "favored_close_long": float(favored_close_long),
+                    "favored_close_short": float(favored_close_short),
+                    "breakout_distance_atr_long": float(breakout_distance_atr_long),
+                    "breakout_distance_atr_short": float(breakout_distance_atr_short),
+                },
+            )
 
         side: AllowedSideName = "LONG" if long_trigger else "SHORT"
         favored_close = float(favored_close_long if side == "LONG" else favored_close_short)
         breakout_efficiency = float(
             breakout_efficiency_long if side == "LONG" else breakout_efficiency_short
+        )
+        breakout_distance_atr = float(
+            breakout_distance_atr_long if side == "LONG" else breakout_distance_atr_short
         )
         overhang_frac = float(overhang_frac_long if side == "LONG" else overhang_frac_short)
         rejection_wick_frac = float(
@@ -1279,12 +1361,13 @@ class RA2026AlphaV2(StrategyPlugin):
         score = _clamp_score(
             0.49
             + (float(ctx.bias_strength) * 0.16)
-            + min(max(float(ctx.vol_ratio_15m) - 1.0, 0.0), 1.0) * 0.10
+            + min(max(float(ctx.vol_ratio_15m) - float(cfg.min_volume_ratio_15m), 0.0), 1.0) * 0.10
             + min(max(float(range_atr) - 1.0, 0.0), 1.0) * 0.11
-            + (
-                min(max((float(current_width) - float(previous_width)) / max(float(previous_width), 1e-9), 0.0), 1.0)
-                * 0.08
-            )
+            + min(max(float(width_expansion_frac), 0.0), 1.0) * 0.08
+            + min(max(float(breakout_distance_atr), 0.0), 1.0) * 0.08
+            + min(max(float(body_ratio), 0.0), 1.0) * 0.06
+            + min(max(float(favored_close), 0.0), 1.0) * 0.06
+            + (0.04 if squeeze_ready else 0.0)
         )
         return _AlphaEvaluation(
             alpha_id="alpha_expansion",
@@ -1297,6 +1380,21 @@ class RA2026AlphaV2(StrategyPlugin):
                 "stop_distance_frac": float(stop_distance_frac),
                 "quality_score_v2": float(quality_score_v2),
                 "breakout_stability_edge_score": float(breakout_stability_edge_score),
+            },
+            diagnostics={
+                "vol_ratio_15m": float(ctx.vol_ratio_15m),
+                "min_volume_ratio_15m": float(cfg.min_volume_ratio_15m),
+                "range_atr": float(range_atr),
+                "expansion_range_atr_min": float(cfg.expansion_range_atr_min),
+                "body_ratio": float(body_ratio),
+                "expansion_body_ratio_min": float(cfg.expansion_body_ratio_min),
+                "favored_close": float(favored_close),
+                "expansion_close_location_min": float(cfg.expansion_close_location_min),
+                "width_expansion_frac": float(width_expansion_frac),
+                "expansion_width_expansion_min": float(cfg.expansion_width_expansion_min),
+                "breakout_distance_atr": float(breakout_distance_atr),
+                "expansion_break_distance_atr_min": float(cfg.expansion_break_distance_atr_min),
+                "squeeze_ready": bool(squeeze_ready),
             },
         )
 
@@ -1345,6 +1443,7 @@ class RA2026AlphaV2(StrategyPlugin):
                 "state": "candidate" if item.payload is not None else "blocked",
                 "reason": item.reason,
                 "score": float(item.score),
+                "metrics": copy.deepcopy(item.diagnostics or {}),
             }
             for item in evaluations
         }
@@ -1394,10 +1493,14 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
         self._overheat_fetcher = overheat_fetcher
         self._journal_logger = journal_logger
         self._last_no_candidate_reason: str | None = None
+        self._last_no_candidate_context: dict[str, Any] | None = None
         self._sync_strategy_supported_symbols()
 
     def get_last_no_candidate_reason(self) -> str | None:
         return self._last_no_candidate_reason
+
+    def get_last_no_candidate_context(self) -> dict[str, Any] | None:
+        return copy.deepcopy(self._last_no_candidate_context)
 
     def _sync_strategy_supported_symbols(self) -> None:
         updater = getattr(self._strategy, "set_runtime_params", None)
@@ -1418,6 +1521,7 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
     def select(self, *, context: KernelContext) -> Candidate | None:
         _ = context
         self._last_no_candidate_reason = None
+        self._last_no_candidate_context = None
         base_snapshot: dict[str, Any] = {"symbol": self._symbols[0]}
         if self._snapshot_provider is not None:
             provided = self._snapshot_provider()
@@ -1427,6 +1531,7 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
         symbols_market = base_snapshot.get("symbols")
         candidates: list[Candidate] = []
         skipped: dict[str, str] = {}
+        skipped_context: dict[str, dict[str, Any]] = {}
 
         for symbol in self._symbols:
             symbol_snapshot = dict(base_snapshot)
@@ -1445,6 +1550,21 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
             side = str(decision.get("side") or "NONE")
             if intent not in {"LONG", "SHORT"} or side not in {"BUY", "SELL"}:
                 skipped[symbol] = str(decision.get("reason") or "no_entry")
+                skipped_context[symbol] = {
+                    "reason": str(decision.get("reason") or "no_entry"),
+                    "alpha_blocks": copy.deepcopy(decision.get("alpha_blocks") or {}),
+                    "alpha_reject_metrics": copy.deepcopy(
+                        decision.get("alpha_reject_metrics")
+                        or {
+                            alpha_id: (meta.get("metrics") or {})
+                            for alpha_id, meta in (decision.get("alpha_diagnostics") or {}).items()
+                            if isinstance(meta, dict)
+                            and str(meta.get("state") or "").strip() != "candidate"
+                            and isinstance(meta.get("metrics"), dict)
+                            and meta.get("metrics")
+                        }
+                    ),
+                }
                 continue
 
             score = _to_float(decision.get("score")) or 0.0
@@ -1490,6 +1610,7 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
         if skipped:
             ordered = sorted(skipped.items())
             reasons = sorted({reason for _, reason in ordered})
+            self._last_no_candidate_context = copy.deepcopy(skipped_context)
             if len(reasons) == 1:
                 self._last_no_candidate_reason = reasons[0]
             else:

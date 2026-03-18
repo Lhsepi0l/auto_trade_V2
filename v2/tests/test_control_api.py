@@ -226,7 +226,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert risk_payload["universe_symbols"] == ["BTCUSDT"]
     assert risk_payload["trend_adx_min_4h"] == 14.0
     assert risk_payload["trend_adx_rising_lookback_4h"] == 0
-    assert risk_payload["min_volume_ratio_15m"] == 1.0
+    assert risk_payload["min_volume_ratio_15m"] == 0.9
     assert risk_payload["expansion_buffer_bps"] == 2.0
     assert risk_payload["expansion_quality_score_v2_min"] == 0.7
 
@@ -250,10 +250,10 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     status_payload = status.json()
     assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
     assert status_payload["config_summary"]["strategy_runtime"]["trend_adx_min_4h"] == 14.0
-    assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 1.0
+    assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 0.9
     assert status_payload["config_summary"]["strategy_runtime"]["squeeze_percentile_threshold"] == 0.35
-    assert status_payload["config_summary"]["strategy_runtime"]["expansion_body_ratio_min"] == 0.25
-    assert status_payload["config_summary"]["strategy_runtime"]["expansion_close_location_min"] == 0.45
+    assert status_payload["config_summary"]["strategy_runtime"]["expansion_body_ratio_min"] == 0.18
+    assert status_payload["config_summary"]["strategy_runtime"]["expansion_close_location_min"] == 0.35
     assert status_payload["config_summary"]["strategy_runtime"]["expansion_quality_score_v2_min"] == 0.7
 
 
@@ -296,7 +296,7 @@ def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> No
     assert kwargs["trend_adx_min_4h"] == 24.0
     assert kwargs["trend_adx_rising_lookback_4h"] == 0
     assert kwargs["breakout_buffer_bps"] == 3.0
-    assert kwargs["min_volume_ratio_15m"] == 1.0
+    assert kwargs["min_volume_ratio_15m"] == 0.9
     assert kwargs["expansion_buffer_bps"] == 2.0
     assert kwargs["expansion_range_atr_min"] == 0.7
     assert kwargs["expected_move_cost_mult"] == 1.6
@@ -359,7 +359,7 @@ def test_legacy_strategy_runtime_defaults_migrate_to_profile_values(tmp_path) ->
     risk = controller.get_risk()
     assert risk["trend_adx_min_4h"] == 14.0
     assert risk["breakout_buffer_bps"] == 3.0
-    assert risk["min_volume_ratio_15m"] == 1.0
+    assert risk["min_volume_ratio_15m"] == 0.9
 
     persisted = state_store.load_runtime_risk_config()
     assert "trend_adx_min_4h" not in persisted
@@ -376,7 +376,7 @@ def test_strategy_runtime_profile_change_resets_to_current_profile_defaults(tmp_
         config={
             "squeeze_percentile_threshold": 0.35,
             "expansion_quality_score_v2_min": 0.70,
-            "min_volume_ratio_15m": 1.0,
+            "min_volume_ratio_15m": 0.9,
         }
     )
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -406,7 +406,7 @@ def test_strategy_runtime_profile_change_resets_to_current_profile_defaults(tmp_
     risk = controller.get_risk()
     assert risk["squeeze_percentile_threshold"] == 0.3
     assert risk["expansion_quality_score_v2_min"] == 0.0
-    assert risk["min_volume_ratio_15m"] == 1.0
+    assert risk["min_volume_ratio_15m"] == 0.9
 
     persisted = state_store.load_runtime_risk_config()
     assert "squeeze_percentile_threshold" not in persisted
@@ -451,7 +451,7 @@ def test_strategy_runtime_same_profile_drops_persisted_override(tmp_path) -> Non
 
     risk = controller.get_risk()
     assert risk["squeeze_percentile_threshold"] == 0.3
-    assert risk["min_volume_ratio_15m"] == 1.0
+    assert risk["min_volume_ratio_15m"] == 0.9
 
     persisted = state_store.load_runtime_risk_config()
     assert "squeeze_percentile_threshold" not in persisted
@@ -469,7 +469,7 @@ def test_set_value_strategy_runtime_override_is_runtime_only(tmp_path) -> None: 
     assert "min_volume_ratio_15m" not in persisted
 
     rebuilt = _build_controller(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
-    assert rebuilt.get_risk()["min_volume_ratio_15m"] == 1.0
+    assert rebuilt.get_risk()["min_volume_ratio_15m"] == 0.9
 
 
 def test_q070_profile_owned_risk_overrides_are_runtime_only(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -605,6 +605,84 @@ def test_derived_risk_state_is_not_restored_from_persistence(tmp_path) -> None: 
     assert "last_block_reason" not in persisted
     assert "last_strategy_block_reason" not in persisted
     assert "runtime_equity_peak_usdt" not in persisted
+
+
+def test_live_drawdown_uses_wallet_equity_not_margin_budget(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _BalanceREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "970.0", "walletBalance": "1000.0"}]
+
+    controller, state_store, _ops = _build_live_controller(
+        tmp_path,
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        rest_client=_BalanceREST(),
+    )
+    controller._risk["margin_budget_usdt"] = 35.0
+    controller._risk["margin_use_pct"] = 0.1
+    state_store.startup_reconcile(
+        snapshot=ResyncSnapshot(
+            positions=[
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.01",
+                    "entryPrice": "100000",
+                    "unRealizedProfit": "-20.0",
+                }
+            ]
+        ),
+        reason="drawdown_wallet_basis",
+    )
+
+    risk = controller.get_risk()
+
+    assert risk["dd_lock"] is False
+    assert risk["dd_used_pct"] == 0.02
+
+
+def test_live_drawdown_is_suppressed_when_wallet_equity_basis_is_unavailable(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _FailBalanceREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            raise RuntimeError("balance_down")
+
+    controller, state_store, _ops = _build_live_controller(
+        tmp_path,
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        rest_client=_FailBalanceREST(),
+    )
+    controller._risk["margin_budget_usdt"] = 35.0
+    controller._risk["margin_use_pct"] = 0.1
+    state_store.startup_reconcile(
+        snapshot=ResyncSnapshot(
+            positions=[
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.01",
+                    "entryPrice": "100000",
+                    "unRealizedProfit": "-20.0",
+                }
+            ]
+        ),
+        reason="drawdown_missing_wallet_basis",
+    )
+
+    risk = controller.get_risk()
+
+    assert risk["dd_lock"] is False
+    assert risk["dd_used_pct"] == 0.0
 
 
 def test_set_value_waits_for_controller_lock(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -2589,28 +2667,84 @@ def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_una
 
 
 def test_control_api_status_notional_tracks_effective_budget_leverage(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    app = _build_app(tmp_path)
-    client = TestClient(app)
+    controller = _build_controller(tmp_path)
+    assert controller.set_value(key="universe_symbols", value="BTCUSDT,ETHUSDT")["applied_value"] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    assert controller.set_value(key="margin_budget_usdt", value="35")["applied_value"] == 35
+    assert controller.set_value(key="max_leverage", value="20")["applied_value"] == 20
+    assert controller.set_symbol_leverage(symbol="ETHUSDT", leverage=7)["symbol_leverage_map"]["ETHUSDT"] == 7.0
 
-    assert (
-        client.post(
-            "/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"}
-        ).status_code
-        == 200
-    )
-    assert client.post("/set", json={"key": "margin_budget_usdt", "value": "35"}).status_code == 200
-    assert client.post("/set", json={"key": "max_leverage", "value": "20"}).status_code == 200
-    assert (
-        client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7}).status_code
-        == 200
-    )
-
-    status = client.get("/status")
-    assert status.status_code == 200
-    payload = status.json()
+    payload = controller._status_snapshot()
     assert payload["capital_snapshot"]["budget_usdt"] == 3.5
     assert payload["capital_snapshot"]["leverage"] == 7.0
     assert payload["capital_snapshot"]["notional_usdt"] == 24.5
+
+
+def test_control_api_status_surfaces_alpha_reject_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_alpha_reject.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoCandidateDiagnostics:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="volume_missing", candidate=None)
+
+        def get_last_no_candidate_context(self) -> dict[str, Any]:
+            return {
+                "BTCUSDT": {
+                    "reason": "volume_missing",
+                    "alpha_blocks": {
+                        "alpha_breakout": "volume_missing",
+                        "alpha_expansion": "trigger_missing",
+                    },
+                    "alpha_reject_metrics": {
+                        "alpha_breakout": {
+                            "vol_ratio_15m": 0.82,
+                            "min_volume_ratio_15m": 0.9,
+                        }
+                    },
+                }
+            }
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoCandidateDiagnostics(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    out = controller.tick_scheduler_now()
+    status = controller._status_snapshot()
+
+    assert out["snapshot"]["last_decision_reason"] == "volume_missing"
+    assert status["config_summary"]["risk_runtime"]["last_alpha_reject_focus"] == (
+        "alpha_breakout:volume_missing, alpha_expansion:trigger_missing"
+    )
+    assert status["config_summary"]["risk_runtime"]["last_alpha_blocks"]["alpha_breakout"] == (
+        "volume_missing"
+    )
+    assert (
+        status["config_summary"]["risk_runtime"]["last_alpha_reject_metrics"]["alpha_breakout"][
+            "min_volume_ratio_15m"
+        ]
+        == 0.9
+    )
 
 
 def test_control_api_status_uses_recent_cached_balance_after_fetch_failure(
@@ -2837,27 +2971,24 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
         notifier=Notifier(enabled=False),
         rest_client=None,
     )
-    app = create_control_http_app(controller=controller)
-    client = TestClient(app)
-
-    set_uni = client.post("/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"})
-    assert set_uni.status_code == 200
+    set_uni = controller.set_value(key="universe_symbols", value="BTCUSDT,ETHUSDT")
+    assert set_uni["applied_value"] == ["BTCUSDT", "ETHUSDT"]
     assert kernel.symbols == ["BTCUSDT", "ETHUSDT"]
 
-    set_budget = client.post("/set", json={"key": "margin_budget_usdt", "value": "35"})
-    assert set_budget.status_code == 200
-    assert kernel.fallback_notional == 17.5
+    set_budget = controller.set_value(key="margin_budget_usdt", value="35")
+    assert set_budget["applied_value"] == 35
+    assert kernel.fallback_notional == 3.5
 
-    set_cap = client.post("/set", json={"key": "max_position_notional_usdt", "value": "120"})
-    assert set_cap.status_code == 200
+    set_cap = controller.set_value(key="max_position_notional_usdt", value="120")
+    assert set_cap["applied_value"] == 120
     assert kernel.max_notional == 120.0
-    assert kernel.fallback_notional == 17.5
+    assert kernel.fallback_notional == 3.5
 
-    _ = client.post("/set", json={"key": "max_leverage", "value": "20"})
-    assert kernel.fallback_notional == 70.0
-    lev = client.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 7})
-    assert lev.status_code == 200
-    assert kernel.fallback_notional == 24.5
+    _ = controller.set_value(key="max_leverage", value="20")
+    assert kernel.fallback_notional == 3.5
+    lev = controller.set_symbol_leverage(symbol="ETHUSDT", leverage=7)
+    assert lev["symbol_leverage_map"]["ETHUSDT"] == 7.0
+    assert kernel.fallback_notional == 3.5
     assert kernel.mapping.get("ETHUSDT") == 7.0
     assert kernel.max_leverage == 20.0
 
@@ -2891,23 +3022,13 @@ def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # t
         notifier=Notifier(enabled=False),
         rest_client=None,
     )
-    app1 = create_control_http_app(controller=controller1)
-    client1 = TestClient(app1)
-
-    assert (
-        client1.post("/set", json={"key": "margin_budget_usdt", "value": "250"}).status_code == 200
-    )
-    assert (
-        client1.post(
-            "/set", json={"key": "universe_symbols", "value": "BTCUSDT,ETHUSDT"}
-        ).status_code
-        == 200
-    )
-    assert client1.post("/set", json={"key": "max_leverage", "value": "15"}).status_code == 200
-    assert (
-        client1.post("/symbol-leverage", json={"symbol": "ETHUSDT", "leverage": 8}).status_code
-        == 200
-    )
+    assert controller1.set_value(key="margin_budget_usdt", value="250")["applied_value"] == 250
+    assert controller1.set_value(key="universe_symbols", value="BTCUSDT,ETHUSDT")["applied_value"] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    assert controller1.set_value(key="max_leverage", value="15")["applied_value"] == 15
+    assert controller1.set_symbol_leverage(symbol="ETHUSDT", leverage=8)["symbol_leverage_map"]["ETHUSDT"] == 8.0
 
     storage2 = RuntimeStorage(sqlite_path=sqlite_path)
     storage2.ensure_schema()
@@ -2933,16 +3054,104 @@ def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # t
         notifier=Notifier(enabled=False),
         rest_client=None,
     )
-    app2 = create_control_http_app(controller=controller2)
-    client2 = TestClient(app2)
-
-    risk = client2.get("/risk")
-    assert risk.status_code == 200
-    payload = risk.json()
+    payload = controller2.get_risk()
     assert payload["margin_budget_usdt"] == 250
     assert payload["max_leverage"] == 15
     assert payload["universe_symbols"] == ["BTCUSDT", "ETHUSDT"]
     assert payload["symbol_leverage_map"]["ETHUSDT"] == 8.0
+
+
+def test_control_api_restores_kernel_runtime_overrides_after_restart(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    sqlite_path = str(tmp_path / "control_kernel_restart.sqlite3")
+    cfg.behavior.storage.sqlite_path = sqlite_path
+
+    class _KernelStub:
+        def __init__(self) -> None:
+            self.symbols: list[str] = []
+            self.mapping: dict[str, float] = {}
+            self.max_leverage: float = 1.0
+            self.fallback_notional: float = 0.0
+            self.max_notional: float | None = None
+
+        def set_universe_symbols(self, symbols: list[str]) -> None:
+            self.symbols = list(symbols)
+
+        def set_symbol_leverage_map(
+            self, mapping: dict[str, float], *, max_leverage: float
+        ) -> None:
+            self.mapping = dict(mapping)
+            self.max_leverage = float(max_leverage)
+
+        def set_notional_config(
+            self,
+            *,
+            fallback_notional: float,
+            max_notional: float | None,
+        ) -> None:
+            self.fallback_notional = float(fallback_notional)
+            self.max_notional = max_notional
+
+        def run_once(self):  # type: ignore[no-untyped-def]
+            from v2.clean_room.contracts import KernelCycleResult
+
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    storage1 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage1.ensure_schema()
+    state_store1 = EngineStateStore(storage=storage1, mode=cfg.mode)
+    event_bus1 = EventBus()
+    scheduler1 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus1)
+    ops1 = OpsController(state_store=state_store1, exchange=None)
+    kernel1 = _KernelStub()
+    controller1 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store1,
+        ops=ops1,
+        kernel=kernel1,
+        scheduler=scheduler1,
+        event_bus=event_bus1,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    assert controller1.set_value(key="margin_budget_usdt", value="250")["applied_value"] == 250
+    assert controller1.set_value(key="max_leverage", value="15")["applied_value"] == 15
+    assert controller1.set_value(key="universe_symbols", value="BTCUSDT,ETHUSDT")["applied_value"] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    assert controller1.set_symbol_leverage(symbol="ETHUSDT", leverage=8)["symbol_leverage_map"]["ETHUSDT"] == 8.0
+
+    storage2 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage2.ensure_schema()
+    state_store2 = EngineStateStore(storage=storage2, mode=cfg.mode)
+    event_bus2 = EventBus()
+    scheduler2 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus2)
+    ops2 = OpsController(state_store=state_store2, exchange=None)
+    kernel2 = _KernelStub()
+    _ = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store2,
+        ops=ops2,
+        kernel=kernel2,
+        scheduler=scheduler2,
+        event_bus=event_bus2,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    assert kernel2.fallback_notional == 250.0
+    assert kernel2.max_notional is None
+    assert kernel2.max_leverage == 15.0
+    assert kernel2.mapping == {"ETHUSDT": 8.0}
+    assert kernel2.symbols == ["BTCUSDT", "ETHUSDT"]
 
 
 def test_live_tick_does_not_preblock_multi_symbol_scan_when_live_position_exists(
@@ -3322,8 +3531,8 @@ def test_live_user_stream_disconnect_resync_and_event_flow_update_state(tmp_path
         user_stream_manager=manager,
     )
 
-    app = create_control_http_app(controller=controller)
-    with TestClient(app):
+    try:
+        asyncio.run(controller.start_live_services())
         assert manager.started is True
         assert controller._status_snapshot()["state_uncertain"] is False
 
@@ -3355,6 +3564,8 @@ def test_live_user_stream_disconnect_resync_and_event_flow_update_state(tmp_path
             )
         )
         assert "ETHUSDT" not in state_store.get().current_position
+    finally:
+        asyncio.run(controller.stop_live_services())
 
     assert manager.stopped is True
 
@@ -3773,25 +3984,25 @@ def test_readyz_and_healthz_reflect_uncertainty_stale_and_recovery(tmp_path) -> 
     controller._last_private_stream_ok_at = controller._user_stream_started_at
     app = create_control_http_app(controller=controller)
 
-    with TestClient(app) as client:
-        health = client.get("/healthz")
-        assert health.status_code == 200
-        assert health.json()["ready"] is False
+    client = TestClient(app)
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.json()["ready"] is False
 
-        blocked = client.get("/readyz")
-        assert blocked.status_code == 503
-        assert blocked.json()["recovery_required"] is True
+    blocked = client.get("/readyz")
+    assert blocked.status_code == 503
+    assert blocked.json()["recovery_required"] is True
 
-        reconcile = client.post("/reconcile")
-        assert reconcile.status_code == 200
+    reconcile = client.post("/reconcile")
+    assert reconcile.status_code == 200
 
-        ready = client.get("/readyz")
-        assert ready.status_code == 200
-        assert ready.json()["ready"] is True
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.json()["ready"] is True
 
-        status = client.get("/status")
-        assert status.status_code == 200
-        assert status.json()["health"]["ready"] is True
+    status = client.get("/status")
+    assert status.status_code == 200
+    assert status.json()["health"]["ready"] is True
 
 
 def test_tick_auto_reconciles_dirty_restart_before_kernel_execution(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -3862,32 +4073,32 @@ def test_readyz_fails_for_uncertainty_and_stale_freshness(tmp_path) -> None:  # 
     controller._last_private_stream_ok_at = controller._user_stream_started_at
     app = create_control_http_app(controller=controller)
 
-    with TestClient(app) as client:
-        healthy = client.get("/readyz")
-        assert healthy.status_code == 200
+    client = TestClient(app)
+    healthy = client.get("/readyz")
+    assert healthy.status_code == 200
 
-        controller._set_state_uncertain(reason="manual_test", engage_safe_mode=False)
-        uncertain = client.get("/readyz")
-        assert uncertain.status_code == 503
-        assert uncertain.json()["state_uncertain"] is True
+    controller._set_state_uncertain(reason="manual_test", engage_safe_mode=False)
+    uncertain = client.get("/readyz")
+    assert uncertain.status_code == 503
+    assert uncertain.json()["state_uncertain"] is True
 
-        controller._clear_state_uncertain()
-        controller._last_private_stream_ok_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=120)
-        ).isoformat()
-        controller._risk["user_ws_stale_sec"] = 5.0
-        stale_user = client.get("/readyz")
-        assert stale_user.status_code == 503
-        assert stale_user.json()["user_ws_stale"] is True
+    controller._clear_state_uncertain()
+    controller._last_private_stream_ok_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=120)
+    ).isoformat()
+    controller._risk["user_ws_stale_sec"] = 5.0
+    stale_user = client.get("/readyz")
+    assert stale_user.status_code == 503
+    assert stale_user.json()["user_ws_stale"] is True
 
-        controller._last_private_stream_ok_at = datetime.now(timezone.utc).isoformat()
-        controller._market_data_state["last_market_data_at"] = (
-            datetime.now(timezone.utc) - timedelta(seconds=120)
-        ).isoformat()
-        controller._risk["market_data_stale_sec"] = 5.0
-        stale_market = client.get("/readyz")
-        assert stale_market.status_code == 503
-        assert stale_market.json()["market_data_stale"] is True
+    controller._last_private_stream_ok_at = datetime.now(timezone.utc).isoformat()
+    controller._market_data_state["last_market_data_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=120)
+    ).isoformat()
+    controller._risk["market_data_stale_sec"] = 5.0
+    stale_market = client.get("/readyz")
+    assert stale_market.status_code == 503
+    assert stale_market.json()["market_data_stale"] is True
 
 
 def test_readyz_fails_when_bracket_recovery_fails(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

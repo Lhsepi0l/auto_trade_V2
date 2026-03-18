@@ -1,114 +1,68 @@
-﻿# auto-trader
+# auto-trader
 
-Binance USDT-M 선물 자동매매 시스템입니다.  
-구성: **트레이더 엔진(FastAPI)** + **디스코드 봇(discord.py)**
+Binance USDT-M 선물 자동매매 저장소입니다. 현재 활성 런타임 표면은 `v2/`입니다.
 
-관련 문서:
-- 전체 사용 가이드: `USAGE_KO.md`
-- 디스코드 전용 가이드: `DISCORD_USAGE_KO.md`
-- 예산 운영 가이드: `OPS_BUDGET.md`
-- 운영 런북: `RUNBOOK.md`
+## 현재 런타임
+- 엔트리포인트: `python -m v2.run`
+- 제어 API: `v2/control/*`
+- 디스코드 봇: `python -m v2.discord_bot.bot`
+- 테스트: `v2/tests/`
 
-## 핵심 구성
-- `apps/trader_engine`: 제어 API, 스케줄러, 리스크/사이징/실행, 복구 로직
-- `apps/discord_bot`: 슬래시 커맨드 + 패널 UI(`/panel`)
-
-## 안전 주의사항 (필독)
-- 이 프로젝트는 **USDT-M 선물 전용**입니다.
-- Binance API 키에 **출금 권한을 절대 주지 마세요**.
-- 기본값은 `TRADING_DRY_RUN=true`로 신규 진입 주문을 막습니다.
-- 기본적으로 `/close`, `/panic`는 dry-run에서도 허용됩니다(운영 안전 목적).
-- `DRY_RUN_STRICT=true`면 `/close`, `/panic`도 차단됩니다.
-- 엔진 기본 시작 상태는 `STOPPED`이며, `/start` 호출 전 주문이 나가지 않습니다.
+## 주요 경로
+- `v2/run.py`: 런타임/제어 HTTP/로컬 백테스트 CLI
+- `v2/config/config.yaml`: 프로필과 기본 동작 설정
+- `v2/control/api.py`: 런타임 제어와 risk override
+- `v2/clean_room/*`: kernel, sizing, execution
+- `v2/discord_bot/*`: `/panel` 포함 운영 UI
+- `v2/docs/RUNBOOK.md`: 운영 런북
+- `v2/docs/SHADOW_SOAK_CHECKLIST.md`: shadow 점검 절차
 
 ## 설치
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Windows PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
 pip install -e ".[dev]"
-copy .env.example .env
 ```
 
-## 실행 (권장: 통합 실행)
-```powershell
-.\.venv\Scripts\python.exe -m apps.run_all
+## 실행 예시
+Shadow:
+```bash
+python -m v2.run --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --control-http --control-http-host 127.0.0.1 --control-http-port 8101
 ```
 
-옵션:
-```powershell
-.\.venv\Scripts\python.exe -m apps.run_all --engine-only
-.\.venv\Scripts\python.exe -m apps.run_all --bot-only
+Live:
+```bash
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
 ```
 
-## 엔진만 실행
-```powershell
-.\.venv\Scripts\python.exe -m apps.trader_engine.main --api
+디스코드 봇:
+```bash
+python -m v2.discord_bot.bot
 ```
 
-빠른 상태 확인:
-```powershell
-curl http://127.0.0.1:8000/status
-curl -X POST http://127.0.0.1:8000/start
+## 검증
+```bash
+python -m ruff check v2 v2/tests
+python -m pytest -q
+python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --keep-reports 30
 ```
 
-## 주요 API
-- `GET /status`: 전체 상태/리스크/자본 스냅샷
-- `POST /start`: 엔진 시작
-- `POST /stop`: 엔진 중지
-- `POST /panic`: 비상 정리(패닉)
-- `POST /set`: 런타임 설정 변경
-- `POST /trade/enter`, `/trade/close`, `/trade/close_all`
+## 제어 API
+- 상태 확인: `GET http://127.0.0.1:8101/status`
+- 리스크 확인: `GET http://127.0.0.1:8101/risk`
+- 시작: `POST http://127.0.0.1:8101/start`
+- 즉시 tick: `POST http://127.0.0.1:8101/scheduler/tick`
+- 런타임 설정 변경: `POST http://127.0.0.1:8101/set`
 
-## 설정 구조 (중요)
-- 거래/리스크 핵심 설정은 SQLite `risk_config(id=1)`에 저장됩니다.
-- `.env`는 런타임/인프라 설정(DB 경로, 로그, API 키, dry-run 등) 중심입니다.
-
-## 디스코드 알림
-- `DISCORD_WEBHOOK_URL` 설정 시 엔진 이벤트/상태 알림 전송
-- 비어 있으면 로그만 기록
-- 상태 알림 주기는 `risk_config.notify_interval_sec` (기본 1800초 = 30분)
-
-## 유저 스트림(WS)
-- `listenKey` 생성/유지/재연결을 자동 관리합니다.
-- `/status`에서 아래 항목을 확인할 수 있습니다.
-  - `ws_connected`
-  - `last_ws_event_time`
-  - `safe_mode`
-  - `last_fill`
-
-## 디스코드 봇 실행
-```powershell
-.\.venv\Scripts\python.exe -m apps.discord_bot.bot
-```
-
-## 디스코드 패널
-`/panel`로 패널 메시지를 생성/갱신합니다.
-
-주요 컨트롤:
-- 버튼: `시작`, `중지`, `패닉`, `새로고침`
-- 예산/증거금: `증거금설정`, 프리셋/직접 입력
-- 리스크: `리스크 기본`, `리스크 고급`
-- 트레일링: `트레일링설정`
-
-권한:
-- 관리자만 패널 설정 변경 가능
-
-## 테스트
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-## 디스코드 권한 체크리스트
-1. OAuth2 Scope
-- `bot`
-- `applications.commands`
-
-2. 봇 권한(권장)
-- `Send Messages`
-- `Embed Links`
-- `Read Message History`
-- `Use Application Commands`
-
-3. 패널 조작 권한
-- 길드 관리자(Administrator) 권한 필요
+## 운영 안전 주의
+- 이 시스템은 USDT-M 선물 전용입니다.
+- `.env`에는 시크릿만 두고, 동작 설정은 `v2/config/config.yaml` 또는 runtime risk state로 관리합니다.
+- 제어 HTTP의 mutating endpoint는 현재 별도 인증이 없습니다. `127.0.0.1`에만 bind하고 SSH 터널/VPN/역방향 프록시 인증 없이 외부에 노출하지 마세요.
+- 실거래 전에는 `v2/docs/RUNBOOK.md`와 `v2/docs/SHADOW_SOAK_CHECKLIST.md` 절차를 먼저 따르세요.

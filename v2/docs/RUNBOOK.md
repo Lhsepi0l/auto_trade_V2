@@ -40,6 +40,7 @@ python -m v2.discord_bot.bot
 
 - 운영 예시는 현재 `q070` 기준으로만 유지합니다.
 - control HTTP는 `127.0.0.1:8101` 기준으로만 노출합니다.
+- control HTTP mutating endpoint에는 별도 인증이 없으므로 SSH 터널/VPN/역방향 프록시 인증 없이 외부 공개하지 않습니다.
 
 ### 종료
 - 수동 중지는 `Ctrl+C`로 프로세스를 종료합니다.

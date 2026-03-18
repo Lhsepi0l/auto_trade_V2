@@ -53,7 +53,7 @@ base:
         swing_lookback_15m: 8
         breakout_buffer_bps: 3.0
         expansion_buffer_bps: 2.0
-        min_volume_ratio_15m: 1.0
+        min_volume_ratio_15m: 0.9
         squeeze_lookback_15m: 48
         squeeze_percentile_threshold: 0.40
         pullback_touch_atr_mult: 0.40
@@ -115,7 +115,7 @@ profiles:
           swing_lookback_15m: 8
           breakout_buffer_bps: 3.0
           expansion_buffer_bps: 2.0
-          min_volume_ratio_15m: 1.0
+          min_volume_ratio_15m: 0.9
           squeeze_lookback_15m: 48
           squeeze_percentile_threshold: 0.40
           pullback_touch_atr_mult: 0.40
@@ -153,10 +153,10 @@ profiles:
           squeeze_percentile_threshold: 0.30
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
-          expansion_body_ratio_min: 0.25
-          expansion_close_location_min: 0.45
-          expansion_width_expansion_min: 0.05
-          min_volume_ratio_15m: 1.0
+          expansion_body_ratio_min: 0.18
+          expansion_close_location_min: 0.35
+          expansion_width_expansion_min: 0.02
+          min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
           time_stop_bars: 18
           trend_adx_min_4h: 14.0
@@ -172,10 +172,10 @@ profiles:
           squeeze_percentile_threshold: 0.35
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
-          expansion_body_ratio_min: 0.25
-          expansion_close_location_min: 0.45
-          expansion_width_expansion_min: 0.05
-          min_volume_ratio_15m: 1.0
+          expansion_body_ratio_min: 0.18
+          expansion_close_location_min: 0.35
+          expansion_width_expansion_min: 0.02
+          min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
           time_stop_bars: 18
           trend_adx_min_4h: 14.0
@@ -192,10 +192,10 @@ profiles:
           squeeze_percentile_threshold: 0.30
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
-          expansion_body_ratio_min: 0.25
-          expansion_close_location_min: 0.45
-          expansion_width_expansion_min: 0.05
-          min_volume_ratio_15m: 1.0
+          expansion_body_ratio_min: 0.18
+          expansion_close_location_min: 0.35
+          expansion_width_expansion_min: 0.02
+          min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
           time_stop_bars: 18
           trend_adx_min_4h: 14.0
@@ -212,10 +212,10 @@ profiles:
           squeeze_percentile_threshold: 0.30
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
-          expansion_body_ratio_min: 0.25
-          expansion_close_location_min: 0.45
-          expansion_width_expansion_min: 0.05
-          min_volume_ratio_15m: 1.0
+          expansion_body_ratio_min: 0.18
+          expansion_close_location_min: 0.35
+          expansion_width_expansion_min: 0.02
+          min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
           time_stop_bars: 18
           trend_adx_min_4h: 14.0
@@ -231,10 +231,10 @@ profiles:
           squeeze_percentile_threshold: 0.30
           expansion_buffer_bps: 2.0
           expansion_range_atr_min: 0.7
-          expansion_body_ratio_min: 0.25
-          expansion_close_location_min: 0.45
-          expansion_width_expansion_min: 0.05
-          min_volume_ratio_15m: 1.0
+          expansion_body_ratio_min: 0.18
+          expansion_close_location_min: 0.35
+          expansion_width_expansion_min: 0.02
+          min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
           time_stop_bars: 18
           trend_adx_min_4h: 14.0

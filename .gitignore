@@ -3,8 +3,11 @@
 data/
 logs/
 v2/logs/
+.omx/
 
 # Python caches
+.venv/
+*.egg-info/
 __pycache__/
 *.py[cod]
 .pytest_cache/

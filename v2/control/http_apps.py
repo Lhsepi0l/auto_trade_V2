@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -37,15 +36,15 @@ class TradeCloseRequest(BaseModel):
 def register_readonly_control_routes(*, app: FastAPI, controller: RuntimeController) -> None:
     @app.get("/status")
     async def status() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._status_snapshot)
+        return controller._status_snapshot()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._healthz_snapshot)
+        return controller._healthz_snapshot()
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
-        payload = await asyncio.to_thread(controller._readyz_snapshot)
+        payload = controller._readyz_snapshot()
         return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
 
     @app.get("/risk")
@@ -54,7 +53,7 @@ def register_readonly_control_routes(*, app: FastAPI, controller: RuntimeControl
 
     @app.get("/readiness")
     async def readiness() -> dict[str, Any]:
-        return await asyncio.to_thread(controller._live_readiness_snapshot)
+        return controller._live_readiness_snapshot()
 
     @app.get("/scheduler")
     async def get_scheduler() -> dict[str, Any]:
@@ -126,6 +125,7 @@ def create_control_http_app(*, controller: RuntimeController) -> FastAPI:
             await controller.stop_live_services()
 
     app = FastAPI(title="auto-trader-v2-control", version="0.1.0", lifespan=_lifespan)
+    app.state.controller = controller
     register_readonly_control_routes(app=app, controller=controller)
     register_mutating_control_routes(app=app, controller=controller)
     return app

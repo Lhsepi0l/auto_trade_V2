@@ -24,6 +24,7 @@ def _write_fake_python(
     bot_started: Path,
     bot_base_url: Path,
 ) -> None:
+    control_state = control_started.with_suffix(".state.json")
     target.write_text(
         textwrap.dedent(
             f"""\
@@ -38,18 +39,42 @@ def _write_fake_python(
             from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
             control_started = pathlib.Path({str(control_started)!r})
+            control_state = pathlib.Path({str(control_state)!r})
             bot_started = pathlib.Path({str(bot_started)!r})
             bot_base_url = pathlib.Path({str(bot_base_url)!r})
             ready_delay_sec = float(os.environ.get("FAKE_READY_DELAY_SEC", "0"))
             bot_import_ok = os.environ.get("FAKE_BOT_IMPORT_OK", "1") == "1"
             ready_requires_start = os.environ.get("FAKE_READY_REQUIRES_START", "0") == "1"
-            start_state = {{"requested": False}}
+
+            def _load_state():
+                if not control_state.exists():
+                    return {{"started_at": 0.0, "requested": False}}
+                return json.loads(control_state.read_text(encoding="utf-8"))
+
+            def _save_state(payload):
+                control_state.write_text(json.dumps(payload), encoding="utf-8")
 
             if len(sys.argv) > 1 and sys.argv[1] == "-c":
                 if bot_import_ok:
                     raise SystemExit(0)
                 print("ModuleNotFoundError: No module named 'v2.discord_bot.bot'", file=sys.stderr)
                 raise SystemExit(1)
+
+            if len(sys.argv) > 2 and sys.argv[1] == "-":
+                url = sys.argv[2]
+                if url.endswith("/readyz"):
+                    state = _load_state()
+                    ready = (time.time() - float(state.get("started_at", 0.0))) >= ready_delay_sec and (
+                        bool(state.get("requested")) or not ready_requires_start
+                    )
+                    body = json.dumps({{"ready": ready}})
+                    print(body)
+                    raise SystemExit(0 if ready else 1)
+                if url.endswith("/start"):
+                    state = _load_state()
+                    state["requested"] = True
+                    _save_state(state)
+                    raise SystemExit(0)
 
             if len(sys.argv) > 1 and sys.argv[1] == "-":
                 code = sys.stdin.read()
@@ -70,61 +95,17 @@ def _write_fake_python(
                 while True:
                     time.sleep(0.1)
 
-            port = 8101
-            if "--control-http-port" in sys.argv:
-                idx = sys.argv.index("--control-http-port")
-                port = int(sys.argv[idx + 1])
-
-            started_at = time.monotonic()
-
-            class _Handler(BaseHTTPRequestHandler):
-                def do_GET(self):
-                    ready = (time.monotonic() - started_at) >= ready_delay_sec and (
-                        start_state["requested"] or not ready_requires_start
-                    )
-                    if self.path == "/readyz":
-                        payload = json.dumps({{"ready": ready}}).encode("utf-8")
-                        self.send_response(200 if ready else 503)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(payload)))
-                        self.end_headers()
-                        self.wfile.write(payload)
-                        return
-                    payload = b"{{}}"
-                    self.send_response(200)
-                    self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
-
-                def do_POST(self):
-                    if self.path == "/start":
-                        start_state["requested"] = True
-                        payload = b'{{"state":"RUNNING"}}'
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(payload)))
-                        self.end_headers()
-                        self.wfile.write(payload)
-                        return
-                    self.send_response(404)
-                    self.end_headers()
-
-                def log_message(self, format, *args):
-                    return
-
-            httpd = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
+            _save_state({{"started_at": time.time(), "requested": False}})
             control_started.write_text("started", encoding="utf-8")
 
             def _shutdown(_signum, _frame):
-                threading.Thread(target=httpd.shutdown, daemon=True).start()
+                raise SystemExit(0)
 
             signal.signal(signal.SIGTERM, _shutdown)
             signal.signal(signal.SIGINT, _shutdown)
 
-            try:
-                httpd.serve_forever()
-            finally:
-                httpd.server_close()
+            while True:
+                time.sleep(0.1)
             """
         ),
         encoding="utf-8",
@@ -199,7 +180,7 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
     env = os.environ.copy()
     env["PYTHON_BIN"] = str(fake_python)
     env["STACK_LOCK_FILE"] = str(lock_path)
-    env["FAKE_READY_DELAY_SEC"] = "1.0"
+    env["FAKE_READY_DELAY_SEC"] = "2.0"
 
     proc = subprocess.Popen(  # noqa: S603
         ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet"],
@@ -214,7 +195,7 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
         time.sleep(0.2)
         assert bot_started.exists() is False
 
-        _wait_for_file(bot_started, timeout_sec=3.0)
+        _wait_for_file(bot_started, timeout_sec=4.0)
     finally:
         proc.send_signal(signal.SIGTERM)
         try:

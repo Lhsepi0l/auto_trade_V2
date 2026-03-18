@@ -74,6 +74,11 @@ class StrategyRuntimeMutableSelector(Protocol):
     def set_strategy_runtime_params(self, **kwargs: Any) -> None: ...
 
 
+@runtime_checkable
+class RejectContextAwareSelector(Protocol):
+    def get_last_no_candidate_context(self) -> dict[str, Any] | None: ...
+
+
 @dataclass(frozen=True)
 class TradeKernelConfig:
     mode: str
@@ -421,6 +426,11 @@ class TradeKernel:
 
     def set_tick(self, tick: int) -> None:
         self._runtime_tick = int(tick)
+
+    def get_last_no_candidate_context(self) -> dict[str, Any] | None:
+        if isinstance(self._selector, RejectContextAwareSelector):
+            return self._selector.get_last_no_candidate_context()
+        return None
 
     def probe_market_data(self) -> dict[str, Any] | None:
         if self._market_data_probe is None:

@@ -300,11 +300,12 @@ class DynamicNotionalSizer:
         risk: RiskDecision,
         context: KernelContext,
     ) -> SizePlan:
+        leverage = self._resolve_leverage(candidate.symbol)
         if candidate.entry_price is None or candidate.entry_price <= 0:
             return SizePlan(
                 symbol=candidate.symbol,
                 qty=0.0,
-                leverage=self._resolve_leverage(candidate.symbol),
+                leverage=leverage,
                 notional=0.0,
                 reason="invalid_entry_price",
             )
@@ -313,12 +314,12 @@ class DynamicNotionalSizer:
             return SizePlan(
                 symbol=candidate.symbol,
                 qty=0.0,
-                leverage=self._resolve_leverage(candidate.symbol),
+                leverage=leverage,
                 notional=0.0,
                 reason="non_positive_signal_score",
             )
 
-        configured_notional = self._fallback_notional
+        configured_notional = float(self._fallback_notional) * float(leverage)
         if self._max_notional and self._max_notional > 0:
             configured_notional = min(configured_notional, self._max_notional)
         if risk.max_notional and risk.max_notional > 0:
@@ -330,7 +331,7 @@ class DynamicNotionalSizer:
         return SizePlan(
             symbol=candidate.symbol,
             qty=qty,
-            leverage=self._resolve_leverage(candidate.symbol),
+            leverage=leverage,
             notional=configured_notional,
             reason="size_ok",
         )
@@ -382,13 +383,13 @@ class RiskAwareSizer(DynamicNotionalSizer):
                 reason="non_positive_signal_score",
             )
 
-        configured_notional = float(self._fallback_notional)
+        capital_base = float(self._fallback_notional)
+        configured_notional = capital_base * leverage
         if self._max_notional and self._max_notional > 0:
             configured_notional = min(configured_notional, float(self._max_notional))
         if risk.max_notional and risk.max_notional > 0:
             configured_notional = min(configured_notional, float(risk.max_notional))
 
-        capital_base = configured_notional / leverage if leverage > 0.0 else configured_notional
         stop_frac = self._candidate_stop_frac(candidate)
         risk_per_trade_pct = (
             float(candidate.risk_per_trade_pct)

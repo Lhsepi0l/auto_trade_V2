@@ -13,6 +13,17 @@ _utcnow_iso = api_module._utcnow_iso
 logger = api_module.logger
 
 
+def _summarize_alpha_reject_focus(alpha_blocks: dict[str, Any]) -> str | None:
+    ordered = [
+        (str(alpha_id).strip(), str(reason).strip())
+        for alpha_id, reason in alpha_blocks.items()
+        if str(alpha_id).strip() and str(reason).strip()
+    ]
+    if not ordered:
+        return None
+    return ", ".join(f"{alpha_id}:{reason}" for alpha_id, reason in ordered[:3])
+
+
 def fetch_live_positions(
     controller: Any,
 ) -> tuple[dict[str, float], dict[str, dict[str, Any]], bool, str | None]:
@@ -238,10 +249,40 @@ def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
         controller._risk["last_regime"] = (
             getattr(cycle.candidate, "regime_hint", None) if cycle.candidate is not None else None
         )
+        reject_context_reader = getattr(controller.kernel, "get_last_no_candidate_context", None)
+        reject_context = reject_context_reader() if callable(reject_context_reader) else None
         if cycle.state in {"blocked", "risk_rejected", "no_candidate"}:
             controller._risk["last_strategy_block_reason"] = cycle.reason
         elif cycle.state in {"executed", "dry_run"}:
             controller._risk["last_strategy_block_reason"] = None
+        if cycle.state == "no_candidate" and isinstance(reject_context, dict):
+            symbol_context = None
+            for symbol in controller._risk.get("universe_symbols") or []:
+                if symbol in reject_context and isinstance(reject_context[symbol], dict):
+                    symbol_context = reject_context[symbol]
+                    break
+            if symbol_context is None and reject_context:
+                symbol_context = next(
+                    (value for value in reject_context.values() if isinstance(value, dict)),
+                    None,
+                )
+            alpha_blocks = (
+                dict(symbol_context.get("alpha_blocks") or {})
+                if isinstance(symbol_context, dict)
+                else {}
+            )
+            alpha_reject_metrics = (
+                dict(symbol_context.get("alpha_reject_metrics") or {})
+                if isinstance(symbol_context, dict)
+                else {}
+            )
+            controller._risk["last_alpha_blocks"] = alpha_blocks
+            controller._risk["last_alpha_reject_metrics"] = alpha_reject_metrics
+            controller._risk["last_alpha_reject_focus"] = _summarize_alpha_reject_focus(alpha_blocks)
+        else:
+            controller._risk["last_alpha_blocks"] = {}
+            controller._risk["last_alpha_reject_metrics"] = {}
+            controller._risk["last_alpha_reject_focus"] = None
         overheat_reason = cycle.reason if str(cycle.reason).startswith("overheat_") else None
         controller._risk["overheat_state"] = {
             "blocked": overheat_reason is not None,

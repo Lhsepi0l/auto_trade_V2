@@ -81,6 +81,26 @@ def _market_for_unstable_expansion() -> dict[str, list[dict[str, float]]]:
     return market
 
 
+def _market_for_borderline_expansion() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_expansion()
+    for bar in market["15m"]:
+        bar["volume"] = 2000.0
+    market["15m"][-1]["volume"] = 1800.0
+    market["15m"][-1]["open"] = 302.9
+    market["15m"][-1]["close"] = 303.5
+    market["15m"][-1]["high"] = 305.0
+    market["15m"][-1]["low"] = 299.2
+    return market
+
+
+def _market_for_weak_expansion_after_relaxation() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_borderline_expansion()
+    market["15m"][-1]["close"] = 300.4
+    market["15m"][-1]["high"] = 301.0
+    market["15m"][-1]["low"] = 299.9
+    return market
+
+
 def _flat_market() -> dict[str, list[dict[str, float]]]:
     closes_4h = [100.0 + ((idx % 2) * 0.02) for idx in range(220)]
     closes_1h = [200.0 + ((idx % 2) * 0.01) for idx in range(90)]
@@ -93,7 +113,7 @@ def _flat_market() -> dict[str, list[dict[str, float]]]:
 
 
 def test_alpha_v2_breakout_signal_emits_breakout_alpha() -> None:
-    strategy = RA2026AlphaV2(params={})
+    strategy = RA2026AlphaV2(params={"enabled_alphas": ["alpha_breakout"]})
 
     decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_breakout()})
 
@@ -188,6 +208,53 @@ def test_alpha_v2_expansion_signal_emits_expansion_alpha() -> None:
     assert decision["entry_family"] == "expansion"
 
 
+def test_alpha_v2_expansion_accepts_borderline_momentum_breakout() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.01,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.90,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_borderline_expansion()})
+
+    assert decision["intent"] == "LONG"
+    assert decision["alpha_id"] == "alpha_expansion"
+
+
+def test_alpha_v2_expansion_still_rejects_weak_breakout_after_relaxation() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.01,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.90,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    market = _market_for_weak_expansion_after_relaxation()
+    market["15m"][-1]["volume"] = 1500.0
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "volume_missing"
+
+
 def test_alpha_v2_expansion_emits_progress_aware_exit_hints() -> None:
     strategy = RA2026AlphaV2(
         params={
@@ -280,74 +347,6 @@ def test_alpha_v2_expansion_applies_quality_conditioned_exit_for_high_quality_en
     assert decision["execution"]["time_stop_bars"] == 24
     assert decision["execution"]["reward_risk_reference_r"] == 2.4
     assert decision["execution"]["quality_exit_applied"] is True
-
-
-def test_alpha_v2_expansion_rejects_weak_followthrough_candle() -> None:
-    market = _market_for_expansion()
-    market["15m"][-1]["open"] = 303.25
-    market["15m"][-1]["close"] = 303.5
-    market["15m"][-1]["high"] = 305.2
-    market["15m"][-1]["low"] = 298.8
-
-    strategy = RA2026AlphaV2(
-        params={
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.8,
-            "expansion_range_atr_min": 0.5,
-            "expansion_buffer_bps": 0.0,
-            "expansion_body_ratio_min": 0.35,
-            "expansion_close_location_min": 0.65,
-            "min_stop_distance_frac": 0.0005,
-            "expected_move_cost_mult": 1.0,
-        }
-    )
-
-    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
-
-    assert decision["intent"] == "NONE"
-    assert decision["alpha_blocks"]["alpha_expansion"] == "trigger_missing"
-
-
-def test_alpha_v2_expansion_rejects_weak_width_expansion() -> None:
-    strategy = RA2026AlphaV2(
-        params={
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.8,
-            "expansion_range_atr_min": 0.5,
-            "expansion_buffer_bps": 0.0,
-            "expansion_body_ratio_min": 0.35,
-            "expansion_close_location_min": 0.65,
-            "expansion_width_expansion_min": 200.0,
-            "min_stop_distance_frac": 0.0005,
-            "expected_move_cost_mult": 1.0,
-        }
-    )
-
-    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_expansion()})
-
-    assert decision["intent"] == "NONE"
-    assert decision["alpha_blocks"]["alpha_expansion"] == "trigger_missing"
-
-
-def test_alpha_v2_expansion_rejects_shallow_breakout_distance() -> None:
-    strategy = RA2026AlphaV2(
-        params={
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.8,
-            "expansion_range_atr_min": 0.5,
-            "expansion_buffer_bps": 0.0,
-            "expansion_body_ratio_min": 0.35,
-            "expansion_close_location_min": 0.65,
-            "expansion_break_distance_atr_min": 10.0,
-            "min_stop_distance_frac": 0.0005,
-            "expected_move_cost_mult": 1.0,
-        }
-    )
-
-    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_expansion()})
-
-    assert decision["intent"] == "NONE"
-    assert decision["alpha_blocks"]["alpha_expansion"] == "trigger_missing"
 
 
 def test_alpha_v2_expansion_rejects_low_quality_score() -> None:
@@ -455,6 +454,49 @@ def test_alpha_v2_expansion_rejects_low_quality_score_v2() -> None:
     assert decision["alpha_blocks"]["alpha_expansion"] == "quality_score_v2_missing"
 
 
+def test_alpha_v2_breakout_accepts_breakout_on_neutral_candle_body() -> None:
+    market = _market_for_breakout()
+    market["15m"][-1]["open"] = 309.4
+    market["15m"][-1]["close"] = 309.0
+
+    strategy = RA2026AlphaV2(params={"enabled_alphas": ["alpha_breakout"]})
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    assert decision["intent"] == "LONG"
+    assert decision["alpha_id"] == "alpha_breakout"
+
+
+def test_alpha_v2_pullback_accepts_reclaim_on_neutral_candle_body() -> None:
+    market = _market_for_pullback()
+    market["15m"][-1]["open"] = 306.8
+    market["15m"][-1]["close"] = 306.4
+
+    strategy = RA2026AlphaV2(
+        params={"enabled_alphas": ["alpha_pullback"], "pullback_touch_atr_mult": 1.0}
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    assert decision["intent"] == "LONG"
+    assert decision["alpha_id"] == "alpha_pullback"
+
+
+def test_alpha_v2_pullback_still_rejects_shallow_noise_after_window_expansion() -> None:
+    market = _market_for_pullback()
+    market["15m"][-1]["high"] = market["15m"][-2]["high"] - 0.05
+    market["15m"][-1]["close"] = market["15m"][-2]["close"] + 0.02
+
+    strategy = RA2026AlphaV2(
+        params={"enabled_alphas": ["alpha_pullback"], "pullback_touch_atr_mult": 0.25}
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_pullback"] == "trigger_missing"
+
+
 def test_alpha_v2_breakout_surfaces_adx_window_regime_block() -> None:
     strategy = RA2026AlphaV2(
         params={
@@ -498,3 +540,17 @@ def test_alpha_v2_surfaces_decomposed_block_reasons() -> None:
     assert alpha_blocks["alpha_breakout"] == "regime_missing"
     assert alpha_blocks["alpha_pullback"] == "regime_missing"
     assert alpha_blocks["alpha_expansion"] in {"bias_missing", "trigger_missing"}
+
+
+def test_alpha_v2_surfaces_numeric_reject_metrics() -> None:
+    market = _market_for_borderline_expansion()
+    market["15m"][-1]["volume"] = 1500.0
+    strategy = RA2026AlphaV2(
+        params={"enabled_alphas": ["alpha_expansion"], "min_volume_ratio_15m": 1.0}
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    metrics = decision["alpha_reject_metrics"]["alpha_expansion"]
+    assert decision["alpha_blocks"]["alpha_expansion"] == "volume_missing"
+    assert metrics["vol_ratio_15m"] < metrics["min_volume_ratio_15m"]

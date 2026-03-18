@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import copy
 import logging
 import threading
@@ -121,6 +120,9 @@ _RUNTIME_DERIVED_RISK_KEYS = (
     "last_alpha_id",
     "last_entry_family",
     "last_regime",
+    "last_alpha_blocks",
+    "last_alpha_reject_focus",
+    "last_alpha_reject_metrics",
     "overheat_state",
 )
 
@@ -669,12 +671,15 @@ class RuntimeController:
         return migrated, changed
 
     def _sync_kernel_runtime_overrides(self) -> None:
-        symbols, mapping, effective_margin, effective_leverage, _expected_notional = (
-            self._runtime_budget_context()
-        )
+        symbols = self._runtime_symbols()
+        mapping = self._runtime_symbol_leverage_map()
+        target_margin = self._runtime_target_margin()
         max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
 
-        fallback_notional = float(effective_margin) * float(effective_leverage)
+        # Keep the kernel fallback on unlevered budget. The sizer applies the
+        # final leverage so candidate caps and runtime leverage overrides cannot
+        # inflate effective margin usage through double-counting.
+        fallback_notional = float(target_margin)
         if fallback_notional <= 0.0:
             fallback_notional = 10.0
 
@@ -844,6 +849,9 @@ class RuntimeController:
             "last_alpha_id": None,
             "last_entry_family": None,
             "last_regime": None,
+            "last_alpha_blocks": {},
+            "last_alpha_reject_focus": None,
+            "last_alpha_reject_metrics": {},
             "overheat_state": {"blocked": False, "reason": None},
         }
         config.update(self._strategy_runtime_defaults())
@@ -892,9 +900,7 @@ class RuntimeController:
                     mapping[sym_u] = lev_f
         return mapping
 
-    def _runtime_budget_context(self) -> tuple[list[str], dict[str, float], float, float, float]:
-        symbols = self._runtime_symbols()
-        mapping = self._runtime_symbol_leverage_map()
+    def _runtime_target_margin(self) -> float:
         capital_mode = str(self._risk.get("capital_mode") or "").upper()
         margin_use_pct = max(0.0, _to_float(self._risk.get("margin_use_pct"), default=1.0))
         margin_budget = _to_float(self._risk.get("margin_budget_usdt"), default=100.0)
@@ -903,7 +909,12 @@ class RuntimeController:
         target_margin = float(base_margin) * float(margin_use_pct)
         if target_margin <= 0:
             target_margin = 10.0
+        return target_margin
 
+    def _runtime_budget_context(self) -> tuple[list[str], dict[str, float], float, float, float]:
+        symbols = self._runtime_symbols()
+        mapping = self._runtime_symbol_leverage_map()
+        target_margin = self._runtime_target_margin()
         max_leverage = max(1.0, _to_float(self._risk.get("max_leverage"), default=1.0))
         leverage = self._effective_budget_leverage(
             symbols=symbols,
@@ -935,11 +946,18 @@ class RuntimeController:
         today = datetime.now(timezone.utc).date().isoformat()
         _symbols, _mapping, effective_margin, _leverage, _expected_notional = self._runtime_budget_context()
         capital_base = max(float(effective_margin), 1e-9)
+        live_equity_basis_ok = self.cfg.mode != "live"
         cached_balance = self._cached_live_balance(max_age_sec=300.0)
         if cached_balance is not None:
             _available, wallet = cached_balance
             if wallet is not None and float(wallet) > 0.0:
                 capital_base = max(float(wallet), capital_base)
+                live_equity_basis_ok = True
+        elif self.cfg.mode == "live":
+            _available, wallet, source = self._fetch_live_usdt_balance()
+            if source in {"exchange", "exchange_cached"} and wallet is not None and float(wallet) > 0.0:
+                capital_base = max(float(wallet), capital_base)
+                live_equity_basis_ok = True
 
         daily_realized = 0.0
         lose_streak = 0
@@ -978,7 +996,10 @@ class RuntimeController:
 
         daily_realized_pct = float(daily_realized) / capital_base if capital_base > 0.0 else 0.0
         daily_loss_used_pct = max(0.0, -daily_realized_pct)
-        dd_used_pct = max(0.0, (equity_peak - equity_now) / equity_peak) if equity_peak > 0.0 else 0.0
+        if self.cfg.mode == "live" and not live_equity_basis_ok:
+            dd_used_pct = 0.0
+        else:
+            dd_used_pct = max(0.0, (equity_peak - equity_now) / equity_peak) if equity_peak > 0.0 else 0.0
 
         daily_limit = _normalize_pct(self._risk.get("daily_loss_limit_pct"), default=0.02)
         dd_limit = _normalize_pct(self._risk.get("dd_limit_pct"), default=0.15)
@@ -1903,8 +1924,7 @@ class RuntimeController:
         )
 
     async def _handle_user_stream_event(self, event: dict[str, Any]) -> None:
-        await asyncio.to_thread(
-            self.state_store.apply_exchange_event,
+        self.state_store.apply_exchange_event(
             event=event,
             reason="user_stream_event",
         )
@@ -1914,8 +1934,7 @@ class RuntimeController:
 
     async def _handle_user_stream_resync(self, snapshot: ResyncSnapshot) -> None:
         try:
-            await asyncio.to_thread(
-                self._apply_resync_snapshot,
+            self._apply_resync_snapshot(
                 snapshot=snapshot,
                 reason="user_stream_resync",
             )
@@ -1951,7 +1970,7 @@ class RuntimeController:
             on_disconnect=self._handle_user_stream_disconnect,
             on_private_ok=self._handle_user_stream_private_ok,
         )
-        await asyncio.to_thread(self._maybe_probe_market_data)
+        self._maybe_probe_market_data()
         self._update_stale_transitions()
 
     async def stop_live_services(self) -> None:
@@ -2118,6 +2137,9 @@ class RuntimeController:
             self._risk["last_alpha_id"] = None
             self._risk["last_entry_family"] = None
             self._risk["last_regime"] = None
+            self._risk["last_alpha_blocks"] = {}
+            self._risk["last_alpha_reject_focus"] = None
+            self._risk["last_alpha_reject_metrics"] = {}
             self._risk["overheat_state"] = {"blocked": False, "reason": None}
             self._persist_risk_config()
             self._sync_kernel_runtime_overrides()

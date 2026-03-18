@@ -41,6 +41,9 @@ def _config_summary_payload(controller: RuntimeController) -> dict[str, Any]:
         "last_alpha_id": controller._risk.get("last_alpha_id"),
         "last_entry_family": controller._risk.get("last_entry_family"),
         "last_regime": controller._risk.get("last_regime"),
+        "last_alpha_blocks": dict(controller._risk.get("last_alpha_blocks") or {}),
+        "last_alpha_reject_focus": controller._risk.get("last_alpha_reject_focus"),
+        "last_alpha_reject_metrics": dict(controller._risk.get("last_alpha_reject_metrics") or {}),
         "overheat_state": dict(controller._risk.get("overheat_state") or {}),
     }
     return config_summary
@@ -139,6 +142,9 @@ def build_status_snapshot(controller: RuntimeController) -> dict[str, Any]:
             "last_alpha_id": controller._risk.get("last_alpha_id"),
             "last_entry_family": controller._risk.get("last_entry_family"),
             "last_regime": controller._risk.get("last_regime"),
+            "last_alpha_blocks": dict(controller._risk.get("last_alpha_blocks") or {}),
+            "last_alpha_reject_focus": controller._risk.get("last_alpha_reject_focus"),
+            "last_alpha_reject_metrics": dict(controller._risk.get("last_alpha_reject_metrics") or {}),
             "overheat_state": dict(controller._risk.get("overheat_state") or {}),
             "last_auto_risk_reason": controller._risk.get("last_auto_risk_reason"),
         },
