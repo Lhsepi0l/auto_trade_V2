@@ -25,6 +25,7 @@ from v2.discord_bot.views.panel import (
     RiskAdvancedModal,
     RiskBasicModal,
     ScoringSetupModal,
+    SymbolLeverageModal,
     _build_embed,
 )
 
@@ -883,6 +884,56 @@ async def test_tick_once_handles_read_timeout_with_hint(monkeypatch: pytest.Monk
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_tick_once_handles_read_timeout_as_busy_when_status_shows_tick_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ReadTimeout")),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "scheduler": {
+                    "last_error": "tick_busy",
+                    "last_decision_reason": "tick_busy",
+                },
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("이미 판단 사이클이 실행 중입니다." in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tick_once_handles_read_timeout_as_blocked_when_status_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        tick_scheduler_now=AsyncMock(side_effect=RuntimeError("network_error: ReadTimeout")),
+        get_status=AsyncMock(
+            return_value={
+                "engine_state": {"state": "RUNNING"},
+                "live_readiness": {"overall": "blocked"},
+                "user_ws_stale": True,
+                "market_data_stale": True,
+            }
+        ),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[3]).callback(it)  # type: ignore[arg-type]
+    assert any("현재 판단 가능 상태가 아닙니다" in m for m in it.followup.messages)
+    assert any("프라이빗 스트림 stale" in m or "마켓 데이터 stale" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_start_button_reports_api_error_instead_of_interaction_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -896,6 +947,49 @@ async def test_start_button_reports_api_error_instead_of_interaction_failure(
     it = _FakeInteraction()
     await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[0]).callback(it)  # type: ignore[arg-type]
     assert any("API 오류:" in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stop_button_reports_success_when_timeout_but_engine_is_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        stop=AsyncMock(side_effect=RuntimeError("network_error: ReadTimeout")),
+        get_status=AsyncMock(return_value={"engine_state": {"state": "PAUSED"}}),
+    )
+    view = PanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    it = _FakeInteraction()
+    await _find_button(view, SIMPLE_PANEL_BUTTON_LABELS[1]).callback(it)  # type: ignore[arg-type]
+    assert any("응답은 늦었지만 서버에는 반영된 상태입니다." in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_symbol_leverage_modal_reports_success_when_timeout_but_value_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(
+            side_effect=[
+                {"risk_config": {"max_leverage": 20}},
+                {"risk_config": {"symbol_leverage_map": {"BTCUSDT": 7.0}}},
+            ]
+        ),
+        set_symbol_leverage=AsyncMock(side_effect=RuntimeError("network_error: ReadTimeout")),
+    )
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = SymbolLeverageModal(api=api, view=view)  # type: ignore[arg-type]
+    modal.symbol._value = "BTCUSDT"  # type: ignore[attr-defined]
+    modal.leverage._value = "7"  # type: ignore[attr-defined]
+
+    it = _FakeInteraction()
+    await modal.on_submit(it)
+    assert any("응답은 늦었지만 서버에는 반영된 상태입니다." in m for m in it.followup.messages)
 
 
 @pytest.mark.unit

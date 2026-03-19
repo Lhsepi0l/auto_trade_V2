@@ -427,6 +427,78 @@ def _format_tick_runtime_error(err: RuntimeError) -> str:
     return f"즉시 판단 실행 실패: {raw}"
 
 
+def _is_runtime_read_timeout(err: RuntimeError) -> bool:
+    return "network_error: ReadTimeout" in str(err)
+
+
+def _is_runtime_connect_failure(err: RuntimeError) -> bool:
+    raw = str(err)
+    return "network_error: ConnectError" in raw or "network_error: ConnectTimeout" in raw
+
+
+def _tick_busy_from_payload(payload: JSONPayload) -> bool:
+    if str(payload.get("error") or "").strip() == "tick_busy":
+        return True
+    scheduler = _as_dict(payload.get("scheduler"))
+    snapshot = _as_dict(payload.get("snapshot"))
+    for source in (snapshot, scheduler):
+        if str(source.get("last_error") or "").strip() == "tick_busy":
+            return True
+        if str(source.get("last_decision_reason") or "").strip() == "tick_busy":
+            return True
+    return False
+
+
+def _readiness_block_summary(payload: JSONPayload) -> str | None:
+    reasons: list[str] = []
+    if bool(payload.get("recovery_required")):
+        reasons.append("재시작 복구 필요")
+    if bool(payload.get("user_ws_stale")):
+        reasons.append("프라이빗 스트림 stale")
+    if bool(payload.get("market_data_stale")):
+        reasons.append("마켓 데이터 stale")
+    live_readiness = _as_dict(payload.get("live_readiness"))
+    if str(live_readiness.get("overall") or "").strip().lower() == "blocked" and not reasons:
+        reasons.append("런타임 준비 상태 차단")
+    if not reasons:
+        return None
+    return ", ".join(reasons[:3])
+
+
+def _format_action_runtime_error(
+    *,
+    action_name: str,
+    err: RuntimeError,
+    status_payload: JSONPayload | None = None,
+    success_predicate: Callable[[JSONPayload], bool] | None = None,
+) -> str:
+    payload = status_payload or {}
+    if success_predicate is not None and success_predicate(payload):
+        return f"{action_name}: 응답은 늦었지만 서버에는 반영된 상태입니다."
+    if _is_runtime_read_timeout(err):
+        block_summary = _readiness_block_summary(payload)
+        if block_summary:
+            return f"{action_name}: API는 응답했지만 현재 엔진 상태가 차단 중입니다 ({block_summary})."
+        return f"{action_name}: API 응답 시간이 초과되었습니다."
+    if _is_runtime_connect_failure(err):
+        return f"{action_name}: trader API 연결에 실패했습니다."
+    return f"{action_name}: {err}"
+
+
+def _format_tick_runtime_error_with_status(
+    err: RuntimeError,
+    *,
+    status_payload: JSONPayload | None = None,
+) -> str:
+    payload = status_payload or {}
+    if _tick_busy_from_payload(payload):
+        return "이미 판단 사이클이 실행 중입니다."
+    block_summary = _readiness_block_summary(payload)
+    if block_summary:
+        return f"즉시 판단 실행 실패: 엔진은 응답했지만 현재 판단 가능 상태가 아닙니다 ({block_summary})."
+    return _format_tick_runtime_error(err)
+
+
 def _build_live_balance_line(payload: JSONPayload) -> str:
     data = payload if isinstance(payload, dict) else {}
     binance = _as_dict(data.get("binance"))
@@ -1316,6 +1388,27 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
                 _format_symbol_leverage_error(error=e, symbol=symbol, max_leverage=max_leverage),
                 ephemeral=True,
             )
+        except RuntimeError as e:
+            status_payload = await self._view.refresh_message(
+                interaction,
+                force_status=True,
+                max_age_sec=0.0,
+            )
+            risk_cfg = _as_dict(status_payload.get("risk_config"))
+            symbol_map = _as_dict(risk_cfg.get("symbol_leverage_map"))
+            applied = _coerce_float(symbol_map.get(symbol), default=0.0)
+            succeeded = (lev <= 0 and symbol not in symbol_map) or (
+                lev > 0 and math.isclose(applied, lev, rel_tol=0.0, abs_tol=1e-9)
+            )
+            await interaction.followup.send(
+                _format_action_runtime_error(
+                    action_name="심볼 레버리지 설정",
+                    err=e,
+                    status_payload=status_payload,
+                    success_predicate=(lambda _payload: succeeded),
+                ),
+                ephemeral=True,
+            )
 
 
 class UniverseSymbolsModal(discord.ui.Modal, title="운영 심볼 설정"):
@@ -1619,6 +1712,7 @@ class PanelViewBase(discord.ui.View):
         *,
         action: Callable[[], Awaitable[object]],
         success_message: str,
+        runtime_error_formatter: Callable[[RuntimeError, JSONPayload], str] | None = None,
     ) -> None:
         if not await _safe_defer(interaction):
             _ = await _safe_send_ephemeral(
@@ -1633,7 +1727,17 @@ class PanelViewBase(discord.ui.View):
         except APIError as e:
             await interaction.followup.send(f"API 오류: {e}", ephemeral=True)
         except RuntimeError as e:
-            await interaction.followup.send(f"실행 실패: {e}", ephemeral=True)
+            status_payload = await self.refresh_message(
+                interaction,
+                force_status=True,
+                max_age_sec=0.0,
+            )
+            message = (
+                runtime_error_formatter(e, status_payload)
+                if runtime_error_formatter is not None
+                else f"실행 실패: {e}"
+            )
+            await interaction.followup.send(message, ephemeral=True)
         except Exception:  # noqa: BLE001
             logger.exception("panel_action_failed")
             await interaction.followup.send(
@@ -1652,7 +1756,15 @@ class PanelViewBase(discord.ui.View):
             tick = await self.api.tick_scheduler_now()
         except (APIError, RuntimeError) as e:
             if isinstance(e, RuntimeError):
-                await interaction.followup.send(_format_tick_runtime_error(e), ephemeral=True)
+                status_payload = await self.refresh_message(
+                    interaction,
+                    force_status=True,
+                    max_age_sec=0.0,
+                )
+                await interaction.followup.send(
+                    _format_tick_runtime_error_with_status(e, status_payload=status_payload),
+                    ephemeral=True,
+                )
             else:
                 await interaction.followup.send(f"즉시 판단 실행 실패: {e}", ephemeral=True)
             return
@@ -1817,7 +1929,20 @@ class SimplePanelView(PanelViewBase):
         if not await self._guard(interaction):
             return
         await self._run_action(
-            interaction, action=self.api.stop, success_message="엔진을 중지했습니다."
+            interaction,
+            action=self.api.stop,
+            success_message="엔진을 중지했습니다.",
+            runtime_error_formatter=lambda err, status: _format_action_runtime_error(
+                action_name="엔진 중지",
+                err=err,
+                status_payload=status,
+                success_predicate=(
+                    lambda payload: str(
+                        _as_dict(payload.get("engine_state")).get("state") or ""
+                    ).strip().upper()
+                    in {"PAUSED", "STOPPED", "KILLED"}
+                ),
+            ),
         )
 
     @discord.ui.button(label=PANIC_BUTTON_LABEL, style=discord.ButtonStyle.danger)

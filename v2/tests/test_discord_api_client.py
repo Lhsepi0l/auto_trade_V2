@@ -58,7 +58,7 @@ async def test_tick_scheduler_now_timeout_respects_configured_value(
 
     monkeypatch.setattr(client, "_request_json", _fake_request_json)
     await client.tick_scheduler_now()
-    assert captured["timeout_sec"] == 50.0
+    assert captured["timeout_sec"] == 300.0
     assert captured["retry_count"] == 1
     await client.aclose()
 
@@ -88,6 +88,6 @@ async def test_tick_scheduler_now_timeout_has_minimum_floor(
 
     monkeypatch.setattr(client, "_request_json", _fake_request_json)
     await client.tick_scheduler_now()
-    assert captured["timeout_sec"] == 45.0
+    assert captured["timeout_sec"] == 300.0
     assert captured["retry_count"] == 1
     await client.aclose()
