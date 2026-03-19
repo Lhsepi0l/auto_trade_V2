@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from v2.common.operator_labels import humanize_action_token, humanize_reason_token
+from v2.operator.presets import PRESETS, PROFILE_KEYS
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -187,6 +188,8 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
             "exec_mode_default": str(risk_config.get("exec_mode_default") or "MARKET").upper(),
             "scheduler_tick_sec": _to_float(scheduler.get("tick_sec")),
             "notify_interval_sec": int(_to_float(risk_config.get("notify_interval_sec"), default=30.0)),
+            "preset_options": list(PRESETS),
+            "profile_template_options": list(PROFILE_KEYS),
         },
         "capital": {
             "available_usdt": _to_float(balance.get("available")),
@@ -246,6 +249,21 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
                 "notify_interval_sec": int(
                     _to_float(risk_config.get("notify_interval_sec"), default=30.0)
                 ),
+            },
+            "trailing": {
+                "trailing_enabled": bool(risk_config.get("trailing_enabled")),
+                "trailing_mode": str(risk_config.get("trailing_mode") or "PCT").upper(),
+                "trail_arm_pnl_pct": _to_float(risk_config.get("trail_arm_pnl_pct"), default=0.0),
+                "trail_grace_minutes": int(
+                    _to_float(risk_config.get("trail_grace_minutes"), default=0.0)
+                ),
+                "trail_distance_pnl_pct": _to_float(
+                    risk_config.get("trail_distance_pnl_pct"), default=0.0
+                ),
+                "atr_trail_timeframe": str(risk_config.get("atr_trail_timeframe") or "1h"),
+                "atr_trail_k": _to_float(risk_config.get("atr_trail_k"), default=0.0),
+                "atr_trail_min_pct": _to_float(risk_config.get("atr_trail_min_pct"), default=0.0),
+                "atr_trail_max_pct": _to_float(risk_config.get("atr_trail_max_pct"), default=0.0),
             },
         },
         "alpha": {

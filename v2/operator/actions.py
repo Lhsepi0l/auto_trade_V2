@@ -59,6 +59,9 @@ def _action_label(action: str) -> str:
         "risk_basic": "리스크 기본 설정",
         "risk_advanced": "리스크 고급 설정",
         "notify_interval": "상태 알림 주기 변경",
+        "preset": "프리셋 적용",
+        "profile_template": "프로파일 템플릿 적용",
+        "trailing_config": "트레일링 설정",
     }.get(action, action)
 
 
@@ -93,6 +96,21 @@ def _action_summary(action: str, raw_result: dict[str, Any], context: dict[str, 
             return f"증거금 {float(amount):.4f} USDT / {float(leverage):g}x 적용"
         if amount is not None:
             return f"증거금 {float(amount):.4f} USDT 적용"
+    if action == "preset":
+        name = str(context.get("name") or raw_result.get("preset") or "-")
+        return f"프리셋 {name} 적용"
+    if action == "profile_template":
+        name = str(context.get("name") or "-")
+        budget = context.get("budget_usdt")
+        if budget is not None:
+            return f"프로파일 템플릿 {name} 적용 (예산 {float(budget):.4f} USDT)"
+        return f"프로파일 템플릿 {name} 적용"
+    if action == "trailing_config":
+        enabled = bool(context.get("trailing_enabled"))
+        mode = str(context.get("trailing_mode") or "-").upper()
+        if not enabled:
+            return "트레일링 비활성화 적용"
+        return f"트레일링 {mode} 모드 적용"
     if action == "risk_basic":
         return "리스크 기본 설정 적용"
     if action == "risk_advanced":

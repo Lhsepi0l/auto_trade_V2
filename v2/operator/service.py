@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from v2.operator.actions import wrap_operator_action
+from v2.operator.presets import PRESETS, PROFILE_KEYS, build_profile_payload
 from v2.operator.read_models import build_operator_console_payload
 
 if TYPE_CHECKING:
@@ -154,4 +155,83 @@ class OperatorService:
             action="notify_interval",
             raw_result=result,
             context={"notify_interval_sec": max(1, int(notify_interval_sec))},
+        )
+
+    def apply_preset(self, *, name: str) -> dict[str, Any]:
+        preset_name = str(name).strip().lower()
+        if preset_name not in PRESETS:
+            raise ValueError(f"preset must be one of: {', '.join(PRESETS)}")
+        result = self._controller.preset(preset_name)
+        return wrap_operator_action(
+            action="preset",
+            raw_result=result,
+            context={"name": preset_name},
+        )
+
+    def apply_profile_template(self, *, name: str, budget_usdt: float | None = None) -> dict[str, Any]:
+        profile_name = str(name).strip()
+        if profile_name not in PROFILE_KEYS:
+            raise ValueError(f"profile must be one of: {', '.join(PROFILE_KEYS)}")
+        payload = build_profile_payload(profile_name, budget_usdt)
+        self._apply_values(payload)
+        result = self._current_risk_config()
+        return wrap_operator_action(
+            action="profile_template",
+            raw_result=result,
+            context={"name": profile_name, "budget_usdt": budget_usdt},
+        )
+
+    def set_trailing_config(
+        self,
+        *,
+        trailing_enabled: bool,
+        trailing_mode: str,
+        trail_arm_pnl_pct: float,
+        trail_grace_minutes: int,
+        trail_distance_pnl_pct: float | None = None,
+        atr_trail_timeframe: str | None = None,
+        atr_trail_k: float | None = None,
+        atr_trail_min_pct: float | None = None,
+        atr_trail_max_pct: float | None = None,
+    ) -> dict[str, Any]:
+        mode = str(trailing_mode).strip().upper()
+        if mode not in {"PCT", "ATR"}:
+            raise ValueError("trailing_mode must be PCT or ATR")
+
+        payload: dict[str, Any] = {
+            "trailing_enabled": bool(trailing_enabled),
+            "trailing_mode": mode,
+            "trail_arm_pnl_pct": float(trail_arm_pnl_pct),
+            "trail_grace_minutes": int(trail_grace_minutes),
+        }
+
+        if mode == "PCT":
+            if trail_distance_pnl_pct is None:
+                raise ValueError("trail_distance_pnl_pct is required for PCT mode")
+            payload["trail_distance_pnl_pct"] = float(trail_distance_pnl_pct)
+        else:
+            timeframe = str(atr_trail_timeframe or "").strip().lower()
+            if timeframe not in {"15m", "1h", "4h"}:
+                raise ValueError("atr_trail_timeframe must be 15m, 1h, or 4h")
+            if atr_trail_k is None or atr_trail_min_pct is None or atr_trail_max_pct is None:
+                raise ValueError("ATR mode requires atr_trail_k, atr_trail_min_pct, atr_trail_max_pct")
+            if float(atr_trail_max_pct) < float(atr_trail_min_pct):
+                raise ValueError("atr_trail_max_pct must be >= atr_trail_min_pct")
+            payload.update(
+                {
+                    "atr_trail_timeframe": timeframe,
+                    "atr_trail_k": float(atr_trail_k),
+                    "atr_trail_min_pct": float(atr_trail_min_pct),
+                    "atr_trail_max_pct": float(atr_trail_max_pct),
+                }
+            )
+
+        result = self._apply_values(payload)
+        return wrap_operator_action(
+            action="trailing_config",
+            raw_result=result,
+            context={
+                "trailing_enabled": bool(trailing_enabled),
+                "trailing_mode": mode,
+            },
         )

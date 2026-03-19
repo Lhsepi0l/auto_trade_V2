@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from v2.operator import OperatorService
 from v2.operator.actions import wrap_operator_action
 from v2.operator.read_models import build_operator_console_payload
+from v2.tests.test_control_api import _build_controller
 
 
 def test_build_operator_console_payload_humanizes_blocking_state() -> None:
@@ -71,8 +73,10 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
     assert payload["positions"][0]["symbol"] == "BTCUSDT"
     assert "프라이빗 스트림 stale" in payload["health"]["stale_items"]
     assert payload["controls"]["exec_mode_default"] == "MARKET"
+    assert payload["controls"]["preset_options"] == ["conservative", "normal", "aggressive"]
     assert payload["recovery"]["startup_reconcile_ok"] is True
     assert payload["risk_forms"]["margin_budget"]["margin_use_pct"] == 0.8
+    assert payload["risk_forms"]["trailing"]["trailing_mode"] == "PCT"
     assert payload["recent_result"]["last_reason_label"] == "이미 판단 작업이 진행중"
 
 
@@ -100,3 +104,27 @@ def test_wrap_operator_action_classifies_busy_response() -> None:
 
     assert wrapped["status"] == "busy"
     assert wrapped["ok"] is False
+
+
+def test_operator_service_applies_profile_template_and_trailing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+
+    profile = service.apply_profile_template(name="recovery_safe", budget_usdt=55.0)
+    assert profile["action"] == "profile_template"
+    risk_after_profile = controller.get_risk()
+    assert risk_after_profile["max_leverage"] == 20.0
+    assert risk_after_profile["margin_budget_usdt"] == 55.0
+
+    trailing = service.set_trailing_config(
+        trailing_enabled=True,
+        trailing_mode="PCT",
+        trail_arm_pnl_pct=1.2,
+        trail_grace_minutes=30,
+        trail_distance_pnl_pct=0.8,
+    )
+    assert trailing["action"] == "trailing_config"
+    risk_after_trailing = controller.get_risk()
+    assert risk_after_trailing["trailing_enabled"] is True
+    assert risk_after_trailing["trailing_mode"] == "PCT"
+    assert risk_after_trailing["trail_distance_pnl_pct"] == 0.8

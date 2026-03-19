@@ -63,6 +63,29 @@
       </dl>
     </article>
 
+    <article class="card">
+      <form id="preset-form" class="panel-form">
+        <h2>프리셋 / 프로파일</h2>
+        <div class="field-row">
+          <label for="preset-select">운영 프리셋</label>
+          <select id="preset-select" name="name"></select>
+        </div>
+        <button class="btn" type="submit">프리셋 적용</button>
+      </form>
+      <form id="profile-template-form" class="panel-form">
+        <h3>프로파일 템플릿</h3>
+        <div class="field-row">
+          <label for="profile-template-select">템플릿</label>
+          <select id="profile-template-select" name="name"></select>
+        </div>
+        <div class="field-row">
+          <label for="profile-budget-input">예산 override</label>
+          <input id="profile-budget-input" name="budget_usdt" type="number" min="0" step="0.0001" placeholder="선택">
+        </div>
+        <button class="btn" type="submit">프로파일 템플릿 적용</button>
+      </form>
+    </article>
+
     <article class="card wide">
       <div class="card-head">
         <h2>스케줄러 / 실행 모드</h2>
@@ -218,6 +241,61 @@
           <input id="notify-interval-input" name="notify_interval_sec" type="number" step="1" min="1">
         </div>
         <button class="btn" type="submit">알림 주기 적용</button>
+      </form>
+    </article>
+
+    <article class="card wide">
+      <form id="trailing-form" class="panel-form">
+        <h2>트레일링 설정</h2>
+        <div class="form-grid">
+          <div class="field-row">
+            <label for="trailing-enabled-select">사용 여부</label>
+            <select id="trailing-enabled-select" name="trailing_enabled">
+              <option value="true">사용</option>
+              <option value="false">미사용</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="trailing-mode-select">모드</label>
+            <select id="trailing-mode-select" name="trailing_mode">
+              <option value="PCT">PCT</option>
+              <option value="ATR">ATR</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="trail-arm-input">시작 수익률(%)</label>
+            <input id="trail-arm-input" name="trail_arm_pnl_pct" type="number" step="0.0001" min="0">
+          </div>
+          <div class="field-row">
+            <label for="trail-grace-input">유예 시간(분)</label>
+            <input id="trail-grace-input" name="trail_grace_minutes" type="number" step="1" min="0">
+          </div>
+          <div class="field-row">
+            <label for="trail-distance-input">PCT 거리(%)</label>
+            <input id="trail-distance-input" name="trail_distance_pnl_pct" type="number" step="0.0001" min="0">
+          </div>
+          <div class="field-row">
+            <label for="atr-timeframe-select">ATR 시간봉</label>
+            <select id="atr-timeframe-select" name="atr_trail_timeframe">
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="atr-k-input">ATR K</label>
+            <input id="atr-k-input" name="atr_trail_k" type="number" step="0.0001" min="0">
+          </div>
+          <div class="field-row">
+            <label for="atr-min-input">ATR 최소폭(%)</label>
+            <input id="atr-min-input" name="atr_trail_min_pct" type="number" step="0.0001" min="0">
+          </div>
+          <div class="field-row">
+            <label for="atr-max-input">ATR 최대폭(%)</label>
+            <input id="atr-max-input" name="atr_trail_max_pct" type="number" step="0.0001" min="0">
+          </div>
+        </div>
+        <button class="btn" type="submit">트레일링 적용</button>
       </form>
     </article>
 

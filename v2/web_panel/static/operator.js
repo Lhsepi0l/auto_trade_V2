@@ -55,6 +55,26 @@ function renderPre(id, payload) {
   }
 }
 
+function populateSelect(id, options, currentValue) {
+  const el = document.getElementById(id);
+  if (!el) {
+    return;
+  }
+  el.innerHTML = "";
+  if (!Array.isArray(options)) {
+    return;
+  }
+  for (const optionValue of options) {
+    const option = document.createElement("option");
+    option.value = String(optionValue);
+    option.textContent = String(optionValue);
+    if (String(optionValue) === String(currentValue ?? "")) {
+      option.selected = true;
+    }
+    el.appendChild(option);
+  }
+}
+
 function setFeedback(message, status = "success") {
   if (!feedbackEl) {
     return;
@@ -167,6 +187,8 @@ async function loadConsole() {
   setText("readiness-summary", payload.readiness?.summary);
   setText("readiness-private-error", payload.readiness?.private_error);
   setText("readiness-private-detail", payload.readiness?.private_error_detail);
+  populateSelect("preset-select", payload.controls?.preset_options || [], "normal");
+  populateSelect("profile-template-select", payload.controls?.profile_template_options || [], null);
 
   setText("capital-available", fmtNumber(payload.capital?.available_usdt, 4));
   setText("capital-wallet", fmtNumber(payload.capital?.wallet_usdt, 4));
@@ -193,6 +215,16 @@ async function loadConsole() {
   setInputValue("risk-advanced-min-hold", payload.risk_forms?.risk_advanced?.min_hold_minutes);
   setInputValue("risk-advanced-score-conf", payload.risk_forms?.risk_advanced?.score_conf_threshold);
   setInputValue("notify-interval-input", payload.risk_forms?.notify_interval?.notify_interval_sec);
+  setSelectValue("trailing-enabled-select", String(Boolean(payload.risk_forms?.trailing?.trailing_enabled)));
+  setSelectValue("trailing-mode-select", payload.risk_forms?.trailing?.trailing_mode);
+  setInputValue("trail-arm-input", payload.risk_forms?.trailing?.trail_arm_pnl_pct);
+  setInputValue("trail-grace-input", payload.risk_forms?.trailing?.trail_grace_minutes);
+  setInputValue("trail-distance-input", payload.risk_forms?.trailing?.trail_distance_pnl_pct);
+  setSelectValue("atr-timeframe-select", payload.risk_forms?.trailing?.atr_trail_timeframe);
+  setInputValue("atr-k-input", payload.risk_forms?.trailing?.atr_trail_k);
+  setInputValue("atr-min-input", payload.risk_forms?.trailing?.atr_trail_min_pct);
+  setInputValue("atr-max-input", payload.risk_forms?.trailing?.atr_trail_max_pct);
+  setInputValue("profile-budget-input", payload.risk_forms?.margin_budget?.margin_budget_usdt);
 
   setText("recent-action", payload.recent_result?.last_action_label);
   setText("recent-reason", payload.recent_result?.last_reason_label);
@@ -337,6 +369,44 @@ function bindForms() {
     event.preventDefault();
     const notify_interval_sec = Number(document.getElementById("notify-interval-input")?.value);
     postAction("/operator/actions/notify-interval", { notify_interval_sec }).catch((error) =>
+      setFeedback(String(error), "failed")
+    );
+  });
+
+  document.getElementById("preset-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.getElementById("preset-select")?.value || "normal";
+    postAction("/operator/actions/preset", { name }).catch((error) =>
+      setFeedback(String(error), "failed")
+    );
+  });
+
+  document.getElementById("profile-template-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.getElementById("profile-template-select")?.value || "";
+    const budgetRaw = document.getElementById("profile-budget-input")?.value || "";
+    const budget_usdt = budgetRaw === "" ? null : Number(budgetRaw);
+    postAction("/operator/actions/profile-template", { name, budget_usdt }).catch((error) =>
+      setFeedback(String(error), "failed")
+    );
+  });
+
+  document.getElementById("trailing-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const trailing_enabled = (document.getElementById("trailing-enabled-select")?.value || "true") === "true";
+    const trailing_mode = document.getElementById("trailing-mode-select")?.value || "PCT";
+    const body = {
+      trailing_enabled,
+      trailing_mode,
+      trail_arm_pnl_pct: Number(document.getElementById("trail-arm-input")?.value),
+      trail_grace_minutes: Number(document.getElementById("trail-grace-input")?.value),
+      trail_distance_pnl_pct: Number(document.getElementById("trail-distance-input")?.value),
+      atr_trail_timeframe: document.getElementById("atr-timeframe-select")?.value || "1h",
+      atr_trail_k: Number(document.getElementById("atr-k-input")?.value),
+      atr_trail_min_pct: Number(document.getElementById("atr-min-input")?.value),
+      atr_trail_max_pct: Number(document.getElementById("atr-max-input")?.value),
+    };
+    postAction("/operator/actions/trailing", body).catch((error) =>
       setFeedback(String(error), "failed")
     );
   });

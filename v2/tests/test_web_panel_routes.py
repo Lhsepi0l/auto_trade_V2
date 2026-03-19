@@ -136,3 +136,31 @@ def test_operator_console_supports_structured_control_actions(tmp_path) -> None:
     notify = client.post("/operator/actions/notify-interval", json={"notify_interval_sec": 45})
     assert notify.status_code == 200
     assert notify.json()["action"] == "notify_interval"
+
+    preset = client.post("/operator/actions/preset", json={"name": "normal"})
+    assert preset.status_code == 200
+    assert preset.json()["action"] == "preset"
+
+    profile = client.post(
+        "/operator/actions/profile-template",
+        json={"name": "recovery_safe", "budget_usdt": 44.0},
+    )
+    assert profile.status_code == 200
+    assert profile.json()["action"] == "profile_template"
+
+    trailing = client.post(
+        "/operator/actions/trailing",
+        json={
+            "trailing_enabled": True,
+            "trailing_mode": "PCT",
+            "trail_arm_pnl_pct": 1.2,
+            "trail_grace_minutes": 30,
+            "trail_distance_pnl_pct": 0.8,
+            "atr_trail_timeframe": "1h",
+            "atr_trail_k": 2.0,
+            "atr_trail_min_pct": 0.6,
+            "atr_trail_max_pct": 1.8,
+        },
+    )
+    assert trailing.status_code == 200
+    assert trailing.json()["action"] == "trailing_config"

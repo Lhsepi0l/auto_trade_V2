@@ -59,6 +59,27 @@ class OperatorNotifyIntervalRequest(BaseModel):
     notify_interval_sec: int
 
 
+class OperatorPresetRequest(BaseModel):
+    name: str
+
+
+class OperatorProfileTemplateRequest(BaseModel):
+    name: str
+    budget_usdt: float | None = None
+
+
+class OperatorTrailingConfigRequest(BaseModel):
+    trailing_enabled: bool
+    trailing_mode: str
+    trail_arm_pnl_pct: float
+    trail_grace_minutes: int
+    trail_distance_pnl_pct: float | None = None
+    atr_trail_timeframe: str | None = None
+    atr_trail_k: float | None = None
+    atr_trail_min_pct: float | None = None
+    atr_trail_max_pct: float | None = None
+
+
 def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
@@ -162,5 +183,30 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.post("/operator/actions/notify-interval")
     async def operator_notify_interval(payload: OperatorNotifyIntervalRequest) -> dict[str, Any]:
         return service.set_notify_interval(notify_interval_sec=payload.notify_interval_sec)
+
+    @router.post("/operator/actions/preset")
+    async def operator_preset(payload: OperatorPresetRequest) -> dict[str, Any]:
+        return service.apply_preset(name=payload.name)
+
+    @router.post("/operator/actions/profile-template")
+    async def operator_profile_template(payload: OperatorProfileTemplateRequest) -> dict[str, Any]:
+        return service.apply_profile_template(
+            name=payload.name,
+            budget_usdt=payload.budget_usdt,
+        )
+
+    @router.post("/operator/actions/trailing")
+    async def operator_trailing(payload: OperatorTrailingConfigRequest) -> dict[str, Any]:
+        return service.set_trailing_config(
+            trailing_enabled=payload.trailing_enabled,
+            trailing_mode=payload.trailing_mode,
+            trail_arm_pnl_pct=payload.trail_arm_pnl_pct,
+            trail_grace_minutes=payload.trail_grace_minutes,
+            trail_distance_pnl_pct=payload.trail_distance_pnl_pct,
+            atr_trail_timeframe=payload.atr_trail_timeframe,
+            atr_trail_k=payload.atr_trail_k,
+            atr_trail_min_pct=payload.atr_trail_min_pct,
+            atr_trail_max_pct=payload.atr_trail_max_pct,
+        )
 
     app.include_router(router)
