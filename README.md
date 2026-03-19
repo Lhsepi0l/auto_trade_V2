@@ -60,6 +60,7 @@ python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_live_candida
 - 시작: `POST http://127.0.0.1:8101/start`
 - 즉시 tick: `POST http://127.0.0.1:8101/scheduler/tick`
 - 런타임 설정 변경: `POST http://127.0.0.1:8101/set`
+- 웹 운영 콘솔: `GET http://127.0.0.1:8101/operator` (`--operator-web` 필요)
 
 ## 운영 안전 주의
 - 이 시스템은 USDT-M 선물 전용입니다.

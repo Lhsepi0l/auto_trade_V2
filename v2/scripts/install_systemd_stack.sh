@@ -14,6 +14,8 @@ ENVIRONMENT="prod"
 ENV_FILE=".env"
 HOST="127.0.0.1"
 PORT="8101"
+ENABLE_OPERATOR_WEB="false"
+WITH_DISCORD_BOT="true"
 DRY_RUN="false"
 
 usage() {
@@ -31,12 +33,15 @@ Options:
   --env-file <path>             (default: .env)
   --host <host>                 (default: 127.0.0.1)
   --port <port>                 (default: 8101)
+  --operator-web                enable /operator web console
+  --no-discord-bot              skip Discord fallback bot startup
   --dry-run                     print generated unit then exit
   --help
 
 Examples:
   bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
   bash v2/scripts/install_systemd_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --port 8101
+  bash v2/scripts/install_systemd_stack.sh --mode shadow --env testnet --operator-web --no-discord-bot
 EOF
 }
 
@@ -77,6 +82,14 @@ while [[ $# -gt 0 ]]; do
         --port)
             PORT="$2"
             shift 2
+            ;;
+        --operator-web)
+            ENABLE_OPERATOR_WEB="true"
+            shift 1
+            ;;
+        --no-discord-bot)
+            WITH_DISCORD_BOT="false"
+            shift 1
             ;;
         --dry-run)
             DRY_RUN="true"
@@ -127,6 +140,13 @@ fi
 
 UNIT_NAME="${SERVICE_NAME}.service"
 UNIT_PATH="/etc/systemd/system/${UNIT_NAME}"
+EXTRA_ARGS=""
+if [[ "$ENABLE_OPERATOR_WEB" == "true" ]]; then
+    EXTRA_ARGS+=" --operator-web"
+fi
+if [[ "$WITH_DISCORD_BOT" != "true" ]]; then
+    EXTRA_ARGS+=" --no-discord-bot"
+fi
 
 TMP_UNIT="$(mktemp)"
 cat > "$TMP_UNIT" <<EOF
@@ -141,7 +161,7 @@ User=$RUN_USER
 WorkingDirectory=$WORKDIR
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=$ENV_FILE_ABS
-ExecStart=/usr/bin/env bash $WORKDIR/v2/scripts/run_stack.sh --profile $PROFILE --mode $MODE --env $ENVIRONMENT --env-file $ENV_FILE --host $HOST --port $PORT
+ExecStart=/usr/bin/env bash $WORKDIR/v2/scripts/run_stack.sh --profile $PROFILE --mode $MODE --env $ENVIRONMENT --env-file $ENV_FILE --host $HOST --port $PORT$EXTRA_ARGS
 Restart=always
 RestartSec=2
 KillMode=control-group

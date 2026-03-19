@@ -1353,10 +1353,21 @@ def _serve_ops_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
     return serve_ops_http(cfg, host=host, port=port)
 
 
-def _serve_control_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
+def _serve_control_http(
+    cfg: EffectiveConfig,
+    *,
+    host: str,
+    port: int,
+    enable_operator_web: bool = False,
+) -> int:
     from v2.runtime.serve import serve_control_http
 
-    return serve_control_http(cfg, host=host, port=port)
+    return serve_control_http(
+        cfg,
+        host=host,
+        port=port,
+        enable_operator_web=enable_operator_web,
+    )
 
 
 def _build_control_balance_rest_client(
@@ -1466,7 +1477,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.control_http:
         return _serve_control_http(
-            effective, host=args.control_http_host, port=args.control_http_port
+            effective,
+            host=args.control_http_host,
+            port=args.control_http_port,
+            enable_operator_web=bool(args.operator_web),
         )
 
     if args.runtime_preflight:

@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run v2 full control HTTP API (Discord compatible)",
     )
+    parser.add_argument(
+        "--operator-web",
+        action="store_true",
+        help="mount server-rendered web operator console on the control HTTP app",
+    )
     parser.add_argument("--control-http-host", default="127.0.0.1")
     parser.add_argument("--control-http-port", type=int, default=8101)
     parser.add_argument("--replay", default=None, help="path to replay source")

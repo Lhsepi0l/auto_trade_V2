@@ -1,0 +1,29 @@
+# Web Operator Panel
+
+웹 운영 콘솔은 기존 control HTTP 위에 붙는 별도 operator surface입니다.
+
+## 기본 실행
+
+```bash
+python -m v2.run \
+  --profile ra_2026_alpha_v2_expansion_verified_q070 \
+  --mode shadow \
+  --env testnet \
+  --control-http \
+  --control-http-host 127.0.0.1 \
+  --control-http-port 8101 \
+  --operator-web
+```
+
+- 콘솔 주소: `http://127.0.0.1:8101/operator`
+- 기본 access model: localhost only
+- 외부 접근은 Tailscale, SSH 터널, 또는 인증된 reverse proxy 뒤에서만 허용
+
+## 통합 스택 실행
+
+```bash
+bash v2/scripts/run_stack.sh --mode shadow --env testnet --operator-web
+```
+
+- Discord fallback 없이 웹만 확인하려면 `--no-discord-bot` 사용
+- migration 동안 Discord는 fallback-only 운영면으로 유지

@@ -12,6 +12,8 @@ ENV_FILE=".env"
 CONTROL_HOST="127.0.0.1"
 CONTROL_PORT="8101"
 CONTROL_HTTP_MODE="control-http"
+ENABLE_OPERATOR_WEB="false"
+WITH_DISCORD_BOT="true"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 STACK_LOCK_FILE="${STACK_LOCK_FILE:-v2/logs/stack.lock}"
 READY_TIMEOUT_SEC="${STACK_READY_TIMEOUT_SEC:-30}"
@@ -29,6 +31,8 @@ Options:
   --env-file <path>
   --host <host>
   --port <port>
+  --operator-web
+  --no-discord-bot
   --ops-http            # rejected: stack requires control-http + /readyz
   --help
 
@@ -36,6 +40,7 @@ Examples:
   bash v2/scripts/run_stack.sh
   bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
   bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+  bash v2/scripts/run_stack.sh --mode shadow --env testnet --operator-web --no-discord-bot
 EOF
 }
 
@@ -64,6 +69,14 @@ while [[ $# -gt 0 ]]; do
         --port)
             CONTROL_PORT="$2"
             shift 2
+            ;;
+        --operator-web)
+            ENABLE_OPERATOR_WEB="true"
+            shift 1
+            ;;
+        --no-discord-bot)
+            WITH_DISCORD_BOT="false"
+            shift 1
             ;;
         --ops-http)
             CONTROL_HTTP_MODE="ops-http"
@@ -162,6 +175,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 verify_bot_import() {
+    if [[ "$WITH_DISCORD_BOT" != "true" ]]; then
+        return 0
+    fi
     local import_check_log
     import_check_log="$(mktemp)"
     if "$PYTHON_BIN" -c "import importlib; importlib.import_module('v2.discord_bot.bot')" >"$import_check_log" 2>&1; then
@@ -289,43 +305,59 @@ PY
 
 verify_bot_import
 
-"$PYTHON_BIN" -m v2.run \
-    --profile "$PROFILE" \
-    --mode "$MODE" \
-    --env "$ENVIRONMENT" \
-    --env-file "$ENV_FILE" \
-    --control-http \
-    --control-http-host "$CONTROL_HOST" \
-    --control-http-port "$CONTROL_PORT" \
-    >"$CONTROL_LOG" 2>&1 &
+RUN_ARGS=(
+    -m v2.run
+    --profile "$PROFILE"
+    --mode "$MODE"
+    --env "$ENVIRONMENT"
+    --env-file "$ENV_FILE"
+    --control-http
+    --control-http-host "$CONTROL_HOST"
+    --control-http-port "$CONTROL_PORT"
+)
+if [[ "$ENABLE_OPERATOR_WEB" == "true" ]]; then
+    RUN_ARGS+=(--operator-web)
+fi
+
+"$PYTHON_BIN" "${RUN_ARGS[@]}" >"$CONTROL_LOG" 2>&1 &
 
 CONTROL_PID=$!
 wait_for_control_ready
 
-export TRADER_API_BASE_URL="http://${CONTROL_HOST}:${CONTROL_PORT}"
+BASE_URL="http://${CONTROL_HOST}:${CONTROL_PORT}"
+if [[ "$WITH_DISCORD_BOT" == "true" ]]; then
+    export TRADER_API_BASE_URL="$BASE_URL"
 
-"$PYTHON_BIN" -m v2.discord_bot.bot >"$BOT_LOG" 2>&1 &
-BOT_PID=$!
+    "$PYTHON_BIN" -m v2.discord_bot.bot >"$BOT_LOG" 2>&1 &
+    BOT_PID=$!
 
-for _ in {1..5}; do
-    if ! kill -0 "$BOT_PID" 2>/dev/null; then
-        echo "discord bot failed to start"
-        show_bot_failure
-        exit 1
-    fi
-    sleep 0.1
-done
+    for _ in {1..5}; do
+        if ! kill -0 "$BOT_PID" 2>/dev/null; then
+            echo "discord bot failed to start"
+            show_bot_failure
+            exit 1
+        fi
+        sleep 0.1
+    done
+fi
 
 printf "%s\n%s\n" "$CONTROL_PID" "$BOT_PID" > "$PIDS_FILE"
 
 echo "stack started"
 echo "- control pid: $CONTROL_PID"
-echo "- bot pid: $BOT_PID"
 echo "- control log: $CONTROL_LOG"
-echo "- bot log: $BOT_LOG"
-echo "- base url: ${TRADER_API_BASE_URL}"
-
-wait -n "$CONTROL_PID" "$BOT_PID"
+echo "- base url: ${BASE_URL}"
+if [[ "$ENABLE_OPERATOR_WEB" == "true" ]]; then
+    echo "- operator web: ${BASE_URL}/operator"
+fi
+if [[ "$WITH_DISCORD_BOT" == "true" ]]; then
+    echo "- bot pid: $BOT_PID"
+    echo "- bot log: $BOT_LOG"
+    wait -n "$CONTROL_PID" "$BOT_PID"
+else
+    echo "- discord bot: skipped"
+    wait -n "$CONTROL_PID"
+fi
 EXIT_CODE=$?
 
 echo "one process exited (code=$EXIT_CODE). shutting down stack..."

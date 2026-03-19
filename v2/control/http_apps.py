@@ -114,7 +114,11 @@ def register_mutating_control_routes(*, app: FastAPI, controller: RuntimeControl
         return await controller.close_all()
 
 
-def create_control_http_app(*, controller: RuntimeController) -> FastAPI:
+def create_control_http_app(
+    *,
+    controller: RuntimeController,
+    enable_operator_web: bool = False,
+) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
         _ = _app
@@ -128,4 +132,8 @@ def create_control_http_app(*, controller: RuntimeController) -> FastAPI:
     app.state.controller = controller
     register_readonly_control_routes(app=app, controller=controller)
     register_mutating_control_routes(app=app, controller=controller)
+    if enable_operator_web:
+        from v2.web_panel import register_operator_web_routes
+
+        register_operator_web_routes(app=app, controller=controller)
     return app

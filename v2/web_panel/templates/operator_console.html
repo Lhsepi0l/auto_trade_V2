@@ -1,0 +1,114 @@
+<main class="operator-app">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">AUTO TRADER V2</p>
+      <h1>웹 운영 콘솔</h1>
+      <p class="subtitle">런타임 상태, 리스크, 즉시 판단, 레버리지 조작을 한 화면에서 확인합니다.</p>
+    </div>
+    <div class="hero-meta">
+      <span id="runtime-mode" class="pill">-</span>
+      <span id="runtime-profile" class="pill muted">-</span>
+      <button id="manual-refresh" class="btn ghost" type="button">새로고침</button>
+    </div>
+  </header>
+
+  <section class="sticky-actions">
+    <button id="action-start" class="btn primary" type="button">시작/재개</button>
+    <button id="action-pause" class="btn" type="button">일시정지</button>
+    <button id="action-panic" class="btn danger" type="button">패닉</button>
+    <button id="action-tick" class="btn accent" type="button">즉시 판단</button>
+  </section>
+
+  <section id="action-feedback" class="feedback" hidden></section>
+
+  <section class="grid">
+    <article class="card">
+      <h2>엔진 상태</h2>
+      <dl class="kv">
+        <div><dt>상태</dt><dd id="engine-state">-</dd></div>
+        <div><dt>업데이트</dt><dd id="engine-updated-at">-</dd></div>
+        <div><dt>준비도</dt><dd id="health-ready">-</dd></div>
+        <div><dt>stale</dt><dd id="health-stale">-</dd></div>
+        <div><dt>차단</dt><dd id="health-blocked">-</dd></div>
+        <div><dt>busy</dt><dd id="health-busy">-</dd></div>
+      </dl>
+      <ul id="health-stale-items" class="inline-list"></ul>
+    </article>
+
+    <article class="card">
+      <h2>스케줄러 / 마지막 판단</h2>
+      <dl class="kv">
+        <div><dt>주기</dt><dd id="scheduler-tick-sec">-</dd></div>
+        <div><dt>최근 액션</dt><dd id="scheduler-last-action">-</dd></div>
+        <div><dt>사유</dt><dd id="scheduler-last-reason">-</dd></div>
+        <div><dt>오류</dt><dd id="scheduler-last-error">-</dd></div>
+        <div><dt>시작 시각</dt><dd id="scheduler-started-at">-</dd></div>
+        <div><dt>종료 시각</dt><dd id="scheduler-finished-at">-</dd></div>
+      </dl>
+    </article>
+
+    <article class="card">
+      <h2>라이브 준비도</h2>
+      <dl class="kv">
+        <div><dt>요약</dt><dd id="readiness-summary">-</dd></div>
+        <div><dt>Private 오류</dt><dd id="readiness-private-error">-</dd></div>
+        <div><dt>상세</dt><dd id="readiness-private-detail">-</dd></div>
+      </dl>
+    </article>
+
+    <article class="card">
+      <h2>자본 / 레버리지</h2>
+      <dl class="kv">
+        <div><dt>사용 가능</dt><dd id="capital-available">-</dd></div>
+        <div><dt>지갑 잔고</dt><dd id="capital-wallet">-</dd></div>
+        <div><dt>예산</dt><dd id="capital-budget">-</dd></div>
+        <div><dt>예상 노셔널</dt><dd id="capital-notional">-</dd></div>
+        <div><dt>레버리지</dt><dd id="capital-leverage">-</dd></div>
+        <div><dt>차단 사유</dt><dd id="capital-block-reason">-</dd></div>
+      </dl>
+      <form id="symbol-leverage-form" class="inline-form">
+        <input id="symbol-input" name="symbol" type="text" placeholder="BTCUSDT" value="BTCUSDT">
+        <input id="leverage-input" name="leverage" type="number" min="0" step="0.1" placeholder="5">
+        <button class="btn" type="submit">레버리지 적용</button>
+      </form>
+    </article>
+
+    <article class="card wide">
+      <h2>현재 포지션</h2>
+      <div id="positions-empty" class="empty">포지션 없음</div>
+      <div id="positions-list" class="table"></div>
+    </article>
+
+    <article class="card">
+      <h2>리스크 런타임</h2>
+      <dl class="kv">
+        <div><dt>일간 손익%</dt><dd id="risk-daily-pnl">-</dd></div>
+        <div><dt>DD%</dt><dd id="risk-dd">-</dd></div>
+        <div><dt>연속 손실</dt><dd id="risk-lose-streak">-</dd></div>
+        <div><dt>쿨다운</dt><dd id="risk-cooldown">-</dd></div>
+        <div><dt>자동 리스크 사유</dt><dd id="risk-auto-reason">-</dd></div>
+      </dl>
+    </article>
+
+    <article class="card wide">
+      <h2>알파 / 차단 메트릭</h2>
+      <dl class="kv">
+        <div><dt>최근 알파</dt><dd id="alpha-id">-</dd></div>
+        <div><dt>엔트리 패밀리</dt><dd id="alpha-family">-</dd></div>
+        <div><dt>레짐</dt><dd id="alpha-regime">-</dd></div>
+        <div><dt>전략 차단 사유</dt><dd id="alpha-block-reason">-</dd></div>
+        <div><dt>Reject focus</dt><dd id="alpha-reject-focus">-</dd></div>
+      </dl>
+      <div class="metrics">
+        <div>
+          <h3>Reject metrics</h3>
+          <pre id="alpha-reject-metrics">-</pre>
+        </div>
+        <div>
+          <h3>Alpha blocks</h3>
+          <pre id="alpha-blocks">-</pre>
+        </div>
+      </div>
+    </article>
+  </section>
+</main>

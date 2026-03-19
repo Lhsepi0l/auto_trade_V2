@@ -36,3 +36,9 @@ def test_install_systemd_stack_forwards_explicit_profile_to_run_stack() -> None:
     stdout = _run_dry_run("--profile", "ra_2026_alpha_v2_expansion_champion_candidate")
     assert "ExecStart=/usr/bin/env bash " in stdout
     assert "--profile ra_2026_alpha_v2_expansion_champion_candidate --mode live --env prod" in stdout
+
+
+def test_install_systemd_stack_supports_web_only_flags() -> None:
+    stdout = _run_dry_run("--operator-web", "--no-discord-bot")
+    assert "--operator-web" in stdout
+    assert "--no-discord-bot" in stdout

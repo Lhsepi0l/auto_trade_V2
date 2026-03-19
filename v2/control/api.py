@@ -2149,8 +2149,11 @@ class RuntimeController:
             )
 
 
-def create_control_http_app(*, controller: RuntimeController):
-    return _create_control_http_app(controller=controller)
+def create_control_http_app(*, controller: RuntimeController, enable_operator_web: bool = False):
+    return _create_control_http_app(
+        controller=controller,
+        enable_operator_web=enable_operator_web,
+    )
 
 
 def build_runtime_controller(

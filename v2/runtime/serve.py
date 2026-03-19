@@ -32,7 +32,13 @@ def serve_ops_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
     return 0
 
 
-def serve_control_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
+def serve_control_http(
+    cfg: EffectiveConfig,
+    *,
+    host: str,
+    port: int,
+    enable_operator_web: bool = False,
+) -> int:
     import uvicorn
 
     try:
@@ -125,7 +131,10 @@ def serve_control_http(cfg: EffectiveConfig, *, host: str, port: int) -> int:
                     runtime_lock_active=True,
                     dirty_restart_detected=bool(dirty_restart_detected),
                 )
-                app = create_control_http_app(controller=controller)
+                app = create_control_http_app(
+                    controller=controller,
+                    enable_operator_web=enable_operator_web,
+                )
                 uvicorn.run(app, host=host, port=port)
     except RuntimeError as exc:
         if str(exc).startswith("runtime_lock_held:"):

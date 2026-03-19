@@ -214,6 +214,54 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
             proc.wait(timeout=3.0)
 
 
+def test_run_stack_can_skip_discord_bot_for_web_only_mode(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo_root = Path(__file__).resolve().parents[2]
+    fake_python = tmp_path / "fake_python.py"
+    control_started = tmp_path / "control.started"
+    bot_started = tmp_path / "bot.started"
+    bot_base_url = tmp_path / "bot.base_url"
+    lock_path = tmp_path / "stack.lock"
+    _write_fake_python(
+        target=fake_python,
+        control_started=control_started,
+        bot_started=bot_started,
+        bot_base_url=bot_base_url,
+    )
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = str(fake_python)
+    env["STACK_LOCK_FILE"] = str(lock_path)
+
+    proc = subprocess.Popen(  # noqa: S603
+        [
+            "bash",
+            "v2/scripts/run_stack.sh",
+            "--mode",
+            "shadow",
+            "--env",
+            "testnet",
+            "--operator-web",
+            "--no-discord-bot",
+        ],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_file(control_started)
+        time.sleep(0.2)
+        assert bot_started.exists() is False
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3.0)
+
+
 def test_run_stack_posts_start_before_requiring_readyz(tmp_path) -> None:  # type: ignore[no-untyped-def]
     repo_root = Path(__file__).resolve().parents[2]
     fake_python = tmp_path / "fake_python.py"
