@@ -64,6 +64,22 @@
     </article>
 
     <article class="card">
+      <div class="card-head">
+        <h2>리포트</h2>
+        <div class="button-row">
+          <button id="action-report" class="btn ghost" type="button">리포트 전송</button>
+        </div>
+      </div>
+      <dl class="kv">
+        <div><dt>마지막 시각</dt><dd id="report-time">-</dd></div>
+        <div><dt>상태</dt><dd id="report-status">-</dd></div>
+        <div><dt>전송 여부</dt><dd id="report-sent">-</dd></div>
+        <div><dt>에러</dt><dd id="report-error">-</dd></div>
+      </dl>
+      <pre id="report-summary">-</pre>
+    </article>
+
+    <article class="card">
       <form id="preset-form" class="panel-form">
         <h2>프리셋 / 프로파일</h2>
         <div class="field-row">
@@ -84,6 +100,21 @@
         </div>
         <button class="btn" type="submit">프로파일 템플릿 적용</button>
       </form>
+    </article>
+
+    <article class="card">
+      <form id="universe-form" class="panel-form">
+        <h2>운영 심볼</h2>
+        <div class="field-row">
+          <label for="universe-symbols-text">심볼 목록</label>
+          <textarea id="universe-symbols-text" name="symbols_text" rows="3" placeholder="BTCUSDT,ETHUSDT"></textarea>
+        </div>
+        <button class="btn" type="submit">운영 심볼 적용</button>
+      </form>
+      <div class="panel-form">
+        <h3>현재 운영 심볼</h3>
+        <div id="universe-symbols-chips" class="chip-list"></div>
+      </div>
     </article>
 
     <article class="card wide">
@@ -300,6 +331,58 @@
     </article>
 
     <article class="card wide">
+      <form id="scoring-form" class="panel-form">
+        <h2>판단식 설정</h2>
+        <div class="form-grid">
+          <div class="field-row">
+            <label for="score-conf-input">신뢰도 임계값</label>
+            <input id="score-conf-input" name="score_conf_threshold" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-gap-input">점수 갭 임계값</label>
+            <input id="score-gap-input" name="score_gap_threshold" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-weight-10m">10m 가중치</label>
+            <input id="score-weight-10m" name="tf_weight_10m" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-weight-15m">15m 가중치</label>
+            <input id="score-weight-15m" name="tf_weight_15m" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-weight-30m">30m 가중치</label>
+            <input id="score-weight-30m" name="tf_weight_30m" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-weight-1h">1h 가중치</label>
+            <input id="score-weight-1h" name="tf_weight_1h" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="score-weight-4h">4h 가중치</label>
+            <input id="score-weight-4h" name="tf_weight_4h" type="number" step="0.0001" min="0" max="1">
+          </div>
+          <div class="field-row">
+            <label for="momentum-filter-select">가짜 돌파 필터</label>
+            <select id="momentum-filter-select" name="donchian_momentum_filter">
+              <option value="true">사용</option>
+              <option value="false">미사용</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="momentum-fast-input">빠른 EMA</label>
+            <input id="momentum-fast-input" name="donchian_fast_ema_period" type="number" step="1" min="2">
+          </div>
+          <div class="field-row">
+            <label for="momentum-slow-input">느린 EMA</label>
+            <input id="momentum-slow-input" name="donchian_slow_ema_period" type="number" step="1" min="3">
+          </div>
+        </div>
+        <button class="btn" type="submit">판단식 적용</button>
+      </form>
+    </article>
+
+    <article class="card wide">
       <h2>최근 판단 / 차단 결과</h2>
       <dl class="kv">
         <div><dt>최근 액션</dt><dd id="recent-action">-</dd></div>
@@ -331,5 +414,32 @@
         </div>
       </div>
     </article>
+
+    <article class="card wide">
+      <h2>운영 가이드</h2>
+      <div class="guidance-grid">
+        <div>
+          <h3>이 패널에서 하는 일</h3>
+          <ul id="guidance-scope" class="guidance-list"></ul>
+        </div>
+        <div>
+          <h3>안전 수칙</h3>
+          <ul id="guidance-safety" class="guidance-list"></ul>
+        </div>
+        <div>
+          <h3>상태 의미</h3>
+          <ul id="guidance-state-meanings" class="guidance-list"></ul>
+        </div>
+        <div>
+          <h3>먼저 볼 항목</h3>
+          <ul id="guidance-first-checks" class="guidance-list"></ul>
+        </div>
+        <div class="guidance-wide">
+          <h3>Discord fallback</h3>
+          <ul id="guidance-discord-fallback" class="guidance-list"></ul>
+        </div>
+      </div>
+    </article>
+
   </section>
 </main>

@@ -177,6 +177,14 @@ input {
   padding: 0 14px;
   min-width: 140px;
 }
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 14px;
+  resize: vertical;
+}
 select {
   min-height: 44px;
   border: 1px solid var(--line);
@@ -205,6 +213,36 @@ select {
   padding: 0 10px;
   font-size: 12px;
 }
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #efe8da;
+  border: 1px solid var(--line);
+}
+.guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.guidance-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+}
+.guidance-list li {
+  margin: 0 0 8px;
+}
+.guidance-wide {
+  grid-column: span 2;
+}
 
 pre {
   margin: 0;
@@ -224,5 +262,7 @@ pre {
 @media (max-width: 720px) {
   .table-row, .kv div, .form-grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr; }
+  .guidance-grid { grid-template-columns: 1fr; }
+  .guidance-wide { grid-column: span 1; }
   .card-head { flex-direction: column; align-items: flex-start; }
 }

@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from v2.operator.actions import wrap_operator_action
+from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import PRESETS, PROFILE_KEYS, build_profile_payload
 from v2.operator.read_models import build_operator_console_payload
+from v2.operator.universe_scoring import parse_universe_symbols, validate_scoring_weights
 
 if TYPE_CHECKING:
     from v2.control.api import RuntimeController
@@ -30,7 +32,10 @@ class OperatorService:
         return self._controller.get_risk()
 
     def console_payload(self) -> dict[str, Any]:
-        return build_operator_console_payload(self._controller._status_snapshot())
+        return build_operator_console_payload(
+            self._controller._status_snapshot(),
+            guidance=build_operator_guidance(),
+        )
 
     def start_or_resume(self) -> dict[str, Any]:
         return wrap_operator_action(action="start_resume", raw_result=self._controller.start())
@@ -235,3 +240,80 @@ class OperatorService:
                 "trailing_mode": mode,
             },
         )
+
+    def set_universe_symbols(self, *, symbols_text: str) -> dict[str, Any]:
+        symbols = parse_universe_symbols(symbols_text)
+        result = self._controller.set_value(key="universe_symbols", value=",".join(symbols))
+        return wrap_operator_action(
+            action="universe_set",
+            raw_result=result,
+            context={"symbols": symbols},
+        )
+
+    def remove_universe_symbol(self, *, symbol: str) -> dict[str, Any]:
+        target = str(symbol).strip().upper()
+        risk_config = self._current_risk_config()
+        current_raw = risk_config.get("universe_symbols") or []
+        current = [str(item).strip().upper() for item in current_raw if str(item).strip()]
+        filtered = [item for item in current if item != target]
+        if target not in current:
+            raise ValueError(f"{target} is not in current universe")
+        if not filtered:
+            raise ValueError("universe must keep at least one symbol")
+        result = self._controller.set_value(key="universe_symbols", value=",".join(filtered))
+        return wrap_operator_action(
+            action="universe_remove",
+            raw_result=result,
+            context={"symbol": target, "symbols": filtered},
+        )
+
+    def set_scoring_config(
+        self,
+        *,
+        tf_weight_10m: float,
+        tf_weight_15m: float,
+        tf_weight_30m: float,
+        tf_weight_1h: float,
+        tf_weight_4h: float,
+        score_conf_threshold: float,
+        score_gap_threshold: float,
+        donchian_momentum_filter: bool,
+        donchian_fast_ema_period: int,
+        donchian_slow_ema_period: int,
+    ) -> dict[str, Any]:
+        weights = validate_scoring_weights(
+            {
+                "10m": tf_weight_10m,
+                "15m": tf_weight_15m,
+                "30m": tf_weight_30m,
+                "1h": tf_weight_1h,
+                "4h": tf_weight_4h,
+            }
+        )
+        fast = int(donchian_fast_ema_period)
+        slow = int(donchian_slow_ema_period)
+        if slow <= fast:
+            slow = fast + 1
+        payload = {
+            "tf_weight_10m": weights["10m"],
+            "tf_weight_15m": weights["15m"],
+            "tf_weight_30m": weights["30m"],
+            "tf_weight_1h": weights["1h"],
+            "tf_weight_4h": weights["4h"],
+            "score_tf_15m_enabled": bool(weights["15m"] > 0.0),
+            "score_conf_threshold": float(score_conf_threshold),
+            "score_gap_threshold": float(score_gap_threshold),
+            "donchian_momentum_filter": bool(donchian_momentum_filter),
+            "donchian_fast_ema_period": fast,
+            "donchian_slow_ema_period": slow,
+        }
+        result = self._apply_values(payload)
+        return wrap_operator_action(
+            action="scoring_config",
+            raw_result=result,
+            context={"active_15m": bool(weights["15m"] > 0.0)},
+        )
+
+    def trigger_report(self) -> dict[str, Any]:
+        result = self._controller.send_daily_report()
+        return wrap_operator_action(action="report", raw_result=result)

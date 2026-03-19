@@ -318,6 +318,17 @@ class RuntimeController:
             "submission_recovery": None,
             "bracket_recovery": None,
         }
+        self._last_report: dict[str, Any] = {
+            "reported_at": None,
+            "kind": "DAILY_REPORT",
+            "day": None,
+            "status": None,
+            "notifier_enabled": bool(self.notifier.enabled),
+            "notifier_sent": False,
+            "notifier_error": None,
+            "summary": None,
+            "detail": {},
+        }
         self._last_shutdown_marker = self.state_store.runtime_storage().load_runtime_marker(
             marker_key="shutdown_state"
         )
@@ -2081,6 +2092,18 @@ class RuntimeController:
         payload["notifier_sent"] = bool(result.sent)
         if result.error and result.error != "disabled":
             payload["notifier_error"] = result.error
+        payload["summary"] = message
+        self._last_report = {
+            "reported_at": payload.get("reported_at"),
+            "kind": payload.get("kind"),
+            "day": payload.get("day"),
+            "status": "success" if payload.get("notifier_error") in {None, "disabled"} else "failed",
+            "notifier_enabled": bool(payload.get("notifier_enabled")),
+            "notifier_sent": bool(payload.get("notifier_sent")),
+            "notifier_error": payload.get("notifier_error"),
+            "summary": message,
+            "detail": dict(payload.get("detail") or {}),
+        }
         return payload
 
     def preset(self, name: str) -> dict[str, Any]:

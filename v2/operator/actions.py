@@ -62,6 +62,10 @@ def _action_label(action: str) -> str:
         "preset": "프리셋 적용",
         "profile_template": "프로파일 템플릿 적용",
         "trailing_config": "트레일링 설정",
+        "universe_set": "운영 심볼 설정",
+        "universe_remove": "운영 심볼 해제",
+        "scoring_config": "판단식 설정",
+        "report": "리포트 전송",
     }.get(action, action)
 
 
@@ -111,6 +115,26 @@ def _action_summary(action: str, raw_result: dict[str, Any], context: dict[str, 
         if not enabled:
             return "트레일링 비활성화 적용"
         return f"트레일링 {mode} 모드 적용"
+    if action == "universe_set":
+        symbols = context.get("symbols") or []
+        if isinstance(symbols, list):
+            return f"운영 심볼 {len(symbols)}개 적용"
+    if action == "universe_remove":
+        symbol = str(context.get("symbol") or "-")
+        return f"{symbol} 운영 심볼 해제"
+    if action == "scoring_config":
+        active_15m = bool(context.get("active_15m"))
+        return f"판단식 설정 적용 (15m {'사용' if active_15m else '미사용'})"
+    if action == "report":
+        sent = bool(raw_result.get("notifier_sent"))
+        if sent:
+            return "일일 리포트 전송 완료"
+        error = str(raw_result.get("notifier_error") or "").strip()
+        if error == "disabled":
+            return "리포트 생성 완료 (notifier 비활성)"
+        if error:
+            return f"리포트 생성 완료, 전송 실패: {error}"
+        return "리포트 생성 완료"
     if action == "risk_basic":
         return "리스크 기본 설정 적용"
     if action == "risk_advanced":

@@ -21,6 +21,7 @@ from v2.discord_bot.ui_labels import (
     MARGIN_BUDGET_BUTTON_LABEL,
     SIMPLE_PANEL_BUTTON_LABELS,
 )
+from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import (
     PRESETS,
     PROFILE_KEYS,
@@ -118,15 +119,16 @@ JSONPayload = dict[str, JSONValue]
 
 
 def _build_help_embed(*, is_admin: bool) -> discord.Embed:
+    guidance = build_operator_guidance()
     simple_buttons = list(SIMPLE_PANEL_BUTTON_LABELS)
     beginner_buttons = " / ".join(f"`{b}`" for b in simple_buttons)
     advanced_buttons = list(ADVANCED_PANEL_BUTTON_LABELS)
     advanced_buttons_text = " / ".join(f"`{b}`" for b in advanced_buttons)
     lines = [
-        "현재 대시보드 기반으로 손쉽게 제어할 수 있습니다.",
-        "1) `/panel`에서 환경 설정 확인",
+        str((guidance.get("panel_scope") or ["현재 대시보드 기반으로 손쉽게 제어할 수 있습니다."])[0]),
+        "1) 웹 패널(`/operator`)을 기본 운영면으로 사용",
         f"2) {beginner_buttons} 버튼으로 원하는 기능 실행",
-        "3) 실시간 상태 점검과 설정 반영까지 한 번에 확인 가능합니다.",
+        "3) Discord는 필요 시 fallback/emergency 용도로만 사용",
     ]
     em = discord.Embed(
         title="초보자용 도움말",
@@ -155,10 +157,7 @@ def _build_help_embed(*, is_admin: bool) -> discord.Embed:
     )
     _ = em.add_field(
         name="주의사항",
-        value=(
-            "현재 운영 중인 포지션·손익은 `/status`에서 먼저 확인하고 변경하세요.\n"
-            "리스크가 높은 동작(`/panel`의 일괄 반영)은 신중히 사용하세요."
-        ),
+        value="\n".join(str(item) for item in (guidance.get("safety") or [])),
         inline=False,
     )
     if is_admin:

@@ -46,6 +46,22 @@ function renderList(id, items) {
   }
 }
 
+function renderMapList(id, mapping) {
+  const el = document.getElementById(id);
+  if (!el) {
+    return;
+  }
+  el.innerHTML = "";
+  if (!mapping || typeof mapping !== "object") {
+    return;
+  }
+  for (const [key, value] of Object.entries(mapping)) {
+    const li = document.createElement("li");
+    li.textContent = `${fmtMaybe(key)}: ${fmtMaybe(value)}`;
+    el.appendChild(li);
+  }
+}
+
 function renderPre(id, payload) {
   const el = document.getElementById(id);
   if (el) {
@@ -73,6 +89,35 @@ function populateSelect(id, options, currentValue) {
     }
     el.appendChild(option);
   }
+}
+
+function renderUniverseChips(symbols) {
+  const wrap = document.getElementById("universe-symbols-chips");
+  if (!wrap) {
+    return;
+  }
+  wrap.innerHTML = "";
+  if (!Array.isArray(symbols) || symbols.length === 0) {
+    wrap.textContent = "-";
+    return;
+  }
+  for (const symbol of symbols) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `
+      <span>${fmtMaybe(symbol)}</span>
+      <button class="btn ghost btn-small universe-remove-btn" type="button" data-symbol="${fmtMaybe(symbol)}">해제</button>
+    `;
+    wrap.appendChild(chip);
+  }
+  document.querySelectorAll(".universe-remove-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const symbol = button.dataset.symbol || "";
+      postAction("/operator/actions/universe/remove", { symbol }).catch((error) =>
+        setFeedback(String(error), "failed")
+      );
+    });
+  });
 }
 
 function setFeedback(message, status = "success") {
@@ -187,8 +232,18 @@ async function loadConsole() {
   setText("readiness-summary", payload.readiness?.summary);
   setText("readiness-private-error", payload.readiness?.private_error);
   setText("readiness-private-detail", payload.readiness?.private_error_detail);
+  setText("report-time", payload.report?.reported_at);
+  setText("report-status", payload.report?.status);
+  setText("report-sent", payload.report?.notifier_sent ? "예" : "아니오");
+  setText("report-error", payload.report?.notifier_error);
+  renderPre("report-summary", payload.report?.summary || "-");
   populateSelect("preset-select", payload.controls?.preset_options || [], "normal");
   populateSelect("profile-template-select", payload.controls?.profile_template_options || [], null);
+  setInputValue(
+    "universe-symbols-text",
+    Array.isArray(payload.controls?.universe_symbols) ? payload.controls.universe_symbols.join(",") : ""
+  );
+  renderUniverseChips(payload.controls?.universe_symbols || []);
 
   setText("capital-available", fmtNumber(payload.capital?.available_usdt, 4));
   setText("capital-wallet", fmtNumber(payload.capital?.wallet_usdt, 4));
@@ -225,6 +280,19 @@ async function loadConsole() {
   setInputValue("atr-min-input", payload.risk_forms?.trailing?.atr_trail_min_pct);
   setInputValue("atr-max-input", payload.risk_forms?.trailing?.atr_trail_max_pct);
   setInputValue("profile-budget-input", payload.risk_forms?.margin_budget?.margin_budget_usdt);
+  setInputValue("score-conf-input", payload.risk_forms?.scoring?.score_conf_threshold);
+  setInputValue("score-gap-input", payload.risk_forms?.scoring?.score_gap_threshold);
+  setInputValue("score-weight-10m", payload.risk_forms?.scoring?.weights?.["10m"]);
+  setInputValue("score-weight-15m", payload.risk_forms?.scoring?.weights?.["15m"]);
+  setInputValue("score-weight-30m", payload.risk_forms?.scoring?.weights?.["30m"]);
+  setInputValue("score-weight-1h", payload.risk_forms?.scoring?.weights?.["1h"]);
+  setInputValue("score-weight-4h", payload.risk_forms?.scoring?.weights?.["4h"]);
+  setSelectValue(
+    "momentum-filter-select",
+    String(Boolean(payload.risk_forms?.scoring?.donchian_momentum_filter))
+  );
+  setInputValue("momentum-fast-input", payload.risk_forms?.scoring?.donchian_fast_ema_period);
+  setInputValue("momentum-slow-input", payload.risk_forms?.scoring?.donchian_slow_ema_period);
 
   setText("recent-action", payload.recent_result?.last_action_label);
   setText("recent-reason", payload.recent_result?.last_reason_label);
@@ -240,6 +308,11 @@ async function loadConsole() {
   setText("alpha-reject-focus", payload.alpha?.last_alpha_reject_focus);
   renderPre("alpha-reject-metrics", payload.alpha?.last_alpha_reject_metrics || {});
   renderPre("alpha-blocks", payload.alpha?.last_alpha_blocks || {});
+  renderList("guidance-scope", payload.guidance?.panel_scope || []);
+  renderList("guidance-safety", payload.guidance?.safety || []);
+  renderMapList("guidance-state-meanings", payload.guidance?.state_meanings || {});
+  renderList("guidance-first-checks", payload.guidance?.first_checks || []);
+  renderList("guidance-discord-fallback", payload.guidance?.discord_fallback || []);
 
   const startBtn = document.getElementById("action-start");
   const pauseBtn = document.getElementById("action-pause");
@@ -306,6 +379,9 @@ function bindActionButtons() {
     postAction("/operator/actions/positions/close-all").catch((error) =>
       setFeedback(String(error), "failed")
     );
+  });
+  document.getElementById("action-report")?.addEventListener("click", () => {
+    postAction("/operator/actions/report").catch((error) => setFeedback(String(error), "failed"));
   });
 }
 
@@ -409,6 +485,31 @@ function bindForms() {
     postAction("/operator/actions/trailing", body).catch((error) =>
       setFeedback(String(error), "failed")
     );
+  });
+
+  document.getElementById("universe-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const symbols_text = document.getElementById("universe-symbols-text")?.value || "";
+    postAction("/operator/actions/universe", { symbols_text }).catch((error) =>
+      setFeedback(String(error), "failed")
+    );
+  });
+
+  document.getElementById("scoring-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    postAction("/operator/actions/scoring", {
+      tf_weight_10m: Number(document.getElementById("score-weight-10m")?.value),
+      tf_weight_15m: Number(document.getElementById("score-weight-15m")?.value),
+      tf_weight_30m: Number(document.getElementById("score-weight-30m")?.value),
+      tf_weight_1h: Number(document.getElementById("score-weight-1h")?.value),
+      tf_weight_4h: Number(document.getElementById("score-weight-4h")?.value),
+      score_conf_threshold: Number(document.getElementById("score-conf-input")?.value),
+      score_gap_threshold: Number(document.getElementById("score-gap-input")?.value),
+      donchian_momentum_filter:
+        (document.getElementById("momentum-filter-select")?.value || "true") === "true",
+      donchian_fast_ema_period: Number(document.getElementById("momentum-fast-input")?.value),
+      donchian_slow_ema_period: Number(document.getElementById("momentum-slow-input")?.value),
+    }).catch((error) => setFeedback(String(error), "failed"));
   });
 }
 

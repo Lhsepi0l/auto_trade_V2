@@ -80,6 +80,27 @@ class OperatorTrailingConfigRequest(BaseModel):
     atr_trail_max_pct: float | None = None
 
 
+class OperatorUniverseRequest(BaseModel):
+    symbols_text: str
+
+
+class OperatorUniverseRemoveRequest(BaseModel):
+    symbol: str
+
+
+class OperatorScoringConfigRequest(BaseModel):
+    tf_weight_10m: float
+    tf_weight_15m: float
+    tf_weight_30m: float
+    tf_weight_1h: float
+    tf_weight_4h: float
+    score_conf_threshold: float
+    score_gap_threshold: float
+    donchian_momentum_filter: bool
+    donchian_fast_ema_period: int
+    donchian_slow_ema_period: int
+
+
 def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
@@ -208,5 +229,32 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
             atr_trail_min_pct=payload.atr_trail_min_pct,
             atr_trail_max_pct=payload.atr_trail_max_pct,
         )
+
+    @router.post("/operator/actions/universe")
+    async def operator_universe(payload: OperatorUniverseRequest) -> dict[str, Any]:
+        return service.set_universe_symbols(symbols_text=payload.symbols_text)
+
+    @router.post("/operator/actions/universe/remove")
+    async def operator_universe_remove(payload: OperatorUniverseRemoveRequest) -> dict[str, Any]:
+        return service.remove_universe_symbol(symbol=payload.symbol)
+
+    @router.post("/operator/actions/scoring")
+    async def operator_scoring(payload: OperatorScoringConfigRequest) -> dict[str, Any]:
+        return service.set_scoring_config(
+            tf_weight_10m=payload.tf_weight_10m,
+            tf_weight_15m=payload.tf_weight_15m,
+            tf_weight_30m=payload.tf_weight_30m,
+            tf_weight_1h=payload.tf_weight_1h,
+            tf_weight_4h=payload.tf_weight_4h,
+            score_conf_threshold=payload.score_conf_threshold,
+            score_gap_threshold=payload.score_gap_threshold,
+            donchian_momentum_filter=payload.donchian_momentum_filter,
+            donchian_fast_ema_period=payload.donchian_fast_ema_period,
+            donchian_slow_ema_period=payload.donchian_slow_ema_period,
+        )
+
+    @router.post("/operator/actions/report")
+    async def operator_report() -> dict[str, Any]:
+        return service.trigger_report()
 
     app.include_router(router)

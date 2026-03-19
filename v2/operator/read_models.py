@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from v2.common.operator_labels import humanize_action_token, humanize_reason_token
+from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import PRESETS, PROFILE_KEYS
+from v2.operator.universe_scoring import SCORING_TIMEFRAMES
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -43,7 +45,12 @@ def _build_positions(positions: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
+def build_operator_console_payload(
+    status: dict[str, Any],
+    *,
+    guidance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_guidance = guidance if isinstance(guidance, dict) else build_operator_guidance()
     engine = status.get("engine_state", {}) if isinstance(status.get("engine_state"), dict) else {}
     scheduler = status.get("scheduler", {}) if isinstance(status.get("scheduler"), dict) else {}
     capital = (
@@ -65,6 +72,7 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
     boot_recovery = (
         status.get("boot_recovery", {}) if isinstance(status.get("boot_recovery"), dict) else {}
     )
+    report = status.get("report", {}) if isinstance(status.get("report"), dict) else {}
 
     state = str(engine.get("state") or "-")
     last_action = str(scheduler.get("last_action") or "-")
@@ -190,7 +198,18 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
             "notify_interval_sec": int(_to_float(risk_config.get("notify_interval_sec"), default=30.0)),
             "preset_options": list(PRESETS),
             "profile_template_options": list(PROFILE_KEYS),
+            "universe_symbols": list(risk_config.get("universe_symbols") or []),
         },
+        "report": {
+            "reported_at": report.get("reported_at"),
+            "status": report.get("status"),
+            "notifier_enabled": bool(report.get("notifier_enabled")),
+            "notifier_sent": bool(report.get("notifier_sent")),
+            "notifier_error": report.get("notifier_error"),
+            "summary": report.get("summary"),
+            "detail": dict(report.get("detail") or {}),
+        },
+        "guidance": dict(resolved_guidance),
         "capital": {
             "available_usdt": _to_float(balance.get("available")),
             "wallet_usdt": _to_float(balance.get("wallet")),
@@ -264,6 +283,34 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
                 "atr_trail_k": _to_float(risk_config.get("atr_trail_k"), default=0.0),
                 "atr_trail_min_pct": _to_float(risk_config.get("atr_trail_min_pct"), default=0.0),
                 "atr_trail_max_pct": _to_float(risk_config.get("atr_trail_max_pct"), default=0.0),
+            },
+            "universe": {
+                "universe_symbols": list(risk_config.get("universe_symbols") or []),
+            },
+            "scoring": {
+                "score_conf_threshold": _to_float(
+                    risk_config.get("score_conf_threshold"), default=0.0
+                ),
+                "score_gap_threshold": _to_float(
+                    risk_config.get("score_gap_threshold"), default=0.0
+                ),
+                "score_tf_15m_enabled": bool(risk_config.get("score_tf_15m_enabled")),
+                "donchian_momentum_filter": bool(risk_config.get("donchian_momentum_filter", True)),
+                "donchian_fast_ema_period": int(
+                    _to_float(risk_config.get("donchian_fast_ema_period"), default=8.0)
+                ),
+                "donchian_slow_ema_period": int(
+                    _to_float(risk_config.get("donchian_slow_ema_period"), default=21.0)
+                ),
+                "active_timeframes": [
+                    timeframe
+                    for timeframe in SCORING_TIMEFRAMES
+                    if _to_float(risk_config.get(f"tf_weight_{timeframe}"), default=0.0) > 0.0
+                ],
+                "weights": {
+                    timeframe: _to_float(risk_config.get(f"tf_weight_{timeframe}"), default=0.0)
+                    for timeframe in SCORING_TIMEFRAMES
+                },
             },
         },
         "alpha": {

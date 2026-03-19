@@ -176,6 +176,7 @@ def build_status_snapshot(controller: RuntimeController) -> dict[str, Any]:
         },
         "submission_recovery": gate["submission_recovery"],
         "boot_recovery": dict(controller._boot_recovery),
+        "report": dict(controller._last_report),
         "health": {
             "ready": bool(gate["ready"]),
             "single_instance_ok": bool(gate["single_instance_ok"]),

@@ -68,6 +68,11 @@ def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore
     assert "controls" in json_payload
     assert "risk_forms" in json_payload
     assert "recent_result" in json_payload
+    assert "report" in json_payload
+    assert "guidance" in json_payload
+    assert "preset_options" in json_payload["controls"]
+    assert "trailing" in json_payload["risk_forms"]
+    assert "scoring" in json_payload["risk_forms"]
 
     start = client.post("/operator/actions/start")
     assert start.status_code == 200
@@ -164,3 +169,39 @@ def test_operator_console_supports_structured_control_actions(tmp_path) -> None:
     )
     assert trailing.status_code == 200
     assert trailing.json()["action"] == "trailing_config"
+
+    universe = client.post(
+        "/operator/actions/universe",
+        json={"symbols_text": "BTCUSDT,ETHUSDT"},
+    )
+    assert universe.status_code == 200
+    assert universe.json()["action"] == "universe_set"
+
+    universe_remove = client.post(
+        "/operator/actions/universe/remove",
+        json={"symbol": "ETHUSDT"},
+    )
+    assert universe_remove.status_code == 200
+    assert universe_remove.json()["action"] == "universe_remove"
+
+    scoring = client.post(
+        "/operator/actions/scoring",
+        json={
+            "tf_weight_10m": 0.25,
+            "tf_weight_15m": 0.0,
+            "tf_weight_30m": 0.25,
+            "tf_weight_1h": 0.25,
+            "tf_weight_4h": 0.25,
+            "score_conf_threshold": 0.61,
+            "score_gap_threshold": 0.14,
+            "donchian_momentum_filter": True,
+            "donchian_fast_ema_period": 8,
+            "donchian_slow_ema_period": 21,
+        },
+    )
+    assert scoring.status_code == 200
+    assert scoring.json()["action"] == "scoring_config"
+
+    report = client.post("/operator/actions/report")
+    assert report.status_code == 200
+    assert report.json()["action"] == "report"
