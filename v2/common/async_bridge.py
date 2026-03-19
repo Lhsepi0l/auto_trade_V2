@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import queue
 import threading
 from collections.abc import Callable, Coroutine
@@ -11,6 +12,10 @@ from typing import Any
 _bridge_lock = threading.Lock()
 _bridge_ready = threading.Event()
 _bridge_job_active = threading.Event()
+_bridge_job_context: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "v2_async_bridge_job_context",
+    default=False,
+)
 _bridge_loop: asyncio.AbstractEventLoop | None = None
 _bridge_thread: threading.Thread | None = None
 _bridge_jobs: queue.Queue[tuple[Callable[[], Coroutine[Any, Any, Any]] | None, concurrent.futures.Future[Any] | None]] = queue.Queue()
@@ -33,6 +38,7 @@ def _loop_worker() -> None:
             if result_future is None or result_future.cancelled():
                 continue
             _bridge_job_active.set()
+            token = _bridge_job_context.set(True)
             try:
                 result = loop.run_until_complete(thunk())
             except Exception as exc:  # noqa: BLE001
@@ -42,6 +48,7 @@ def _loop_worker() -> None:
                 if not result_future.cancelled():
                     result_future.set_result(result)
             finally:
+                _bridge_job_context.reset(token)
                 _bridge_job_active.clear()
     finally:
         pending = asyncio.all_tasks(loop)
@@ -111,7 +118,7 @@ def run_async_blocking(
         return _run_in_helper_thread(thunk, timeout_sec=timeout_sec)
 
     if (
-        _bridge_job_active.is_set()
+        _bridge_job_context.get()
         and _bridge_thread is not None
         and threading.get_ident() != _bridge_thread.ident
     ):
