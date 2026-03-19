@@ -1,5 +1,5 @@
 [Unit]
-Description=Auto Trader V2 unified stack (control API + Discord bot)
+Description=Auto Trader V2 web-first stack (control API + optional Discord fallback)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,7 +9,7 @@ User=bot
 WorkingDirectory=/home/bot/autotrade/auto_trade_V2
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/bot/autotrade/auto_trade_V2/.env
-ExecStart=/usr/bin/env bash /home/bot/autotrade/auto_trade_V2/v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+ExecStart=/usr/bin/env bash /home/bot/autotrade/auto_trade_V2/v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101 --operator-web --no-discord-bot
 Restart=always
 RestartSec=2
 KillMode=control-group

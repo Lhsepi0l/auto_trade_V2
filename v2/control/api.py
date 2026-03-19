@@ -34,6 +34,7 @@ from v2.control.mutating_responses import (
     build_trade_close_all_response,
     build_trade_close_response,
 )
+from v2.control.operator_events import build_operator_event_payload
 from v2.control.presentation import (
     build_portfolio_slot_summary,
     build_reconcile_response,
@@ -434,6 +435,21 @@ class RuntimeController:
                 **fields,
             },
         )
+        payload = build_operator_event_payload(event=event, fields=fields)
+        if payload is not None:
+            self.state_store.runtime_storage().append_operator_event(
+                event_type=str(payload["event_type"]),
+                category=str(payload["category"]),
+                title=str(payload["title"]),
+                main_text=str(payload["main_text"]),
+                sub_text=(
+                    str(payload["sub_text"])
+                    if payload.get("sub_text") is not None
+                    else None
+                ),
+                event_time=str(payload["event_time"]),
+                context=dict(payload.get("context") or {}),
+            )
 
     def _freshness_snapshot(self) -> dict[str, Any]:
         return build_freshness_snapshot(self)
@@ -2093,6 +2109,12 @@ class RuntimeController:
         if result.error and result.error != "disabled":
             payload["notifier_error"] = result.error
         payload["summary"] = message
+        self._log_event(
+            "report_sent",
+            status="sent" if bool(payload["notifier_sent"]) else "not_sent",
+            notifier_error=payload.get("notifier_error"),
+            event_time=payload.get("reported_at"),
+        )
         self._last_report = {
             "reported_at": payload.get("reported_at"),
             "kind": payload.get("kind"),

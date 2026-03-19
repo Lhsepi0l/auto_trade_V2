@@ -58,6 +58,7 @@ _REASON_LABELS_KO: dict[str, str] = {
     "state_uncertain": "거래소 상태 정합성 불확실",
     "user_ws_stale": "프라이빗 스트림 freshness 초과",
     "market_data_stale": "마켓 데이터 freshness 초과",
+    "missing_market": "시장 컨텍스트 데이터 미도착",
     "recovery_required": "더티 재시작 복구 필요",
     "submit_recovery_required": "주문 제출 확정 복구 필요",
 }

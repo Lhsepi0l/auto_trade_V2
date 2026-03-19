@@ -150,7 +150,7 @@ def test_run_stack_rejects_duplicate_instance(tmp_path) -> None:  # type: ignore
     )
     try:
         _wait_for_file(control_started)
-        _wait_for_file(bot_started)
+        assert bot_started.exists() is False
 
         second = subprocess.run(  # noqa: S603
             ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet"],
@@ -192,7 +192,15 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
     env["FAKE_READY_DELAY_SEC"] = "2.0"
 
     proc = subprocess.Popen(  # noqa: S603
-        ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet"],
+        [
+            "bash",
+            "v2/scripts/run_stack.sh",
+            "--mode",
+            "shadow",
+            "--env",
+            "testnet",
+            "--with-discord-bot",
+        ],
         cwd=repo_root,
         env=env,
         stdout=subprocess.PIPE,
@@ -201,9 +209,6 @@ def test_run_stack_waits_for_readyz_before_starting_bot(tmp_path) -> None:  # ty
     )
     try:
         _wait_for_file(control_started)
-        time.sleep(0.2)
-        assert bot_started.exists() is False
-
         _wait_for_file(bot_started, timeout_sec=4.0)
     finally:
         proc.send_signal(signal.SIGTERM)
@@ -283,7 +288,7 @@ def test_run_stack_posts_start_before_requiring_readyz(tmp_path) -> None:  # typ
     env["FAKE_READY_REQUIRES_START"] = "1"
 
     proc = subprocess.Popen(  # noqa: S603
-        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod"],
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod", "--with-discord-bot"],
         cwd=repo_root,
         env=env,
         stdout=subprocess.PIPE,
@@ -322,7 +327,7 @@ def test_run_stack_auto_reconciles_dirty_restart_before_starting_bot(tmp_path) -
     env["FAKE_READY_REQUIRES_RECONCILE"] = "1"
 
     proc = subprocess.Popen(  # noqa: S603
-        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod"],
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "live", "--env", "prod", "--with-discord-bot"],
         cwd=repo_root,
         env=env,
         stdout=subprocess.PIPE,
@@ -372,6 +377,7 @@ def test_run_stack_overrides_trader_api_base_url_for_bot(tmp_path) -> None:  # t
             "127.0.0.1",
             "--port",
             "8101",
+            "--with-discord-bot",
         ],
         cwd=repo_root,
         env=env,
@@ -413,7 +419,7 @@ def test_run_stack_fails_when_bot_import_is_unavailable(tmp_path) -> None:  # ty
     env["FAKE_BOT_IMPORT_OK"] = "0"
 
     out = subprocess.run(  # noqa: S603
-        ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet"],
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet", "--with-discord-bot"],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -423,3 +429,42 @@ def test_run_stack_fails_when_bot_import_is_unavailable(tmp_path) -> None:  # ty
 
     assert out.returncode != 0
     assert "discord bot import failed" in out.stdout
+
+
+def test_run_stack_defaults_to_web_first_without_discord(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo_root = Path(__file__).resolve().parents[2]
+    fake_python = tmp_path / "fake_python.py"
+    control_started = tmp_path / "control.started"
+    bot_started = tmp_path / "bot.started"
+    bot_base_url = tmp_path / "bot.base_url"
+    lock_path = tmp_path / "stack.lock"
+    _write_fake_python(
+        target=fake_python,
+        control_started=control_started,
+        bot_started=bot_started,
+        bot_base_url=bot_base_url,
+    )
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = str(fake_python)
+    env["STACK_LOCK_FILE"] = str(lock_path)
+
+    proc = subprocess.Popen(  # noqa: S603
+        ["bash", "v2/scripts/run_stack.sh", "--mode", "shadow", "--env", "testnet"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_file(control_started)
+        time.sleep(0.2)
+        assert bot_started.exists() is False
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3.0)

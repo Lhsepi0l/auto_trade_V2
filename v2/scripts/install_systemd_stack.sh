@@ -14,8 +14,8 @@ ENVIRONMENT="prod"
 ENV_FILE=".env"
 HOST="127.0.0.1"
 PORT="8101"
-ENABLE_OPERATOR_WEB="false"
-WITH_DISCORD_BOT="true"
+ENABLE_OPERATOR_WEB="true"
+WITH_DISCORD_BOT="false"
 DRY_RUN="false"
 
 usage() {
@@ -33,15 +33,17 @@ Options:
   --env-file <path>             (default: .env)
   --host <host>                 (default: 127.0.0.1)
   --port <port>                 (default: 8101)
-  --operator-web                enable /operator web console
-  --no-discord-bot              skip Discord fallback bot startup
+  --operator-web                enable /operator web console (default: enabled)
+  --with-discord-bot            enable optional Discord fallback bot
+  --no-discord-bot              skip Discord fallback bot startup (default)
   --dry-run                     print generated unit then exit
   --help
 
 Examples:
   bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
   bash v2/scripts/install_systemd_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --port 8101
-  bash v2/scripts/install_systemd_stack.sh --mode shadow --env testnet --operator-web --no-discord-bot
+  bash v2/scripts/install_systemd_stack.sh --mode shadow --env testnet
+  bash v2/scripts/install_systemd_stack.sh --mode live --env prod --with-discord-bot
 EOF
 }
 
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --operator-web)
             ENABLE_OPERATOR_WEB="true"
+            shift 1
+            ;;
+        --with-discord-bot)
+            WITH_DISCORD_BOT="true"
             shift 1
             ;;
         --no-discord-bot)
@@ -144,14 +150,16 @@ EXTRA_ARGS=""
 if [[ "$ENABLE_OPERATOR_WEB" == "true" ]]; then
     EXTRA_ARGS+=" --operator-web"
 fi
-if [[ "$WITH_DISCORD_BOT" != "true" ]]; then
+if [[ "$WITH_DISCORD_BOT" == "true" ]]; then
+    EXTRA_ARGS+=" --with-discord-bot"
+else
     EXTRA_ARGS+=" --no-discord-bot"
 fi
 
 TMP_UNIT="$(mktemp)"
 cat > "$TMP_UNIT" <<EOF
 [Unit]
-Description=Auto Trader V2 unified stack (control API + Discord bot)
+Description=Auto Trader V2 web-first stack (control API + optional Discord fallback)
 After=network-online.target
 Wants=network-online.target
 

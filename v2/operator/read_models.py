@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from v2.common.operator_labels import humanize_action_token, humanize_reason_token
+from v2.operator.form_defaults import SCORING_DEFAULTS, TRAILING_FORM_DEFAULTS
 from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import PRESETS, PROFILE_KEYS
 from v2.operator.universe_scoring import SCORING_TIMEFRAMES
@@ -16,6 +17,22 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _maybe_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_int(value: Any) -> int | None:
+    parsed = _maybe_float(value)
+    if parsed is None:
+        return None
+    return int(parsed)
+
+
 def _state_label(raw_state: str) -> str:
     return {
         "RUNNING": "실행중",
@@ -23,6 +40,17 @@ def _state_label(raw_state: str) -> str:
         "STOPPED": "중지",
         "KILLED": "강제중지",
     }.get(raw_state, raw_state or "-")
+
+
+def _is_nonblocking_reason(raw_reason: Any) -> bool:
+    reason = str(raw_reason or "").strip()
+    if not reason or reason == "-":
+        return False
+    if reason in {"no_candidate", "missing_market"}:
+        return True
+    if reason.startswith("no_entry:"):
+        return True
+    return False
 
 
 def _build_positions(positions: dict[str, Any]) -> list[dict[str, Any]]:
@@ -83,6 +111,9 @@ def build_operator_console_payload(
         or pnl.get("last_strategy_block_reason")
         or pnl.get("last_auto_risk_reason")
     )
+    health_blocked = bool(capital.get("blocked")) or (
+        bool(blocked_reason) and not _is_nonblocking_reason(blocked_reason)
+    )
     stale_items: list[str] = []
     if bool(status.get("user_ws_stale")):
         stale_items.append("프라이빗 스트림 stale")
@@ -95,6 +126,20 @@ def build_operator_console_payload(
 
     balance = (
         binance.get("usdt_balance", {}) if isinstance(binance.get("usdt_balance"), dict) else {}
+    )
+    universe_symbols = list(risk_config.get("universe_symbols") or [])
+    default_symbol = (
+        capital.get("symbol")
+        or (universe_symbols[0] if universe_symbols else None)
+        or (positions[0] if (positions := list((binance.get("positions") or {}).keys())) else None)
+    )
+    symbol_leverage_map = risk_config.get("symbol_leverage_map")
+    if not isinstance(symbol_leverage_map, dict):
+        symbol_leverage_map = {}
+    current_symbol_leverage = (
+        _maybe_float(symbol_leverage_map.get(str(default_symbol).upper()))
+        if default_symbol is not None
+        else None
     )
 
     return {
@@ -126,10 +171,12 @@ def build_operator_console_payload(
             "busy_reason_label": (
                 humanize_reason_token(last_reason) if last_reason == "tick_busy" else None
             ),
-            "blocked": bool(capital.get("blocked")) or bool(blocked_reason),
-            "blocked_reason": blocked_reason,
+            "blocked": bool(health_blocked),
+            "blocked_reason": blocked_reason if health_blocked else None,
             "blocked_reason_label": (
-                humanize_reason_token(str(blocked_reason)) if blocked_reason else None
+                humanize_reason_token(str(blocked_reason))
+                if blocked_reason and health_blocked
+                else None
             ),
             "stale": bool(stale_items),
             "stale_items": stale_items,
@@ -198,7 +245,12 @@ def build_operator_console_payload(
             "notify_interval_sec": int(_to_float(risk_config.get("notify_interval_sec"), default=30.0)),
             "preset_options": list(PRESETS),
             "profile_template_options": list(PROFILE_KEYS),
-            "universe_symbols": list(risk_config.get("universe_symbols") or []),
+            "preset_current_state_label": "현재 active 프리셋 개념 없음 (일회성 적용)",
+            "profile_template_current_state_label": "현재 active 템플릿 개념 없음 (일회성 적용)",
+            "universe_symbols": universe_symbols,
+            "default_symbol": default_symbol,
+            "symbol_leverage_map": dict(symbol_leverage_map),
+            "current_symbol_leverage": current_symbol_leverage,
         },
         "report": {
             "reported_at": report.get("reported_at"),
@@ -260,8 +312,10 @@ def build_operator_console_payload(
                 "min_hold_minutes": int(
                     _to_float(risk_config.get("min_hold_minutes"), default=0.0)
                 ),
-                "score_conf_threshold": _to_float(
-                    risk_config.get("score_conf_threshold"), default=0.0
+                "score_conf_threshold": (
+                    _maybe_float(risk_config.get("score_conf_threshold"))
+                    if risk_config.get("score_conf_threshold") is not None
+                    else float(SCORING_DEFAULTS["score_conf_threshold"])
                 ),
             },
             "notify_interval": {
@@ -270,37 +324,76 @@ def build_operator_console_payload(
                 ),
             },
             "trailing": {
-                "trailing_enabled": bool(risk_config.get("trailing_enabled")),
-                "trailing_mode": str(risk_config.get("trailing_mode") or "PCT").upper(),
-                "trail_arm_pnl_pct": _to_float(risk_config.get("trail_arm_pnl_pct"), default=0.0),
+                "trailing_enabled": bool(
+                    risk_config.get("trailing_enabled", TRAILING_FORM_DEFAULTS["trailing_enabled"])
+                ),
+                "trailing_mode": str(
+                    risk_config.get("trailing_mode") or TRAILING_FORM_DEFAULTS["trailing_mode"]
+                ).upper(),
+                "trail_arm_pnl_pct": _to_float(
+                    risk_config.get("trail_arm_pnl_pct"),
+                    default=float(TRAILING_FORM_DEFAULTS["trail_arm_pnl_pct"]),
+                ),
                 "trail_grace_minutes": int(
-                    _to_float(risk_config.get("trail_grace_minutes"), default=0.0)
+                    _to_float(
+                        risk_config.get("trail_grace_minutes"),
+                        default=float(TRAILING_FORM_DEFAULTS["trail_grace_minutes"]),
+                    )
                 ),
                 "trail_distance_pnl_pct": _to_float(
-                    risk_config.get("trail_distance_pnl_pct"), default=0.0
+                    risk_config.get("trail_distance_pnl_pct"),
+                    default=float(TRAILING_FORM_DEFAULTS["trail_distance_pnl_pct"]),
                 ),
-                "atr_trail_timeframe": str(risk_config.get("atr_trail_timeframe") or "1h"),
-                "atr_trail_k": _to_float(risk_config.get("atr_trail_k"), default=0.0),
-                "atr_trail_min_pct": _to_float(risk_config.get("atr_trail_min_pct"), default=0.0),
-                "atr_trail_max_pct": _to_float(risk_config.get("atr_trail_max_pct"), default=0.0),
+                "atr_trail_timeframe": str(
+                    risk_config.get("atr_trail_timeframe")
+                    or TRAILING_FORM_DEFAULTS["atr_trail_timeframe"]
+                ),
+                "atr_trail_k": _to_float(
+                    risk_config.get("atr_trail_k"),
+                    default=float(TRAILING_FORM_DEFAULTS["atr_trail_k"]),
+                ),
+                "atr_trail_min_pct": _to_float(
+                    risk_config.get("atr_trail_min_pct"),
+                    default=float(TRAILING_FORM_DEFAULTS["atr_trail_min_pct"]),
+                ),
+                "atr_trail_max_pct": _to_float(
+                    risk_config.get("atr_trail_max_pct"),
+                    default=float(TRAILING_FORM_DEFAULTS["atr_trail_max_pct"]),
+                ),
             },
             "universe": {
                 "universe_symbols": list(risk_config.get("universe_symbols") or []),
             },
             "scoring": {
-                "score_conf_threshold": _to_float(
-                    risk_config.get("score_conf_threshold"), default=0.0
+                "score_conf_threshold": (
+                    _maybe_float(risk_config.get("score_conf_threshold"))
+                    if risk_config.get("score_conf_threshold") is not None
+                    else float(SCORING_DEFAULTS["score_conf_threshold"])
                 ),
-                "score_gap_threshold": _to_float(
-                    risk_config.get("score_gap_threshold"), default=0.0
+                "score_gap_threshold": (
+                    _maybe_float(risk_config.get("score_gap_threshold"))
+                    if risk_config.get("score_gap_threshold") is not None
+                    else float(SCORING_DEFAULTS["score_gap_threshold"])
                 ),
-                "score_tf_15m_enabled": bool(risk_config.get("score_tf_15m_enabled")),
-                "donchian_momentum_filter": bool(risk_config.get("donchian_momentum_filter", True)),
-                "donchian_fast_ema_period": int(
-                    _to_float(risk_config.get("donchian_fast_ema_period"), default=8.0)
+                "score_tf_15m_enabled": (
+                    bool(SCORING_DEFAULTS["score_tf_15m_enabled"])
+                    if risk_config.get("score_tf_15m_enabled") is None
+                    else bool(risk_config.get("score_tf_15m_enabled"))
                 ),
-                "donchian_slow_ema_period": int(
-                    _to_float(risk_config.get("donchian_slow_ema_period"), default=21.0)
+                "donchian_momentum_filter": (
+                    bool(SCORING_DEFAULTS["donchian_momentum_filter"])
+                    if risk_config.get("donchian_momentum_filter") is None
+                    else bool(risk_config.get("donchian_momentum_filter"))
+                ),
+                "donchian_fast_ema_period": (
+                    _maybe_int(risk_config.get("donchian_fast_ema_period"))
+                    if risk_config.get("donchian_fast_ema_period") is not None
+                    else int(SCORING_DEFAULTS["donchian_fast_ema_period"])
+                ),
+                "donchian_slow_ema_period": (
+                    _maybe_int(risk_config.get("donchian_slow_ema_period"))
+                    if risk_config.get("donchian_slow_ema_period") is not None
+                    else int(SCORING_DEFAULTS["donchian_slow_ema_period"])
                 ),
                 "active_timeframes": [
                     timeframe
@@ -308,9 +401,20 @@ def build_operator_console_payload(
                     if _to_float(risk_config.get(f"tf_weight_{timeframe}"), default=0.0) > 0.0
                 ],
                 "weights": {
-                    timeframe: _to_float(risk_config.get(f"tf_weight_{timeframe}"), default=0.0)
+                    timeframe: (
+                        _maybe_float(risk_config.get(f"tf_weight_{timeframe}"))
+                        if risk_config.get(f"tf_weight_{timeframe}") is not None
+                        else float(SCORING_DEFAULTS[f"tf_weight_{timeframe}"])
+                    )
                     for timeframe in SCORING_TIMEFRAMES
                 },
+                "state_label": (
+                    "runtime override 없음, Discord 기본값 표시"
+                    if all(risk_config.get(f"tf_weight_{timeframe}") is None for timeframe in SCORING_TIMEFRAMES)
+                    and risk_config.get("score_conf_threshold") is None
+                    and risk_config.get("score_gap_threshold") is None
+                    else "설정값 존재"
+                ),
             },
         },
         "alpha": {

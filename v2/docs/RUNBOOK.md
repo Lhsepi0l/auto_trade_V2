@@ -34,13 +34,14 @@ python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q07
 
 ```bash
 python -m v2.run --deploy-prep --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --keep-reports 30
-python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
-python -m v2.discord_bot.bot
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101 --operator-web
 ```
 
 - 운영 예시는 현재 `q070` 기준으로만 유지합니다.
 - control HTTP는 `127.0.0.1:8101` 기준으로만 노출합니다.
 - control HTTP mutating endpoint에는 별도 인증이 없으므로 SSH 터널/VPN/역방향 프록시 인증 없이 외부 공개하지 않습니다.
+- 정상적인 일상 운영은 웹 패널(`http://127.0.0.1:8101/operator`)을 기본으로 사용합니다.
+- Discord는 선택형 fallback / emergency-use-only surface 입니다.
 
 ### 종료
 - 수동 중지는 `Ctrl+C`로 프로세스를 종료합니다.
@@ -100,33 +101,39 @@ python local_backtest/param_sweep.py \
   - 게이트 판정: `python local_backtest/param_sweep.py --action gate --report <json>`
   - 리포트 스코어보드: `python local_backtest/param_sweep.py --action score --score-limit 20`
 
-### Discord Bot (v2 패키지)
+### Web-first 운영 경로
 ```bash
-# 1) v2 제어 API 실행 (Discord 패널 호환)
-python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101
-
-# 2) Discord bot 실행 (같은 .env 사용)
-python -m v2.discord_bot.bot
+# 권장 기본 경로: control API + /operator
+python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --control-http --control-http-host 127.0.0.1 --control-http-port 8101 --operator-web
 ```
 
 ### 통합 실행(원커맨드)
 ```bash
-# control API + Discord bot 동시 실행
+# 기본 권장 경로: web-first (Discord off)
 bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+
+# 필요할 때만 Discord fallback 추가
+bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101 --with-discord-bot
 ```
 
+- 기본 web-first 실행은 `/operator`를 자동 활성화하고 Discord는 비활성 상태로 둡니다.
+- `--with-discord-bot`을 지정한 경우에만 Discord fallback 프로세스를 추가 기동합니다.
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
 - 로그 파일: `v2/logs/control_api.log`, `v2/logs/discord_bot.log`
+- Discord fallback이 꺼져 있으면 `discord_bot.log`는 사용되지 않습니다.
 - 기본 `TRADER_API_BASE_URL`은 `http://127.0.0.1:<port>`로 자동 설정됩니다.
 - `run_stack.sh` / systemd 경로에서는 `.env`에 남아 있는 stale `TRADER_API_BASE_URL`보다 현재 `--host/--port` 로컬 control API 주소를 우선 사용합니다.
 
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash
-# dry-run으로 유닛 내용 확인
+# dry-run으로 유닛 내용 확인 (기본: web-first, Discord off)
 bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
 
-# 실제 설치/기동
+# 실제 설치/기동 (권장 기본 경로)
 bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+
+# Discord fallback까지 같이 둘 때만
+bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101 --with-discord-bot
 
 # 상태/로그 확인
 sudo systemctl status v2-stack.service --no-pager
@@ -135,9 +142,11 @@ sudo journalctl -u v2-stack.service -f
 
 - 템플릿 유닛 파일은 `v2/systemd/v2-stack.service`에 포함되어 있습니다.
 - 설치 스크립트는 `/etc/systemd/system/v2-stack.service`를 생성하고 `enable --now`까지 수행합니다.
+- 설치 기본값은 web-first 이며 Discord fallback은 기본 비활성입니다.
 
 - `TRADER_API_BASE_URL` 기본값은 `http://127.0.0.1:8101` 입니다.
 - Discord 토큰은 `DISCORD_BOT_TOKEN`(또는 하위호환 `DISCORD_TOKEN`)을 사용합니다.
+- Discord는 정상 운영 필수 조건이 아닙니다. 필요 시에만 fallback 용도로 활성화합니다.
 
 ### Raspberry Pi 최소 검증
 운영 Pi에서는 `local_backtest`/연구용 테스트를 기본 검증 경로에 넣지 않습니다.

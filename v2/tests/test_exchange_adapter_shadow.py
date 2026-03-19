@@ -10,6 +10,8 @@ def test_shadow_mode_uses_mock_providers_without_keys() -> None:
     adapter = BinanceAdapter.from_effective_config(cfg)
 
     assert adapter.mode == "shadow"
-    assert adapter.create_rest_client(cfg=cfg) is None
+    rest_client = adapter.create_rest_client(cfg=cfg)
+    assert rest_client is not None
+    assert rest_client._api_key is None  # type: ignore[attr-defined]
     assert isinstance(adapter.create_market_ws(cfg=cfg), MockMarketWS)
     assert isinstance(adapter.create_user_stream_manager(cfg=cfg), ShadowUserStreamManager)

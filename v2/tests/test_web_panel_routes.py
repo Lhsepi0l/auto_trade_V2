@@ -57,6 +57,17 @@ def test_operator_console_route_renders(tmp_path) -> None:  # type: ignore[no-un
     assert "/operator/static/operator.js" in response.text
 
 
+def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    client = TestClient(_build_operator_app(tmp_path))
+
+    response = client.get("/operator/logs")
+
+    assert response.status_code == 200
+    assert "운영 로그" in response.text
+    assert "/operator/api/logs" not in response.text
+    assert 'data-operator-page="logs"' in response.text
+
+
 def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore[no-untyped-def]
     client = TestClient(_build_operator_app(tmp_path))
 
@@ -71,8 +82,12 @@ def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore
     assert "report" in json_payload
     assert "guidance" in json_payload
     assert "preset_options" in json_payload["controls"]
+    assert "preset_current_state_label" in json_payload["controls"]
+    assert "default_symbol" in json_payload["controls"]
     assert "trailing" in json_payload["risk_forms"]
     assert "scoring" in json_payload["risk_forms"]
+    assert json_payload["risk_forms"]["scoring"]["score_conf_threshold"] == 0.60
+    assert json_payload["risk_forms"]["scoring"]["weights"]["10m"] == 0.25
 
     start = client.post("/operator/actions/start")
     assert start.status_code == 200
@@ -205,3 +220,66 @@ def test_operator_console_supports_structured_control_actions(tmp_path) -> None:
     report = client.post("/operator/actions/report")
     assert report.status_code == 200
     assert report.json()["action"] == "report"
+
+
+def test_operator_events_api_returns_persisted_events(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = _build_operator_app(tmp_path)
+    controller = app.state.controller
+    controller._log_event("runtime_start", running=True, event_time="2026-03-20T00:00:00+00:00")
+    client = TestClient(app)
+
+    response = client.get("/operator/api/events?limit=20")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert payload[0]["event_type"] == "runtime_start"
+
+
+def test_operator_logs_api_supports_filtering(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = _build_operator_app(tmp_path)
+    controller = app.state.controller
+    controller._log_event("runtime_start", running=True, event_time="2026-03-20T00:00:00+00:00")
+    controller._log_event(
+        "report_sent",
+        status="sent",
+        notifier_error=None,
+        event_time="2026-03-20T00:01:00+00:00",
+    )
+    client = TestClient(app)
+
+    response = client.get("/operator/api/logs?limit=20&category=report&query=sent")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["offset"] == 0
+    assert payload["limit"] == 20
+    assert payload["has_prev"] is False
+    assert payload["has_next"] is False
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["event_type"] == "report_sent"
+
+
+def test_operator_logs_api_supports_offset_pagination(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = _build_operator_app(tmp_path)
+    controller = app.state.controller
+    for idx in range(5):
+        controller._log_event(
+            "runtime_start",
+            running=True,
+            event_time=f"2026-03-20T00:00:0{idx}+00:00",
+            symbol=f"TEST{idx}",
+        )
+    client = TestClient(app)
+
+    response = client.get("/operator/api/logs?limit=2&offset=2&category=action&query=엔진")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 5
+    assert payload["offset"] == 2
+    assert payload["limit"] == 2
+    assert payload["has_prev"] is True
+    assert payload["has_next"] is True
+    assert len(payload["items"]) == 2

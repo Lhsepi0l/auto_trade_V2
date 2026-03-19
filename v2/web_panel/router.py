@@ -105,10 +105,16 @@ def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
 
-def _render_page(*, title: str, body_template: str) -> HTMLResponse:
+def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLResponse:
     base = _read_template("base.html")
     body = _read_template(body_template)
-    content = base.replace("{{ TITLE }}", escape(title)).replace("{{ BODY }}", body)
+    content = (
+        base.replace("{{ TITLE }}", escape(title))
+        .replace("{{ BODY }}", body)
+        .replace("{{ PAGE_ID }}", escape(page_id))
+        .replace("{{ NAV_CONSOLE_ACTIVE }}", "is-active" if page_id == "console" else "")
+        .replace("{{ NAV_LOGS_ACTIVE }}", "is-active" if page_id == "logs" else "")
+    )
     return HTMLResponse(content=content)
 
 
@@ -120,15 +126,52 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
 
     @router.get("/operator", response_class=HTMLResponse)
     async def operator_console() -> HTMLResponse:
-        return _render_page(title="웹 운영 콘솔", body_template="operator_console.html")
+        return _render_page(title="웹 운영 콘솔", body_template="operator_console.html", page_id="console")
+
+    @router.get("/operator/logs", response_class=HTMLResponse)
+    async def operator_logs() -> HTMLResponse:
+        return _render_page(title="운영 로그", body_template="operator_logs.html", page_id="logs")
 
     @router.get("/operator/")
     async def operator_console_slash() -> RedirectResponse:
         return RedirectResponse(url="/operator", status_code=307)
 
+    @router.get("/operator/logs/")
+    async def operator_logs_slash() -> RedirectResponse:
+        return RedirectResponse(url="/operator/logs", status_code=307)
+
     @router.get("/operator/api/console")
     async def operator_console_payload() -> dict[str, Any]:
         return service.console_payload()
+
+    @router.get("/operator/api/events")
+    async def operator_events(limit: int = 200) -> list[dict[str, Any]]:
+        return service.list_operator_events(limit=limit)
+
+    @router.get("/operator/api/logs")
+    async def operator_logs_payload(
+        limit: int = 500,
+        offset: int = 0,
+        category: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_limit = max(1, min(int(limit), 1000))
+        normalized_offset = max(0, int(offset))
+        items = service.list_operator_events(
+            limit=normalized_limit,
+            offset=normalized_offset,
+            category=category,
+            query=query,
+        )
+        total = service.count_operator_events(category=category, query=query)
+        return {
+            "items": items,
+            "limit": normalized_limit,
+            "offset": normalized_offset,
+            "total": total,
+            "has_prev": normalized_offset > 0,
+            "has_next": normalized_offset + len(items) < total,
+        }
 
     @router.post("/operator/actions/start")
     async def operator_start() -> dict[str, Any]:

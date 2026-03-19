@@ -30,6 +30,8 @@ def _run_dry_run(*args: str) -> str:
 def test_install_systemd_stack_defaults_to_verified_q070_profile() -> None:
     stdout = _run_dry_run()
     assert "--profile ra_2026_alpha_v2_expansion_verified_q070" in stdout
+    assert "--operator-web" in stdout
+    assert "--no-discord-bot" in stdout
 
 
 def test_install_systemd_stack_forwards_explicit_profile_to_run_stack() -> None:
@@ -42,3 +44,8 @@ def test_install_systemd_stack_supports_web_only_flags() -> None:
     stdout = _run_dry_run("--operator-web", "--no-discord-bot")
     assert "--operator-web" in stdout
     assert "--no-discord-bot" in stdout
+
+
+def test_install_systemd_stack_supports_optional_discord_fallback_flag() -> None:
+    stdout = _run_dry_run("--with-discord-bot")
+    assert "--with-discord-bot" in stdout

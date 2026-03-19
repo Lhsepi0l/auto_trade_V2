@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .form_defaults import SCORING_DEFAULTS, TRAILING_FORM_DEFAULTS
 from .guidance import build_operator_guidance
 from .presets import PRESETS, PROFILE_KEYS, build_profile_payload
 from .service import OperatorService
@@ -13,6 +14,8 @@ from .universe_scoring import (
 
 __all__ = [
     "OperatorService",
+    "SCORING_DEFAULTS",
+    "TRAILING_FORM_DEFAULTS",
     "build_operator_guidance",
     "PRESETS",
     "PROFILE_KEYS",

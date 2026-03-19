@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from v2.control.operator_events import build_operator_event_payload
 from v2.operator import OperatorService
 from v2.operator.actions import wrap_operator_action
 from v2.operator.read_models import build_operator_console_payload
@@ -66,6 +67,7 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
                 "donchian_momentum_filter": True,
                 "donchian_fast_ema_period": 8,
                 "donchian_slow_ema_period": 21,
+                "symbol_leverage_map": {"BTCUSDT": 7.0},
             },
             "watchdog": {"enabled": True, "last_ok_at": "2026-03-19T00:00:01+00:00"},
             "submission_recovery": {"ok": True},
@@ -94,6 +96,9 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
     assert payload["controls"]["exec_mode_default"] == "MARKET"
     assert payload["controls"]["preset_options"] == ["conservative", "normal", "aggressive"]
     assert payload["controls"]["universe_symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert payload["controls"]["default_symbol"] == "BTCUSDT"
+    assert payload["controls"]["current_symbol_leverage"] == 7.0
+    assert payload["controls"]["preset_current_state_label"] == "현재 active 프리셋 개념 없음 (일회성 적용)"
     assert payload["recovery"]["startup_reconcile_ok"] is True
     assert payload["report"]["status"] == "success"
     assert payload["guidance"]["panel_scope"]
@@ -181,6 +186,67 @@ def test_operator_service_updates_universe_and_scoring(tmp_path) -> None:  # typ
     assert risk_after_scoring["score_tf_15m_enabled"] is False
 
 
+def test_read_model_marks_unset_scoring_fields_clearly() -> None:
+    payload = build_operator_console_payload(
+        {
+            "profile": "normal",
+            "mode": "shadow",
+            "env": "testnet",
+            "engine_state": {"state": "STOPPED", "updated_at": None},
+            "health": {"ready": True},
+            "scheduler": {"tick_sec": 30.0, "running": False},
+            "capital_snapshot": {"symbol": "BTCUSDT"},
+            "risk_config": {
+                "universe_symbols": ["BTCUSDT"],
+                "score_conf_threshold": None,
+                "score_gap_threshold": None,
+                "tf_weight_10m": None,
+                "tf_weight_15m": None,
+                "tf_weight_30m": None,
+                "tf_weight_1h": None,
+                "tf_weight_4h": None,
+                "donchian_momentum_filter": None,
+                "donchian_fast_ema_period": None,
+                "donchian_slow_ema_period": None,
+            },
+            "binance": {"positions": {}, "usdt_balance": {}},
+        }
+    )
+
+    assert payload["risk_forms"]["scoring"]["score_conf_threshold"] == 0.60
+    assert payload["risk_forms"]["scoring"]["score_gap_threshold"] == 0.15
+    assert payload["risk_forms"]["scoring"]["weights"]["10m"] == 0.25
+    assert payload["risk_forms"]["scoring"]["weights"]["15m"] == 0.0
+    assert payload["risk_forms"]["scoring"]["donchian_fast_ema_period"] == 8
+    assert payload["risk_forms"]["scoring"]["state_label"] == "runtime override 없음, Discord 기본값 표시"
+
+
+def test_missing_market_is_translated_and_not_shown_as_true_block() -> None:
+    payload = build_operator_console_payload(
+        {
+            "profile": "normal",
+            "mode": "shadow",
+            "env": "testnet",
+            "engine_state": {"state": "STOPPED", "updated_at": None},
+            "health": {"ready": True},
+            "scheduler": {
+                "tick_sec": 30.0,
+                "running": False,
+                "last_action": "no_candidate",
+                "last_decision_reason": "missing_market",
+            },
+            "capital_snapshot": {"symbol": "BTCUSDT", "blocked": False, "block_reason": "missing_market"},
+            "pnl": {"last_strategy_block_reason": "missing_market"},
+            "risk_config": {"universe_symbols": ["BTCUSDT"]},
+            "binance": {"positions": {}, "usdt_balance": {}},
+        }
+    )
+
+    assert payload["health"]["blocked"] is False
+    assert payload["health"]["blocked_reason_label"] is None
+    assert payload["recent_result"]["last_reason_label"] == "시장 컨텍스트 데이터 미도착"
+
+
 def test_operator_service_triggers_report_and_updates_status(tmp_path) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
     service = OperatorService(controller=controller)
@@ -190,3 +256,50 @@ def test_operator_service_triggers_report_and_updates_status(tmp_path) -> None: 
     assert report["action"] == "report"
     assert report["result"]["kind"] == "DAILY_REPORT"
     assert controller._status_snapshot()["report"]["reported_at"] is not None
+
+
+def test_operator_service_lists_persisted_operator_events(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+
+    controller._log_event("runtime_start", running=True, event_time="2026-03-20T00:00:00+00:00")
+    events = service.list_operator_events(limit=20)
+
+    assert events
+    assert events[0]["event_type"] == "runtime_start"
+
+
+def test_operator_event_payload_humanizes_boot_and_readiness_transitions() -> None:
+    ready = build_operator_event_payload(
+        event="ready_transition",
+        fields={
+            "ready": False,
+            "recovery_required": True,
+            "submission_recovery_ok": False,
+            "user_ws_stale": True,
+            "market_data_stale": False,
+        },
+    )
+    stale = build_operator_event_payload(
+        event="stale_transition",
+        fields={"stale_type": "market_data", "stale": False, "age_sec": 12.4},
+    )
+    initialized = build_operator_event_payload(
+        event="controller_initialized",
+        fields={"dirty_restart_detected": True, "recovery_required": False},
+    )
+
+    assert ready is not None
+    assert ready["title"] == "운영 준비도 전환"
+    assert ready["main_text"] == "운영 준비 미완료"
+    assert ready["sub_text"] == "복구 필요, 주문 복구 확인 필요, 프라이빗 스트림 stale"
+
+    assert stale is not None
+    assert stale["title"] == "시장 데이터 상태"
+    assert stale["main_text"] == "정상 복귀"
+    assert stale["sub_text"] == "age=12.4초"
+
+    assert initialized is not None
+    assert initialized["title"] == "컨트롤러 초기화 완료"
+    assert initialized["main_text"] == "운영 컨트롤러 초기화가 완료되었습니다."
+    assert initialized["sub_text"] == "이전 런타임 종료 흔적 감지"

@@ -164,6 +164,21 @@ class RuntimeStorage:
                 )
                 """.strip()
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS operator_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    main_text TEXT NOT NULL,
+                    sub_text TEXT,
+                    event_time TEXT NOT NULL,
+                    context_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """.strip()
+            )
 
     def append_journal_event(
         self,
@@ -586,3 +601,118 @@ class RuntimeStorage:
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
         return payload if isinstance(payload, dict) else None
+
+    def append_operator_event(
+        self,
+        *,
+        event_type: str,
+        category: str,
+        title: str,
+        main_text: str,
+        sub_text: str | None,
+        event_time: str,
+        context: dict[str, Any],
+    ) -> None:
+        context_json = json.dumps(context, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO operator_events(
+                    event_type, category, title, main_text, sub_text, event_time, context_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """.strip(),
+                (
+                    event_type,
+                    category,
+                    title,
+                    main_text,
+                    sub_text,
+                    event_time,
+                    context_json,
+                    _utcnow_iso(),
+                ),
+            )
+
+    def list_operator_events(
+        self,
+        *,
+        limit: int = 200,
+        category: str | None = None,
+        query: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_category = str(category or "").strip().lower()
+        if normalized_category:
+            clauses.append("category = ?")
+            params.append(normalized_category)
+        normalized_query = str(query or "").strip()
+        if normalized_query:
+            like = f"%{normalized_query}%"
+            clauses.append(
+                "(event_type LIKE ? OR title LIKE ? OR main_text LIKE ? OR COALESCE(sub_text, '') LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, event_type, category, title, main_text, sub_text, event_time, context_json, created_at
+                FROM operator_events
+                {where_sql}
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+                """.strip(),
+                (*params, max(1, int(limit)), max(0, int(offset))),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            raw_context = payload.get("context_json")
+            if isinstance(raw_context, str) and raw_context.strip():
+                try:
+                    payload["context"] = json.loads(raw_context)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload["context"] = {}
+            else:
+                payload["context"] = {}
+            out.append(payload)
+        return out
+
+    def count_operator_events(
+        self,
+        *,
+        category: str | None = None,
+        query: str | None = None,
+    ) -> int:
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_category = str(category or "").strip().lower()
+        if normalized_category:
+            clauses.append("category = ?")
+            params.append(normalized_category)
+        normalized_query = str(query or "").strip()
+        if normalized_query:
+            like = f"%{normalized_query}%"
+            clauses.append(
+                "(event_type LIKE ? OR title LIKE ? OR main_text LIKE ? OR COALESCE(sub_text, '') LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM operator_events
+                {where_sql}
+                """.strip(),
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return 0
+        try:
+            return int(row["total"])
+        except Exception:  # noqa: BLE001
+            return 0

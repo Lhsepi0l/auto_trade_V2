@@ -55,6 +55,7 @@ REASON_LABELS_KO: dict[str, str] = {
     "regime_adx_rising_missing": "레짐 ADX 상승 추세 조건 미충족",
     "bias_missing": "방향성 바이어스 조건 미충족",
     "trigger_missing": "트리거 조건 미충족",
+    "missing_market": "시장 컨텍스트 데이터 미도착",
     "quality_score_missing": "확장 품질 점수 기준 미충족",
     "quality_score_v2_missing": "확장 품질 점수 V2 기준 미충족",
     "breakout_efficiency_missing": "돌파 효율 기준 미충족",

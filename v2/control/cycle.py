@@ -307,6 +307,18 @@ def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
             controller._record_recent_block(cycle.reason)
         controller._maybe_apply_auto_risk_circuit(cycle)
         controller._persist_risk_config()
+        controller._log_event(
+            "cycle_result",
+            action=cycle.state,
+            reason=cycle.reason,
+            candidate_symbol=(
+                getattr(cycle.candidate, "symbol", None) if cycle.candidate is not None else None
+            ),
+            candidate_side=(
+                getattr(cycle.candidate, "side", None) if cycle.candidate is not None else None
+            ),
+            event_time=controller._last_cycle["tick_finished_at"],
+        )
         ok = True
         error_message = None
         controller._cycle_done_seq = cycle_seq
@@ -327,6 +339,12 @@ def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
         controller._last_cycle["bracket"] = None
         controller._report_stats["total_records"] += 1
         controller._report_stats["errors"] += 1
+        controller._log_event(
+            "cycle_result",
+            action="error",
+            reason=error_message,
+            event_time=controller._last_cycle["tick_finished_at"],
+        )
         ok = False
         controller._cycle_done_seq = cycle_seq
 

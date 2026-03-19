@@ -52,8 +52,6 @@ class BinanceAdapter:
         }
 
     def create_rest_client(self, *, cfg: EffectiveConfig) -> BinanceRESTClient | None:
-        if self.mode == "shadow":
-            return None
         return BinanceRESTClient(
             env=self.env,
             api_key=self.api_key,

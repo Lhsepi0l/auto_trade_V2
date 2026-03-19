@@ -12,8 +12,8 @@ ENV_FILE=".env"
 CONTROL_HOST="127.0.0.1"
 CONTROL_PORT="8101"
 CONTROL_HTTP_MODE="control-http"
-ENABLE_OPERATOR_WEB="false"
-WITH_DISCORD_BOT="true"
+ENABLE_OPERATOR_WEB="true"
+WITH_DISCORD_BOT="false"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 STACK_LOCK_FILE="${STACK_LOCK_FILE:-v2/logs/stack.lock}"
 READY_TIMEOUT_SEC="${STACK_READY_TIMEOUT_SEC:-30}"
@@ -32,6 +32,7 @@ Options:
   --host <host>
   --port <port>
   --operator-web
+  --with-discord-bot
   --no-discord-bot
   --ops-http            # rejected: stack requires control-http + /readyz
   --help
@@ -40,7 +41,8 @@ Examples:
   bash v2/scripts/run_stack.sh
   bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
   bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
-  bash v2/scripts/run_stack.sh --mode shadow --env testnet --operator-web --no-discord-bot
+  bash v2/scripts/run_stack.sh --mode shadow --env testnet
+  bash v2/scripts/run_stack.sh --mode live --env prod --with-discord-bot
 EOF
 }
 
@@ -72,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --operator-web)
             ENABLE_OPERATOR_WEB="true"
+            shift 1
+            ;;
+        --with-discord-bot)
+            WITH_DISCORD_BOT="true"
             shift 1
             ;;
         --no-discord-bot)
@@ -355,7 +361,7 @@ if [[ "$WITH_DISCORD_BOT" == "true" ]]; then
     echo "- bot log: $BOT_LOG"
     wait -n "$CONTROL_PID" "$BOT_PID"
 else
-    echo "- discord bot: skipped"
+    echo "- discord bot: optional fallback disabled"
     wait -n "$CONTROL_PID"
 fi
 EXIT_CODE=$?

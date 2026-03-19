@@ -317,3 +317,30 @@ class OperatorService:
     def trigger_report(self) -> dict[str, Any]:
         result = self._controller.send_daily_report()
         return wrap_operator_action(action="report", raw_result=result)
+
+    def list_operator_events(
+        self,
+        *,
+        limit: int = 200,
+        category: str | None = None,
+        query: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        storage = self._controller.state_store.runtime_storage()
+        return storage.list_operator_events(
+            limit=limit,
+            category=category,
+            query=query,
+            offset=offset,
+        )
+
+    def count_operator_events(
+        self,
+        *,
+        category: str | None = None,
+        query: str | None = None,
+    ) -> int:
+        return self._controller.state_store.runtime_storage().count_operator_events(
+            category=category,
+            query=query,
+        )
