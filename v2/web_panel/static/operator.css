@@ -98,7 +98,12 @@ body {
   border: 1px solid rgba(180, 83, 9, 0.18);
 }
 
+.feedback.success,
 .feedback.ok { background: #ecfdf3; border-color: rgba(22, 101, 52, 0.2); }
+.feedback.busy { background: #eff6ff; border-color: rgba(37, 99, 235, 0.2); }
+.feedback.blocked { background: #fff7ed; border-color: rgba(194, 65, 12, 0.2); }
+.feedback.stale { background: #faf5ff; border-color: rgba(126, 34, 206, 0.18); }
+.feedback.failed { background: #fef2f2; border-color: rgba(185, 28, 28, 0.2); }
 
 .grid {
   display: grid;
@@ -117,6 +122,13 @@ body {
 
 .card.wide { grid-column: span 8; }
 .card h2, .metrics h3 { margin: 0 0 14px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
 
 .kv { display: grid; gap: 10px; margin: 0; }
 .kv div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: start; }
@@ -126,6 +138,37 @@ body {
 .inline-list { padding: 0; margin: 12px 0 0; list-style: none; }
 .inline-list li { padding: 8px 12px; border-radius: 999px; background: #efe8da; font-size: 13px; }
 .inline-form { margin-top: 14px; }
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.panel-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fffaf3;
+}
+.panel-form h2,
+.panel-form h3 {
+  margin: 0;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.field-row {
+  display: grid;
+  gap: 6px;
+}
+.field-row label {
+  font-size: 13px;
+  color: var(--muted);
+}
 
 input {
   min-height: 44px;
@@ -134,12 +177,19 @@ input {
   padding: 0 14px;
   min-width: 140px;
 }
+select {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 0 14px;
+}
 
 .table { display: grid; gap: 10px; }
 
 .table-row {
   display: grid;
-  grid-template-columns: 1.2fr 0.9fr 0.9fr 1fr 1fr;
+  grid-template-columns: 1.2fr 0.9fr 0.9fr 1fr 1fr 0.8fr;
   gap: 10px;
   padding: 12px 14px;
   border-radius: 18px;
@@ -150,6 +200,11 @@ input {
 .table-row.header { background: transparent; box-shadow: none; font-weight: 700; }
 .empty { color: var(--muted); }
 .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.btn-small {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
 
 pre {
   margin: 0;
@@ -167,6 +222,7 @@ pre {
 }
 
 @media (max-width: 720px) {
-  .table-row, .kv div { grid-template-columns: 1fr; }
+  .table-row, .kv div, .form-grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr; }
+  .card-head { flex-direction: column; align-items: flex-start; }
 }

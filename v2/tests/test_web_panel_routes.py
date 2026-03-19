@@ -62,7 +62,12 @@ def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore
 
     payload = client.get("/operator/api/console")
     assert payload.status_code == 200
-    assert payload.json()["engine"]["state"] in {"STOPPED", "PAUSED", "RUNNING", "KILLED"}
+    json_payload = payload.json()
+    assert json_payload["engine"]["state"] in {"STOPPED", "PAUSED", "RUNNING", "KILLED"}
+    assert "recovery" in json_payload
+    assert "controls" in json_payload
+    assert "risk_forms" in json_payload
+    assert "recent_result" in json_payload
 
     start = client.post("/operator/actions/start")
     assert start.status_code == 200
@@ -74,3 +79,60 @@ def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore
     )
     assert leverage.status_code == 200
     assert leverage.json()["result"]["symbol_leverage_map"]["BTCUSDT"] == 5.0
+
+
+def test_operator_console_supports_structured_control_actions(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    client = TestClient(_build_operator_app(tmp_path))
+
+    reconcile = client.post("/operator/actions/reconcile")
+    assert reconcile.status_code == 200
+    assert reconcile.json()["action"] == "reconcile"
+
+    cooldown = client.post("/operator/actions/cooldown-clear")
+    assert cooldown.status_code == 200
+    assert cooldown.json()["action"] == "cooldown_clear"
+
+    scheduler = client.post("/operator/actions/scheduler-interval", json={"tick_sec": 600})
+    assert scheduler.status_code == 200
+    assert scheduler.json()["action"] == "scheduler_interval"
+    assert scheduler.json()["result"]["tick_sec"] == 600.0
+
+    exec_mode = client.post("/operator/actions/exec-mode", json={"exec_mode": "LIMIT"})
+    assert exec_mode.status_code == 200
+    assert exec_mode.json()["action"] == "exec_mode"
+    assert exec_mode.json()["result"]["applied_value"] == "LIMIT"
+
+    margin = client.post(
+        "/operator/actions/margin-budget",
+        json={"amount_usdt": 120.0, "leverage": 7.0},
+    )
+    assert margin.status_code == 200
+    assert margin.json()["action"] == "margin_budget"
+
+    risk_basic = client.post(
+        "/operator/actions/risk-basic",
+        json={
+            "max_leverage": 9.0,
+            "max_exposure_pct": 0.3,
+            "max_notional_pct": 1200.0,
+            "per_trade_risk_pct": 12.0,
+        },
+    )
+    assert risk_basic.status_code == 200
+    assert risk_basic.json()["action"] == "risk_basic"
+
+    risk_advanced = client.post(
+        "/operator/actions/risk-advanced",
+        json={
+            "daily_loss_limit_pct": -0.04,
+            "dd_limit_pct": -0.2,
+            "min_hold_minutes": 120,
+            "score_conf_threshold": 0.6,
+        },
+    )
+    assert risk_advanced.status_code == 200
+    assert risk_advanced.json()["action"] == "risk_advanced"
+
+    notify = client.post("/operator/actions/notify-interval", json={"notify_interval_sec": 45})
+    assert notify.status_code == 200
+    assert notify.json()["action"] == "notify_interval"

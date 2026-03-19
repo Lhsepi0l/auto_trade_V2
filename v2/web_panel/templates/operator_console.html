@@ -3,7 +3,7 @@
     <div>
       <p class="eyebrow">AUTO TRADER V2</p>
       <h1>웹 운영 콘솔</h1>
-      <p class="subtitle">런타임 상태, 리스크, 즉시 판단, 레버리지 조작을 한 화면에서 확인합니다.</p>
+      <p class="subtitle">실운영 제어, 복구, 포지션 정리, 핵심 리스크 조정을 웹에서 직접 수행합니다.</p>
     </div>
     <div class="hero-meta">
       <span id="runtime-mode" class="pill">-</span>
@@ -36,15 +36,22 @@
     </article>
 
     <article class="card">
-      <h2>스케줄러 / 마지막 판단</h2>
+      <div class="card-head">
+        <h2>복구 / 진단</h2>
+        <div class="button-row">
+          <button id="action-reconcile" class="btn ghost" type="button">Reconcile</button>
+          <button id="action-cooldown-clear" class="btn ghost" type="button">쿨다운 해제</button>
+        </div>
+      </div>
       <dl class="kv">
-        <div><dt>주기</dt><dd id="scheduler-tick-sec">-</dd></div>
-        <div><dt>최근 액션</dt><dd id="scheduler-last-action">-</dd></div>
-        <div><dt>사유</dt><dd id="scheduler-last-reason">-</dd></div>
-        <div><dt>오류</dt><dd id="scheduler-last-error">-</dd></div>
-        <div><dt>시작 시각</dt><dd id="scheduler-started-at">-</dd></div>
-        <div><dt>종료 시각</dt><dd id="scheduler-finished-at">-</dd></div>
+        <div><dt>복구 필요</dt><dd id="recovery-required">-</dd></div>
+        <div><dt>불확실 상태</dt><dd id="recovery-state-uncertain">-</dd></div>
+        <div><dt>불확실 사유</dt><dd id="recovery-state-uncertain-reason">-</dd></div>
+        <div><dt>Startup reconcile</dt><dd id="recovery-startup-ok">-</dd></div>
+        <div><dt>마지막 reconcile</dt><dd id="recovery-last-reconcile-at">-</dd></div>
+        <div><dt>Submission recovery</dt><dd id="recovery-submission-ok">-</dd></div>
       </dl>
+      <pre id="recovery-watchdog">-</pre>
     </article>
 
     <article class="card">
@@ -54,6 +61,52 @@
         <div><dt>Private 오류</dt><dd id="readiness-private-error">-</dd></div>
         <div><dt>상세</dt><dd id="readiness-private-detail">-</dd></div>
       </dl>
+    </article>
+
+    <article class="card wide">
+      <div class="card-head">
+        <h2>스케줄러 / 실행 모드</h2>
+        <div class="button-row">
+          <button id="action-tick-inline" class="btn accent" type="button">즉시 판단</button>
+        </div>
+      </div>
+      <dl class="kv">
+        <div><dt>판단 주기</dt><dd id="scheduler-tick-sec">-</dd></div>
+        <div><dt>실행 모드</dt><dd id="controls-exec-mode">-</dd></div>
+        <div><dt>최근 액션</dt><dd id="scheduler-last-action">-</dd></div>
+        <div><dt>사유</dt><dd id="scheduler-last-reason">-</dd></div>
+        <div><dt>오류</dt><dd id="scheduler-last-error">-</dd></div>
+        <div><dt>시작 시각</dt><dd id="scheduler-started-at">-</dd></div>
+        <div><dt>종료 시각</dt><dd id="scheduler-finished-at">-</dd></div>
+      </dl>
+      <div class="form-grid">
+        <form id="scheduler-interval-form" class="panel-form">
+          <h3>판단 주기 변경</h3>
+          <div class="field-row">
+            <label for="scheduler-interval-select">주기</label>
+            <select id="scheduler-interval-select" name="tick_sec">
+              <option value="300">5분</option>
+              <option value="600">10분</option>
+              <option value="900">15분</option>
+              <option value="1800">30분</option>
+              <option value="3600">60분</option>
+            </select>
+          </div>
+          <button class="btn" type="submit">주기 적용</button>
+        </form>
+        <form id="exec-mode-form" class="panel-form">
+          <h3>실행 모드 변경</h3>
+          <div class="field-row">
+            <label for="exec-mode-select">모드</label>
+            <select id="exec-mode-select" name="exec_mode">
+              <option value="LIMIT">LIMIT</option>
+              <option value="MARKET">MARKET</option>
+              <option value="SPLIT">SPLIT</option>
+            </select>
+          </div>
+          <button class="btn" type="submit">실행 모드 적용</button>
+        </form>
+      </div>
     </article>
 
     <article class="card">
@@ -66,15 +119,39 @@
         <div><dt>레버리지</dt><dd id="capital-leverage">-</dd></div>
         <div><dt>차단 사유</dt><dd id="capital-block-reason">-</dd></div>
       </dl>
-      <form id="symbol-leverage-form" class="inline-form">
-        <input id="symbol-input" name="symbol" type="text" placeholder="BTCUSDT" value="BTCUSDT">
-        <input id="leverage-input" name="leverage" type="number" min="0" step="0.1" placeholder="5">
-        <button class="btn" type="submit">레버리지 적용</button>
+      <form id="margin-budget-form" class="panel-form">
+        <h3>증거금 설정</h3>
+        <div class="field-row">
+          <label for="margin-budget-input">목표 증거금</label>
+          <input id="margin-budget-input" name="amount_usdt" type="number" min="5" step="0.0001">
+        </div>
+        <div class="field-row">
+          <label for="max-leverage-input">최대 레버리지</label>
+          <input id="max-leverage-input" name="leverage" type="number" min="1" step="0.1">
+        </div>
+        <button class="btn" type="submit">증거금 적용</button>
+      </form>
+      <form id="symbol-leverage-form" class="panel-form">
+        <h3>심볼 레버리지</h3>
+        <div class="field-row">
+          <label for="symbol-input">심볼</label>
+          <input id="symbol-input" name="symbol" type="text" placeholder="BTCUSDT" value="BTCUSDT">
+        </div>
+        <div class="field-row">
+          <label for="leverage-input">레버리지</label>
+          <input id="leverage-input" name="leverage" type="number" min="0" step="0.1" placeholder="5">
+        </div>
+        <button class="btn" type="submit">심볼 레버리지 적용</button>
       </form>
     </article>
 
     <article class="card wide">
-      <h2>현재 포지션</h2>
+      <div class="card-head">
+        <h2>현재 포지션</h2>
+        <div class="button-row">
+          <button id="action-close-all" class="btn danger" type="button">전체 종료</button>
+        </div>
+      </div>
       <div id="positions-empty" class="empty">포지션 없음</div>
       <div id="positions-list" class="table"></div>
     </article>
@@ -87,6 +164,72 @@
         <div><dt>연속 손실</dt><dd id="risk-lose-streak">-</dd></div>
         <div><dt>쿨다운</dt><dd id="risk-cooldown">-</dd></div>
         <div><dt>자동 리스크 사유</dt><dd id="risk-auto-reason">-</dd></div>
+      </dl>
+    </article>
+
+    <article class="card">
+      <form id="risk-basic-form" class="panel-form">
+        <h2>리스크 기본</h2>
+        <div class="field-row">
+          <label for="risk-basic-max-leverage">최대 레버리지</label>
+          <input id="risk-basic-max-leverage" name="max_leverage" type="number" step="0.1" min="1">
+        </div>
+        <div class="field-row">
+          <label for="risk-basic-max-exposure">최대 노출</label>
+          <input id="risk-basic-max-exposure" name="max_exposure_pct" type="number" step="0.0001">
+        </div>
+        <div class="field-row">
+          <label for="risk-basic-max-notional">최대 노셔널 배수</label>
+          <input id="risk-basic-max-notional" name="max_notional_pct" type="number" step="0.0001">
+        </div>
+        <div class="field-row">
+          <label for="risk-basic-per-trade">1회 리스크</label>
+          <input id="risk-basic-per-trade" name="per_trade_risk_pct" type="number" step="0.0001">
+        </div>
+        <button class="btn" type="submit">리스크 기본 적용</button>
+      </form>
+    </article>
+
+    <article class="card">
+      <form id="risk-advanced-form" class="panel-form">
+        <h2>리스크 고급</h2>
+        <div class="field-row">
+          <label for="risk-advanced-daily-loss">일일 손실 제한</label>
+          <input id="risk-advanced-daily-loss" name="daily_loss_limit_pct" type="number" step="0.0001">
+        </div>
+        <div class="field-row">
+          <label for="risk-advanced-dd-limit">DD 제한</label>
+          <input id="risk-advanced-dd-limit" name="dd_limit_pct" type="number" step="0.0001">
+        </div>
+        <div class="field-row">
+          <label for="risk-advanced-min-hold">최소 보유 시간</label>
+          <input id="risk-advanced-min-hold" name="min_hold_minutes" type="number" step="1" min="0">
+        </div>
+        <div class="field-row">
+          <label for="risk-advanced-score-conf">신뢰도 임계값</label>
+          <input id="risk-advanced-score-conf" name="score_conf_threshold" type="number" step="0.0001" min="0" max="1">
+        </div>
+        <button class="btn" type="submit">리스크 고급 적용</button>
+      </form>
+      <form id="notify-interval-form" class="panel-form">
+        <h3>상태 알림 주기</h3>
+        <div class="field-row">
+          <label for="notify-interval-input">초</label>
+          <input id="notify-interval-input" name="notify_interval_sec" type="number" step="1" min="1">
+        </div>
+        <button class="btn" type="submit">알림 주기 적용</button>
+      </form>
+    </article>
+
+    <article class="card wide">
+      <h2>최근 판단 / 차단 결과</h2>
+      <dl class="kv">
+        <div><dt>최근 액션</dt><dd id="recent-action">-</dd></div>
+        <div><dt>최근 사유</dt><dd id="recent-reason">-</dd></div>
+        <div><dt>최근 오류</dt><dd id="recent-error">-</dd></div>
+        <div><dt>차단 사유</dt><dd id="recent-blocked-reason">-</dd></div>
+        <div><dt>Busy</dt><dd id="recent-busy">-</dd></div>
+        <div><dt>Stale</dt><dd id="recent-stale">-</dd></div>
       </dl>
     </article>
 

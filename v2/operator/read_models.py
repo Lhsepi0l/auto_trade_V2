@@ -48,16 +48,27 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
     capital = (
         status.get("capital_snapshot", {}) if isinstance(status.get("capital_snapshot"), dict) else {}
     )
+    risk_config = status.get("risk_config", {}) if isinstance(status.get("risk_config"), dict) else {}
     pnl = status.get("pnl", {}) if isinstance(status.get("pnl"), dict) else {}
     binance = status.get("binance", {}) if isinstance(status.get("binance"), dict) else {}
     live_readiness = (
         status.get("live_readiness", {}) if isinstance(status.get("live_readiness"), dict) else {}
     )
     health = status.get("health", {}) if isinstance(status.get("health"), dict) else {}
+    watchdog = status.get("watchdog", {}) if isinstance(status.get("watchdog"), dict) else {}
+    submission_recovery = (
+        status.get("submission_recovery", {})
+        if isinstance(status.get("submission_recovery"), dict)
+        else {}
+    )
+    boot_recovery = (
+        status.get("boot_recovery", {}) if isinstance(status.get("boot_recovery"), dict) else {}
+    )
 
     state = str(engine.get("state") or "-")
     last_action = str(scheduler.get("last_action") or "-")
     last_reason = str(scheduler.get("last_decision_reason") or "-")
+    last_error = scheduler.get("last_error")
     blocked_reason = (
         capital.get("block_reason")
         or pnl.get("last_strategy_block_reason")
@@ -125,9 +136,24 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
             "last_action_label": humanize_action_token(last_action),
             "last_reason": last_reason,
             "last_reason_label": humanize_reason_token(last_reason),
-            "last_error": scheduler.get("last_error"),
+            "last_error": last_error,
             "portfolio_slots": scheduler.get("portfolio_slots"),
             "can_tick": last_reason != "tick_busy",
+        },
+        "recent_result": {
+            "last_action": last_action,
+            "last_action_label": humanize_action_token(last_action),
+            "last_reason": last_reason,
+            "last_reason_label": humanize_reason_token(last_reason),
+            "last_error": last_error,
+            "blocked_reason": blocked_reason,
+            "blocked_reason_label": (
+                humanize_reason_token(str(blocked_reason)) if blocked_reason else None
+            ),
+            "tick_started_at": scheduler.get("tick_started_at"),
+            "tick_finished_at": scheduler.get("tick_finished_at"),
+            "busy": last_reason == "tick_busy",
+            "stale": bool(status.get("user_ws_stale")) or bool(status.get("market_data_stale")),
         },
         "readiness": {
             "ready": bool(live_readiness.get("ready")),
@@ -139,6 +165,28 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
             ),
             "private_error": binance.get("private_error"),
             "private_error_detail": binance.get("private_error_detail"),
+        },
+        "recovery": {
+            "state_uncertain": bool(status.get("state_uncertain")),
+            "state_uncertain_reason": status.get("state_uncertain_reason"),
+            "state_uncertain_reason_label": (
+                humanize_reason_token(str(status.get("state_uncertain_reason")))
+                if status.get("state_uncertain_reason")
+                else None
+            ),
+            "recovery_required": bool(status.get("recovery_required")),
+            "recovery_reason": status.get("recovery_reason"),
+            "startup_reconcile_ok": status.get("startup_reconcile_ok"),
+            "last_reconcile_at": status.get("last_reconcile_at"),
+            "submission_recovery_ok": bool(health.get("submission_recovery_ok")),
+            "submission_recovery": submission_recovery,
+            "boot_recovery": boot_recovery,
+            "watchdog": watchdog,
+        },
+        "controls": {
+            "exec_mode_default": str(risk_config.get("exec_mode_default") or "MARKET").upper(),
+            "scheduler_tick_sec": _to_float(scheduler.get("tick_sec")),
+            "notify_interval_sec": int(_to_float(risk_config.get("notify_interval_sec"), default=30.0)),
         },
         "capital": {
             "available_usdt": _to_float(balance.get("available")),
@@ -169,6 +217,36 @@ def build_operator_console_payload(status: dict[str, Any]) -> dict[str, Any]:
                 if pnl.get("last_auto_risk_reason")
                 else None
             ),
+        },
+        "risk_forms": {
+            "margin_budget": {
+                "margin_budget_usdt": _to_float(risk_config.get("margin_budget_usdt"), default=0.0),
+                "max_leverage": _to_float(risk_config.get("max_leverage"), default=0.0),
+                "margin_use_pct": _to_float(risk_config.get("margin_use_pct"), default=1.0),
+            },
+            "risk_basic": {
+                "max_leverage": _to_float(risk_config.get("max_leverage"), default=0.0),
+                "max_exposure_pct": _to_float(risk_config.get("max_exposure_pct"), default=0.0),
+                "max_notional_pct": _to_float(risk_config.get("max_notional_pct"), default=0.0),
+                "per_trade_risk_pct": _to_float(risk_config.get("per_trade_risk_pct"), default=0.0),
+            },
+            "risk_advanced": {
+                "daily_loss_limit_pct": _to_float(
+                    risk_config.get("daily_loss_limit_pct"), default=0.0
+                ),
+                "dd_limit_pct": _to_float(risk_config.get("dd_limit_pct"), default=0.0),
+                "min_hold_minutes": int(
+                    _to_float(risk_config.get("min_hold_minutes"), default=0.0)
+                ),
+                "score_conf_threshold": _to_float(
+                    risk_config.get("score_conf_threshold"), default=0.0
+                ),
+            },
+            "notify_interval": {
+                "notify_interval_sec": int(
+                    _to_float(risk_config.get("notify_interval_sec"), default=30.0)
+                ),
+            },
         },
         "alpha": {
             "last_alpha_id": pnl.get("last_alpha_id"),
