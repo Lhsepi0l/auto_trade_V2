@@ -152,14 +152,19 @@ class OperatorService:
         return wrap_operator_action(action="risk_advanced", raw_result=result)
 
     def set_notify_interval(self, *, notify_interval_sec: int) -> dict[str, Any]:
+        sec = max(1, int(notify_interval_sec))
+        _ = self._controller.set_scheduler_interval(float(sec))
         result = self._controller.set_value(
             key="notify_interval_sec",
-            value=self._stringify_value(max(1, int(notify_interval_sec))),
+            value=self._stringify_value(sec),
         )
         return wrap_operator_action(
             action="notify_interval",
             raw_result=result,
-            context={"notify_interval_sec": max(1, int(notify_interval_sec))},
+            context={
+                "notify_interval_sec": sec,
+                "scheduler_tick_sec": sec,
+            },
         )
 
     def apply_preset(self, *, name: str) -> dict[str, Any]:

@@ -719,8 +719,8 @@ function bindForms() {
     const tick_sec = Number(document.getElementById("scheduler-interval-select")?.value);
     runConfirmedAction(
       {
-        title: "판단 주기를 변경할까요?",
-        message: `판단 주기를 ${fmtMaybe(tick_sec)}초로 적용합니다.`,
+        title: "판단/상태 알림 주기를 변경할까요?",
+        message: `엔진 판단, 웹 로그, 모바일 알림 주기를 ${fmtMaybe(tick_sec)}초로 함께 적용합니다.`,
       },
       () => postAction("/operator/actions/scheduler-interval", { tick_sec })
     ).catch((error) => setFeedback(String(error), "failed"));
@@ -792,7 +792,7 @@ function bindForms() {
     runConfirmedAction(
       {
         title: "상태 알림 주기를 변경할까요?",
-        message: `상태 알림 주기를 ${fmtMaybe(notify_interval_sec)}초로 적용합니다.`,
+        message: `웹 로그, 모바일 알림, 엔진 판단 주기를 ${fmtMaybe(notify_interval_sec)}초로 함께 적용합니다.`,
       },
       () => postAction("/operator/actions/notify-interval", { notify_interval_sec })
     ).catch((error) => setFeedback(String(error), "failed"));

@@ -202,6 +202,19 @@ def test_operator_service_updates_universe_and_scoring(tmp_path) -> None:  # typ
     assert risk_after_scoring["score_tf_15m_enabled"] is False
 
 
+def test_operator_service_notify_interval_syncs_scheduler_tick(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+
+    out = service.set_notify_interval(notify_interval_sec=600)
+    risk = controller.get_risk()
+
+    assert out["action"] == "notify_interval"
+    assert out["result"]["applied_value"] == 600
+    assert risk["notify_interval_sec"] == 600
+    assert risk["scheduler_tick_sec"] == 600
+
+
 def test_read_model_marks_unset_scoring_fields_clearly() -> None:
     payload = build_operator_console_payload(
         {
