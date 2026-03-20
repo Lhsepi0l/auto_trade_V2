@@ -1313,6 +1313,22 @@ def test_set_notify_interval_does_not_change_scheduler_tick(tmp_path) -> None:  
     assert scheduler_resp.json()["tick_sec"] == 30.0
 
 
+def test_scheduler_interval_updates_default_freshness_thresholds(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    controller._risk["user_ws_stale_sec"] = 120.0
+    controller._risk["market_data_stale_sec"] = 60.0
+    controller._risk["watchdog_interval_sec"] = 30.0
+
+    result = controller.set_scheduler_interval(600)
+    risk = controller.get_risk()
+
+    assert result["tick_sec"] == 600.0
+    assert risk["scheduler_tick_sec"] == 600
+    assert risk["user_ws_stale_sec"] == 2400.0
+    assert risk["market_data_stale_sec"] == 1200.0
+    assert risk["watchdog_interval_sec"] == 600.0
+
+
 def test_status_summary_translates_action_and_reason_to_korean(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_notify_translate.sqlite3")

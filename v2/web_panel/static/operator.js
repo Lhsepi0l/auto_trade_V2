@@ -63,7 +63,15 @@ function setInputValue(id, value) {
 function setSelectValue(id, value) {
   const el = document.getElementById(id);
   if (el) {
-    el.value = String(value ?? "");
+    const normalized = String(value ?? "");
+    const hasOption = Array.from(el.options || []).some((option) => option.value === normalized);
+    if (normalized && !hasOption) {
+      const option = document.createElement("option");
+      option.value = normalized;
+      option.textContent = `${normalized}초`;
+      el.prepend(option);
+    }
+    el.value = normalized;
   }
 }
 

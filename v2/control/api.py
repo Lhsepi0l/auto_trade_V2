@@ -822,10 +822,37 @@ class RuntimeController:
             return base
         return max(1.0, min(resolved))
 
+    @staticmethod
+    def _freshness_defaults_for_scheduler_tick(*, sched_sec: int) -> dict[str, float]:
+        sec = max(1, int(sched_sec))
+        return {
+            "user_ws_stale_sec": max(float(sec) * 4.0, 60.0),
+            "market_data_stale_sec": max(float(sec) * 2.0, 30.0),
+            "watchdog_interval_sec": float(sec),
+        }
+
+    def _apply_scheduler_tick_change(self, *, sec: int) -> None:
+        normalized = max(1, int(sec))
+        previous = max(
+            1,
+            int(_to_float(self._risk.get("scheduler_tick_sec"), default=float(self.scheduler.tick_seconds))),
+        )
+        prev_defaults = self._freshness_defaults_for_scheduler_tick(sched_sec=previous)
+        next_defaults = self._freshness_defaults_for_scheduler_tick(sched_sec=normalized)
+
+        self.scheduler.tick_seconds = normalized
+        self._risk["scheduler_tick_sec"] = normalized
+
+        for key in ("user_ws_stale_sec", "market_data_stale_sec", "watchdog_interval_sec"):
+            current_value = _to_float(self._risk.get(key), default=prev_defaults[key])
+            if abs(current_value - prev_defaults[key]) < 1e-9:
+                self._risk[key] = next_defaults[key]
+
     def _initial_risk_config(self) -> dict[str, Any]:
         risk_cfg = self.cfg.behavior.risk
         tpsl_cfg = self.cfg.behavior.tpsl
         sched_sec = int(self.cfg.behavior.scheduler.tick_seconds)
+        freshness_defaults = self._freshness_defaults_for_scheduler_tick(sched_sec=sched_sec)
         day_key = datetime.now(timezone.utc).date().isoformat()
         config = {
             "risk_per_trade_pct": 10.0,
@@ -876,8 +903,8 @@ class RuntimeController:
             "notify_interval_sec": sched_sec,
             "spread_max_pct": 0.5,
             "allow_market_when_wide_spread": False,
-            "user_ws_stale_sec": max(float(sched_sec) * 4.0, 60.0),
-            "market_data_stale_sec": max(float(sched_sec) * 2.0, 30.0),
+            "user_ws_stale_sec": freshness_defaults["user_ws_stale_sec"],
+            "market_data_stale_sec": freshness_defaults["market_data_stale_sec"],
             "reconcile_max_age_sec": 300.0,
             "capital_mode": "MARGIN_BUDGET_USDT",
             "capital_pct": 1.0,
@@ -888,7 +915,7 @@ class RuntimeController:
             "fee_buffer_pct": 0.001,
             "universe_symbols": [self.cfg.behavior.exchange.default_symbol],
             "enable_watchdog": False,
-            "watchdog_interval_sec": sched_sec,
+            "watchdog_interval_sec": freshness_defaults["watchdog_interval_sec"],
             "shock_1m_pct": 0.0,
             "shock_from_entry_pct": 0.0,
             "trailing_enabled": bool(tpsl_cfg.trailing_enabled),
@@ -1967,13 +1994,12 @@ class RuntimeController:
                 parsed = max(1, int(_to_float(parsed, default=1.0)))
 
             self._risk[normalized_key] = parsed
+            if normalized_key == "scheduler_tick_sec":
+                self._apply_scheduler_tick_change(sec=int(_to_float(parsed, default=1.0)))
+            else:
+                self._risk[normalized_key] = parsed
             self._refresh_runtime_risk_context()
             self._sync_kernel_runtime_overrides()
-
-            if normalized_key == "scheduler_tick_sec":
-                self.scheduler.tick_seconds = int(
-                    _to_float(parsed, default=float(self.scheduler.tick_seconds))
-                )
 
             self._persist_risk_config()
             if normalized_key == "notify_interval_sec":
@@ -2092,8 +2118,7 @@ class RuntimeController:
     def set_scheduler_interval(self, tick_sec: float) -> dict[str, Any]:
         with self._lock:
             sec = max(1, int(tick_sec))
-            self.scheduler.tick_seconds = sec
-            self._risk["scheduler_tick_sec"] = sec
+            self._apply_scheduler_tick_change(sec=sec)
             self._persist_risk_config()
             return build_scheduler_response(
                 tick_sec=float(self.scheduler.tick_seconds),
