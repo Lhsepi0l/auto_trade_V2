@@ -656,9 +656,12 @@ class RuntimeController:
             normalized
         )
         normalized, changed = self._migrate_legacy_strategy_runtime_defaults(normalized)
+        normalized, scheduler_changed = self._migrate_persisted_scheduler_runtime_defaults(
+            normalized
+        )
         for key, value in normalized.items():
             self._risk[key] = value
-        if changed or stripped_changed:
+        if changed or stripped_changed or scheduler_changed:
             self._persist_risk_config()
 
     def _persist_risk_config(self) -> None:
@@ -746,6 +749,40 @@ class RuntimeController:
             if current == legacy_default and profile_default != legacy_default:
                 migrated[key] = copy.deepcopy(profile_default)
                 changed = True
+        return migrated, changed
+
+    def _migrate_persisted_scheduler_runtime_defaults(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        migrated = dict(payload)
+        if "scheduler_tick_sec" not in migrated:
+            return migrated, False
+
+        current_tick = max(
+            1,
+            int(
+                _to_float(
+                    self._risk.get("scheduler_tick_sec"),
+                    default=float(self.scheduler.tick_seconds),
+                )
+            ),
+        )
+        persisted_tick = max(
+            1,
+            int(_to_float(migrated.get("scheduler_tick_sec"), default=float(current_tick))),
+        )
+        current_defaults = self._freshness_defaults_for_scheduler_tick(sched_sec=current_tick)
+        next_defaults = self._freshness_defaults_for_scheduler_tick(sched_sec=persisted_tick)
+
+        changed = False
+        for key in ("user_ws_stale_sec", "market_data_stale_sec", "watchdog_interval_sec"):
+            if key in migrated:
+                current_value = _to_float(migrated.get(key), default=current_defaults[key])
+                if abs(current_value - current_defaults[key]) >= 1e-9:
+                    continue
+            migrated[key] = next_defaults[key]
+            changed = True
         return migrated, changed
 
     def _sync_kernel_runtime_overrides(self) -> None:

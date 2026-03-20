@@ -3543,6 +3543,80 @@ def test_control_api_restores_kernel_runtime_overrides_after_restart(
     assert kernel2.symbols == ["BTCUSDT", "ETHUSDT"]
 
 
+def test_persisted_scheduler_tick_migrates_default_stale_thresholds_on_restart(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    sqlite_path = str(tmp_path / "control_scheduler_threshold_restart.sqlite3")
+    cfg.behavior.storage.sqlite_path = sqlite_path
+
+    storage1 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage1.ensure_schema()
+    state_store1 = EngineStateStore(storage=storage1, mode=cfg.mode)
+    event_bus1 = EventBus()
+    scheduler1 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus1)
+    ops1 = OpsController(state_store=state_store1, exchange=None)
+    kernel1 = build_default_kernel(
+        state_store=state_store1,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller1 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store1,
+        ops=ops1,
+        kernel=kernel1,
+        scheduler=scheduler1,
+        event_bus=event_bus1,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+    controller1._risk["scheduler_tick_sec"] = 600
+    controller1._risk["user_ws_stale_sec"] = 120.0
+    controller1._risk["market_data_stale_sec"] = 60.0
+    controller1._risk["watchdog_interval_sec"] = 30.0
+    controller1._persist_risk_config()
+
+    storage2 = RuntimeStorage(sqlite_path=sqlite_path)
+    storage2.ensure_schema()
+    state_store2 = EngineStateStore(storage=storage2, mode=cfg.mode)
+    event_bus2 = EventBus()
+    scheduler2 = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus2)
+    ops2 = OpsController(state_store=state_store2, exchange=None)
+    kernel2 = build_default_kernel(
+        state_store=state_store2,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    controller2 = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store2,
+        ops=ops2,
+        kernel=kernel2,
+        scheduler=scheduler2,
+        event_bus=event_bus2,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    risk = controller2.get_risk()
+    assert risk["scheduler_tick_sec"] == 600
+    assert risk["user_ws_stale_sec"] == 2400.0
+    assert risk["market_data_stale_sec"] == 1200.0
+    assert risk["watchdog_interval_sec"] == 600.0
+
+
 def test_live_tick_does_not_preblock_multi_symbol_scan_when_live_position_exists(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
