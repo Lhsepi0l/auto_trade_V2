@@ -101,6 +101,9 @@ def build_operator_console_payload(
         status.get("boot_recovery", {}) if isinstance(status.get("boot_recovery"), dict) else {}
     )
     report = status.get("report", {}) if isinstance(status.get("report"), dict) else {}
+    notification = (
+        status.get("notification", {}) if isinstance(status.get("notification"), dict) else {}
+    )
 
     state = str(engine.get("state") or "-")
     last_action = str(scheduler.get("last_action") or "-")
@@ -260,6 +263,22 @@ def build_operator_console_payload(
             "notifier_error": report.get("notifier_error"),
             "summary": report.get("summary"),
             "detail": dict(report.get("detail") or {}),
+        },
+        "notification": {
+            "enabled": bool(notification.get("enabled")),
+            "provider": notification.get("provider"),
+            "periodic_status_enabled": bool(notification.get("periodic_status_enabled")),
+            "last_status": notification.get("last_status"),
+            "last_attempt_at": notification.get("last_attempt_at"),
+            "last_sent_at": notification.get("last_sent_at"),
+            "last_event_type": notification.get("last_event_type"),
+            "last_title": notification.get("last_title"),
+            "last_body_preview": notification.get("last_body_preview"),
+            "last_error": notification.get("last_error"),
+            "last_dedupe_key": notification.get("last_dedupe_key"),
+            "last_suppressed_count": int(
+                _to_float(notification.get("last_suppressed_count"), default=0.0)
+            ),
         },
         "guidance": dict(resolved_guidance),
         "capital": {

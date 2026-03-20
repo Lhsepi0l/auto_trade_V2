@@ -79,6 +79,20 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
                 "summary": "[DAILY_REPORT]\n일자: 2026-03-19",
                 "detail": {"entries": 1, "closes": 0},
             },
+            "notification": {
+                "enabled": True,
+                "provider": "ntfy",
+                "periodic_status_enabled": False,
+                "last_status": "sent",
+                "last_attempt_at": "2026-03-19T00:09:00+00:00",
+                "last_sent_at": "2026-03-19T00:09:00+00:00",
+                "last_event_type": "risk_trip",
+                "last_title": "자동 리스크 트립",
+                "last_body_preview": "일일 손실 제한 도달 / normal | shadow/testnet",
+                "last_error": None,
+                "last_dedupe_key": "risk_trip:daily_loss_limit",
+                "last_suppressed_count": 0,
+            },
             "user_ws_stale": True,
             "market_data_stale": False,
             "recovery_required": False,
@@ -101,6 +115,8 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
     assert payload["controls"]["preset_current_state_label"] == "현재 active 프리셋 개념 없음 (일회성 적용)"
     assert payload["recovery"]["startup_reconcile_ok"] is True
     assert payload["report"]["status"] == "success"
+    assert payload["notification"]["provider"] == "ntfy"
+    assert payload["notification"]["last_title"] == "자동 리스크 트립"
     assert payload["guidance"]["panel_scope"]
     assert payload["risk_forms"]["margin_budget"]["margin_use_pct"] == 0.8
     assert payload["risk_forms"]["trailing"]["trailing_mode"] == "PCT"

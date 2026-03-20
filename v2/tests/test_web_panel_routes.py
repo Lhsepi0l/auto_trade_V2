@@ -80,6 +80,7 @@ def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore
     assert "risk_forms" in json_payload
     assert "recent_result" in json_payload
     assert "report" in json_payload
+    assert "notification" in json_payload
     assert "guidance" in json_payload
     assert "preset_options" in json_payload["controls"]
     assert "preset_current_state_label" in json_payload["controls"]

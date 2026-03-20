@@ -18,7 +18,7 @@ from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
 from v2.exchange import BinanceRESTError
 from v2.exchange.types import ResyncSnapshot
-from v2.notify import Notifier
+from v2.notify import NotificationMessage, Notifier
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 
@@ -769,9 +769,11 @@ def test_control_api_report_reflects_notifier_send_result(tmp_path) -> None:  # 
         rest_client=None,
     )
     notifier = Notifier(
-        enabled=True, provider="discord", webhook_url="https://discord.test/webhook"
+        enabled=True,
+        provider="ntfy",
+        ntfy_topic="ops-alerts",
     )
-    notifier.send_with_result = MagicMock(  # type: ignore[method-assign]
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=False, error="ConnectError: boom")
     )
 
@@ -794,6 +796,347 @@ def test_control_api_report_reflects_notifier_send_result(tmp_path) -> None:  # 
     assert payload["notifier_enabled"] is True
     assert payload["notifier_sent"] is False
     assert payload["notifier_error"] == "ConnectError: boom"
+
+
+def test_control_api_start_emits_ntfy_engine_start_notification(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_start.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller.start()
+
+    assert out["state"] == "RUNNING"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "엔진 시작"
+    assert cfg.profile in notification.body
+    controller.stop(emit_event=False)
+
+
+def test_control_api_manual_tick_emits_attention_notification_for_blocked_result(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_manual_tick.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelBlocked:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="blocked",
+                reason="confidence_below_threshold",
+                candidate=None,
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelBlocked(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller.tick_scheduler_now()
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "blocked"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "즉시 판단 차단"
+    assert "최소 신호 점수 미달" in notification.body
+
+
+def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_tick.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoCandidate:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="volume_missing",
+                candidate=None,
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoCandidate(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller.tick_scheduler_now()
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "no_candidate"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "즉시 판단 대기"
+    assert "거래량 조건 미충족" in notification.body
+
+
+def test_control_api_runtime_cycle_emits_scheduler_no_candidate_notification_for_ntfy(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_runtime_cycle.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoCandidate:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="volume_missing",
+                candidate=None,
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoCandidate(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "no_candidate"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "실시간 판단 대기"
+    assert "거래량 조건 미충족" in notification.body
+
+
+def test_scheduler_cycle_notification_respects_notify_interval_window(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_window.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    class _KernelNoCandidate:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="no_candidate",
+                reason="volume_missing",
+                candidate=None,
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoCandidate(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    controller._risk["notify_interval_sec"] = 600
+    notifier.send_notification.reset_mock()
+
+    first = controller._run_cycle_once_locked(trigger_source="scheduler")
+    second = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert notifier.send_notification.call_count == 1
+    events = controller.state_store.runtime_storage().list_operator_events(limit=20)
+    cycle_events = [row for row in events if row.get("event_type") == "cycle_result"]
+    assert len(cycle_events) == 1
+
+
+def test_control_api_stale_transition_emits_ntfy_attention_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller.notifier = notifier
+    notifier.send_notification.reset_mock()
+
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=95.0,
+    )
+
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "시장 데이터 상태"
+    assert "stale 감지" in notification.body
+
+
+def test_control_api_stale_transition_suppresses_duplicate_ntfy_alert(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    now = {"value": 100.0}
+
+    monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier._send_ntfy = MagicMock()  # type: ignore[method-assign]
+    controller.notifier = notifier
+
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=95.0,
+    )
+    now["value"] = 120.0
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=115.0,
+    )
+
+    assert notifier._send_ntfy.call_count == 1
+    snapshot = controller._status_snapshot()["notification"]
+    assert snapshot["last_status"] == "suppressed"
+    assert snapshot["last_event_type"] == "stale_transition"
+    assert snapshot["last_suppressed_count"] == 1
+
+
+def test_control_api_auto_risk_trip_emits_ntfy_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller.notifier = notifier
+    notifier.send_notification.reset_mock()
+
+    controller._maybe_apply_auto_risk_circuit(
+        KernelCycleResult(
+            state="blocked",
+            reason="daily_loss_limit",
+            candidate=None,
+        )
+    )
+
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "자동 리스크 트립"
+    assert "일일 손실 제한 도달" in notification.body
 
 
 def test_control_api_set_notify_interval_emits_immediate_status(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -1769,8 +2112,10 @@ def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True)
-    notifier.send = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
 
     controller = build_runtime_controller(
         cfg=cfg,
@@ -1782,16 +2127,18 @@ def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
         notifier=notifier,
         rest_client=_AlgoRESTTakeProfit(),
     )
+    notifier.send_notification.reset_mock()
 
     controller._poll_brackets_once()
 
     rows = storage.list_bracket_states()
     assert rows[0]["state"] == "CLEANED"
-    assert notifier.send.call_count == 1
-    message = str(notifier.send.call_args[0][0])
-    assert "익절 완료!" in message
-    assert "BTCUSDT" in message
-    assert "+5.2500 USDT" in message
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "익절 완료!"
+    assert "BTCUSDT" in notification.body
+    assert "+5.2500 USDT" in notification.body
 
 
 def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
@@ -1849,8 +2196,10 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True)
-    notifier.send = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
 
     controller = build_runtime_controller(
         cfg=cfg,
@@ -1867,9 +2216,12 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
 
     rows = storage.list_bracket_states()
     assert rows[0]["state"] == "CLEANED"
-    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
     assert any(
-        "손절 완료!" in message and "BTCUSDT" in message and "-1.7500 USDT" in message
+        isinstance(message, NotificationMessage)
+        and message.title == "손절 완료!"
+        and "BTCUSDT" in message.body
+        and "-1.7500 USDT" in message.body
         for message in messages
     )
 
@@ -1911,8 +2263,10 @@ def test_control_api_sl_symbol_flatten_cooldown_scopes_by_symbol(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True)
-    notifier.send = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
 
     controller = build_runtime_controller(
         cfg=cfg,
@@ -1929,7 +2283,12 @@ def test_control_api_sl_symbol_flatten_cooldown_scopes_by_symbol(
 
     calls: list[str] = []
 
-    async def _fake_close_position(*, symbol: str) -> dict[str, object]:
+    async def _fake_close_position(
+        *,
+        symbol: str,
+        notify_reason: str = "forced_close",
+    ) -> dict[str, object]:
+        _ = notify_reason
         calls.append(symbol)
         return {"symbol": symbol, "detail": {}}
 
@@ -2000,8 +2359,10 @@ def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True)
-    notifier.send = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
 
     controller = build_runtime_controller(
         cfg=cfg,
@@ -2016,8 +2377,13 @@ def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
 
     controller._poll_brackets_once()
 
-    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
-    assert any("익절 완료!" in message and "+0.5631 USDT" in message for message in messages)
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
+    assert any(
+        isinstance(message, NotificationMessage)
+        and message.title == "익절 완료!"
+        and "+0.5631 USDT" in message.body
+        for message in messages
+    )
 
 
 def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pnl(
@@ -2075,8 +2441,10 @@ def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pn
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True)
-    notifier.send = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
 
     controller = build_runtime_controller(
         cfg=cfg,
@@ -2091,8 +2459,13 @@ def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pn
 
     controller._poll_brackets_once()
 
-    messages = [str(call.args[0]) for call in notifier.send.call_args_list]
-    assert any("손익없음 청산!" in message and "0.0000 USDT" in message for message in messages)
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
+    assert any(
+        isinstance(message, NotificationMessage)
+        and message.title == "손익없음 청산!"
+        and "0.0000 USDT" in message.body
+        for message in messages
+    )
 
 
 def test_control_api_bracket_poller_cleans_open_algos_when_position_flat(
@@ -3568,6 +3941,132 @@ def test_live_user_stream_disconnect_resync_and_event_flow_update_state(tmp_path
         asyncio.run(controller.stop_live_services())
 
     assert manager.stopped is True
+
+
+def test_live_controller_boot_does_not_emit_transient_not_ready_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_live_boot_notify.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _ReconREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, Any]]:
+            _ = symbol
+            return []
+
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            _ = params
+            return {}
+
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=False,
+        rest_client=_ReconREST(),
+    )
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    _ = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=_ReconREST(),
+        user_stream_manager=None,
+        market_data_state={
+            "last_market_data_at": None,
+            "last_market_symbol_count": 0,
+            "last_market_data_source_ok_at": None,
+            "last_market_data_source_fail_at": None,
+            "last_market_data_source_error": None,
+        },
+        runtime_lock_active=True,
+    )
+
+    assert notifier.send_notification.call_count == 0
+
+
+def test_start_live_services_does_not_emit_transient_not_ready_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _ReconREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _FakeUserStreamManager:
+        def __init__(self) -> None:
+            self.started = False
+
+        def start(  # type: ignore[no-untyped-def]
+            self, *, on_event=None, on_resync=None, on_disconnect=None, on_private_ok=None
+        ):
+            _ = on_event
+            _ = on_resync
+            _ = on_disconnect
+            _ = on_private_ok
+            self.started = True
+
+        async def stop(self) -> None:
+            return None
+
+    manager = _FakeUserStreamManager()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_ReconREST(),
+        user_stream_manager=manager,
+        market_data_state={
+            "last_market_data_at": None,
+            "last_market_symbol_count": 0,
+            "last_market_data_source_ok_at": None,
+            "last_market_data_source_fail_at": None,
+            "last_market_data_source_error": None,
+        },
+    )
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller.notifier = notifier
+    notifier.send_notification.reset_mock()
+
+    asyncio.run(controller.start_live_services())
+
+    assert manager.started is True
+    assert notifier.send_notification.call_count == 0
 
 
 def test_start_live_services_primes_market_data_before_first_tick(tmp_path) -> None:  # type: ignore[no-untyped-def]

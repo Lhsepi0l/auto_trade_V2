@@ -10,7 +10,7 @@ from v2.config.loader import EffectiveConfig
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
-from v2.notify import Notifier
+from v2.notify import build_notifier_from_config
 from v2.ops import create_ops_http_app
 from v2.runtime.boot import build_control_balance_rest_client
 
@@ -72,11 +72,7 @@ def serve_control_http(
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
                 state_store.set(mode=cfg.mode, status="STOPPED")
 
-                notifier = Notifier(
-                    enabled=cfg.behavior.notify.enabled,
-                    provider=cfg.behavior.notify.provider,
-                    webhook_url=cfg.secrets.notify_webhook_url,
-                )
+                notifier = build_notifier_from_config(cfg)
                 market_data_state: dict[str, Any] = {
                     "last_market_data_at": None,
                     "last_market_symbol_count": 0,

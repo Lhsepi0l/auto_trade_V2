@@ -68,7 +68,7 @@ class OpsConfig(BaseModel):
 
 class NotifyConfig(BaseModel):
     enabled: bool = False
-    provider: Literal["none", "discord"] = "none"
+    provider: Literal["none", "discord", "ntfy"] = "none"
 
 
 class BehaviorConfig(BaseModel):
@@ -127,6 +127,12 @@ class SecretConfig(BaseModel):
     binance_api_key: str | None = None
     binance_api_secret: str | None = None
     notify_webhook_url: str | None = None
+    ntfy_enabled: bool | None = None
+    ntfy_base_url: str | None = None
+    ntfy_topic: str | None = None
+    ntfy_token: str | None = None
+    ntfy_tags: tuple[str, ...] = ()
+    ntfy_priority: str | None = None
 
     @staticmethod
     def _none_if_blank(value: str | None) -> str | None:
@@ -135,6 +141,26 @@ class SecretConfig(BaseModel):
         text = str(value).strip()
         return text if text else None
 
+    @staticmethod
+    def _optional_bool(value: str | None) -> bool | None:
+        text = SecretConfig._none_if_blank(value)
+        if text is None:
+            return None
+        low = text.lower()
+        if low in {"1", "true", "yes", "y", "on"}:
+            return True
+        if low in {"0", "false", "no", "n", "off"}:
+            return False
+        return None
+
+    @staticmethod
+    def _csv_tuple(value: str | None) -> tuple[str, ...]:
+        text = SecretConfig._none_if_blank(value)
+        if text is None:
+            return ()
+        values = [item.strip() for item in text.split(",") if item.strip()]
+        return tuple(values)
+
     @classmethod
     def from_env(cls, env_map: dict[str, str] | None = None) -> "SecretConfig":
         source = env_map if env_map is not None else dict(os.environ)
@@ -142,6 +168,12 @@ class SecretConfig(BaseModel):
             binance_api_key=cls._none_if_blank(source.get("BINANCE_API_KEY")),
             binance_api_secret=cls._none_if_blank(source.get("BINANCE_API_SECRET")),
             notify_webhook_url=cls._none_if_blank(source.get("DISCORD_WEBHOOK_URL")),
+            ntfy_enabled=cls._optional_bool(source.get("NTFY_ENABLED")),
+            ntfy_base_url=cls._none_if_blank(source.get("NTFY_BASE_URL")),
+            ntfy_topic=cls._none_if_blank(source.get("NTFY_TOPIC")),
+            ntfy_token=cls._none_if_blank(source.get("NTFY_TOKEN")),
+            ntfy_tags=cls._csv_tuple(source.get("NTFY_TAGS")),
+            ntfy_priority=cls._none_if_blank(source.get("NTFY_PRIORITY")),
         )
 
 

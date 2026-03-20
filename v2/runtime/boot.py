@@ -14,7 +14,8 @@ from v2.control import build_runtime_controller
 from v2.core import Event, EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.exchange import BackoffPolicy, BinanceRESTClient
-from v2.notify import Notifier
+from v2.notify import RuntimeNotificationContext, build_notifier_from_config
+from v2.notify.runtime_events import build_runtime_boot_notification
 from v2.risk import KillSwitch, RiskManager
 from v2.storage import RuntimeStorage
 from v2.tpsl import BracketConfig, BracketPlanner
@@ -158,11 +159,7 @@ def run_runtime_preflight(cfg: EffectiveConfig, *, host: str, port: int) -> int:
                 state_provider=runtime_state_provider,
             ):
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
-            notifier = Notifier(
-                enabled=cfg.behavior.notify.enabled,
-                provider=cfg.behavior.notify.provider,
-                webhook_url=cfg.secrets.notify_webhook_url,
-            )
+            notifier = build_notifier_from_config(cfg)
             market_data_state: dict[str, Any] = {
                 "last_market_data_at": None,
                 "last_market_symbol_count": 0,
@@ -304,12 +301,16 @@ def boot_runtime(cfg: EffectiveConfig, *, loop_enabled: bool = False, max_cycles
             )
             _ = brackets.levels(entry_price=100.0)
 
-            notifier = Notifier(
-                enabled=cfg.behavior.notify.enabled,
-                provider=cfg.behavior.notify.provider,
-                webhook_url=cfg.secrets.notify_webhook_url,
+            notifier = build_notifier_from_config(cfg)
+            _ = notifier.send_notification(
+                build_runtime_boot_notification(
+                    context=RuntimeNotificationContext(
+                        profile=cfg.profile,
+                        mode=cfg.mode,
+                        env=cfg.env,
+                    )
+                )
             )
-            notifier.send("v2 boot completed")
 
             journal_logger = None
             enabled_strategies = [

@@ -65,6 +65,13 @@ from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.exchange.types import ResyncSnapshot
 from v2.notify import Notifier
+from v2.notify.runtime_events import (
+    RuntimeNotificationContext,
+    build_bracket_exit_notification,
+    build_position_close_notification,
+    build_report_notification,
+    build_runtime_event_notification,
+)
 from v2.ops import OpsController
 from v2.strategies.ra_2026_alpha_v2 import RA2026AlphaV2Params
 from v2.tpsl import BracketConfig, BracketPlanner, BracketService
@@ -253,7 +260,14 @@ class RuntimeController:
         self._dirty_restart_detected = bool(dirty_restart_detected)
         if (not self.notifier.enabled) and str(self.notifier.webhook_url or "").strip():
             self.notifier.enabled = True
+        if (not self.notifier.enabled) and str(self.notifier.ntfy_topic or "").strip():
+            self.notifier.enabled = True
         if (
+            str(self.notifier.provider or "none").strip().lower() == "none"
+            and str(self.notifier.ntfy_topic or "").strip()
+        ):
+            self.notifier.provider = "ntfy"
+        elif (
             str(self.notifier.provider or "none").strip().lower() == "none"
             and str(self.notifier.webhook_url or "").strip()
         ):
@@ -299,6 +313,8 @@ class RuntimeController:
         self._watchdog_state: dict[str, Any] = {}
         self._cycle_seq = 0
         self._cycle_done_seq = 0
+        self._last_scheduler_cycle_event_mono: float | None = None
+        self._boot_notification_muted = True
         self._state_uncertain = False
         self._state_uncertain_reason: str | None = None
         self._startup_reconcile_ok: bool | None = None
@@ -371,7 +387,8 @@ class RuntimeController:
             },
         )
         self._update_stale_transitions()
-        self._maybe_log_ready_transition()
+        self._boot_notification_muted = False
+        self._maybe_log_ready_transition(notify=False)
         self._log_event(
             "controller_initialized",
             dirty_restart_detected=self._dirty_restart_detected,
@@ -422,7 +439,7 @@ class RuntimeController:
             self._log_event("recovery_transition", recovery_required=False, reason=reason)
             self._maybe_log_ready_transition()
 
-    def _log_event(self, event: str, **fields: Any) -> None:
+    def _log_event(self, event: str, *, notify: bool = True, **fields: Any) -> None:
         ops_state = self.state_store.get().operational
         logger.info(
             event,
@@ -435,6 +452,8 @@ class RuntimeController:
                 **fields,
             },
         )
+        if not self._should_emit_operator_event(event=event, fields=fields):
+            return
         payload = build_operator_event_payload(event=event, fields=fields)
         if payload is not None:
             self.state_store.runtime_storage().append_operator_event(
@@ -450,6 +469,37 @@ class RuntimeController:
                 event_time=str(payload["event_time"]),
                 context=dict(payload.get("context") or {}),
             )
+        notification = build_runtime_event_notification(
+            event=event,
+            fields=fields,
+            context=self._notification_context(),
+        )
+        if notification is not None and notify and not self._boot_notification_muted:
+            _ = self.notifier.send_notification(notification)
+
+    def _should_emit_operator_event(self, *, event: str, fields: dict[str, Any]) -> bool:
+        if str(event or "").strip() != "cycle_result":
+            return True
+        if str(fields.get("trigger_source") or "").strip().lower() != "scheduler":
+            return True
+
+        interval_sec = max(
+            1.0,
+            float(_to_float(fields.get("notify_interval_sec"), default=30.0)),
+        )
+        now_mono = time.monotonic()
+        last_mono = self._last_scheduler_cycle_event_mono
+        if last_mono is not None and (now_mono - last_mono) < interval_sec:
+            return False
+        self._last_scheduler_cycle_event_mono = now_mono
+        return True
+
+    def _notification_context(self) -> RuntimeNotificationContext:
+        return RuntimeNotificationContext(
+            profile=self.cfg.profile,
+            mode=self.cfg.mode,
+            env=self.cfg.env,
+        )
 
     def _freshness_snapshot(self) -> dict[str, Any]:
         return build_freshness_snapshot(self)
@@ -533,13 +583,14 @@ class RuntimeController:
 
         return gate_snapshot(self, probe_private_rest=probe_private_rest)
 
-    def _maybe_log_ready_transition(self) -> None:
+    def _maybe_log_ready_transition(self, *, notify: bool = True, force: bool = False) -> None:
         gate = self._gate_snapshot()
         ready = bool(gate["ready"])
-        if self._last_ready_state is None or self._last_ready_state != ready:
+        if self._last_ready_state is None or self._last_ready_state != ready or force:
             self._last_ready_state = ready
             self._log_event(
                 "ready_transition",
+                notify=notify,
                 ready=ready,
                 recovery_required=bool(self._recovery_required),
                 submission_recovery_ok=bool(gate["submission_recovery_ok"]),
@@ -1075,8 +1126,6 @@ class RuntimeController:
         self._risk["last_auto_risk_reason"] = cycle.reason
         self._risk["last_auto_risk_at"] = _utcnow_iso()
         self._log_event("risk_trip", reason=cycle.reason)
-        self.notifier.send(f"자동 리스크 차단: {cycle.reason}")
-
         if _to_bool(self._risk.get("auto_safe_mode_on_risk"), default=True):
             self.ops.safe_mode()
         elif _to_bool(self._risk.get("auto_pause_on_risk"), default=True):
@@ -1092,7 +1141,10 @@ class RuntimeController:
         for symbol in sorted(sym for sym in symbols if sym):
             try:
                 _ = _run_async_blocking(
-                    lambda s=symbol: self.close_position(symbol=s),
+                    lambda s=symbol: self.close_position(
+                        symbol=s,
+                        notify_reason="auto_risk_close",
+                    ),
                     timeout_sec=30.0,
                 )
             except Exception:  # noqa: BLE001
@@ -1366,9 +1418,12 @@ class RuntimeController:
         self._watchdog_state["last_sl_flatten_triggered_at"] = _utcnow_iso()
         try:
             _ = _run_async_blocking(
-                lambda s=symbol: self.close_position(symbol=s), timeout_sec=30.0
+                lambda s=symbol: self.close_position(
+                    symbol=s,
+                    notify_reason="stoploss_forced_close",
+                ),
+                timeout_sec=30.0,
             )
-            self.notifier.send(f"손절 감지: {symbol} / 해당 심볼 정리 실행")
         except Exception:  # noqa: BLE001
             logger.exception("sl_symbol_flatten_failed symbol=%s", symbol)
         finally:
@@ -1565,23 +1620,15 @@ class RuntimeController:
         normalized_realized = realized
         if realized is not None and abs(realized) < 0.00005:
             normalized_realized = 0.0
-        if normalized_realized is None:
-            headline = "익절 완료!" if outcome == "TP" else "손절 완료!"
-        elif normalized_realized > 0.0:
-            headline = "익절 완료!"
-        elif normalized_realized < 0.0:
-            headline = "손절 완료!"
-        else:
-            headline = "손익없음 청산!"
-        if normalized_realized is None:
-            message = f"{headline} {symbol} 실현PnL 집계중"
-        elif normalized_realized == 0.0:
-            message = f"{headline} {symbol} 0.0000 USDT"
-        else:
-            message = f"{headline} {symbol} {self._fmt_signed(normalized_realized)} USDT"
-
         try:
-            self.notifier.send(message)
+            _ = self.notifier.send_notification(
+                build_bracket_exit_notification(
+                    symbol=symbol,
+                    outcome=outcome,
+                    realized_pnl=normalized_realized,
+                    context=self._notification_context(),
+                )
+            )
         except Exception:  # noqa: BLE001
             logger.exception("bracket_exit_notify_failed symbol=%s outcome=%s", symbol, outcome)
 
@@ -1708,10 +1755,10 @@ class RuntimeController:
         self._bracket_thread = threading.Thread(target=_worker, daemon=True)
         self._bracket_thread.start()
 
-    def _run_cycle_once_locked(self) -> dict[str, Any]:
+    def _run_cycle_once_locked(self, *, trigger_source: str = "scheduler") -> dict[str, Any]:
         from v2.control.cycle import run_cycle_once_locked
 
-        return run_cycle_once_locked(self)
+        return run_cycle_once_locked(self, trigger_source=trigger_source)
 
     def _status_summary(self) -> str:
         return build_status_summary(self)
@@ -1774,6 +1821,8 @@ class RuntimeController:
         return translate_status_token(raw, labels)
 
     def _emit_status_update(self, *, force: bool = False) -> bool:
+        if not self.notifier.supports_periodic_status():
+            return False
         notify_interval = max(
             1, int(_to_float(self._risk.get("notify_interval_sec"), default=30.0))
         )
@@ -1813,7 +1862,7 @@ class RuntimeController:
             with self._lock:
                 if not self._running:
                     break
-                self._run_cycle_once_locked()
+                self._run_cycle_once_locked(trigger_source="scheduler")
             self._thread_stop.wait(timeout=max(0.2, float(self.scheduler.tick_seconds)))
 
     def _active_worker_thread_locked(self) -> threading.Thread | None:
@@ -1855,7 +1904,7 @@ class RuntimeController:
         thread_to_start.start()
         return result
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, *, emit_event: bool = True) -> dict[str, Any]:
         thread_to_join: threading.Thread | None = None
         with self._lock:
             self._running = False
@@ -1863,7 +1912,8 @@ class RuntimeController:
             self.ops.pause()
             self.state_store.set(status="PAUSED")
             thread_to_join = self._thread
-            self._log_event("runtime_stop", running=False)
+            if emit_event:
+                self._log_event("runtime_stop", running=False)
             state = capture_runtime_state(self.state_store)
             result = build_state_response(runtime_state=state)
         self._join_worker_thread(thread_to_join)
@@ -1871,7 +1921,7 @@ class RuntimeController:
         return result
 
     async def panic(self) -> dict[str, Any]:
-        self.stop()
+        self.stop(emit_event=False)
         self.ops.safe_mode()
         self.state_store.set(status="KILLED")
         self._log_event("panic_triggered", action="panic")
@@ -1881,6 +1931,13 @@ class RuntimeController:
             "flatten_requested",
             action="panic_flatten",
             symbol=result.symbol,
+        )
+        _ = self.notifier.send_notification(
+            build_position_close_notification(
+                symbol=result.symbol,
+                reason="panic_close",
+                context=self._notification_context(),
+            )
         )
         state = capture_runtime_state(self.state_store)
         self._report_stats["closes"] += 1
@@ -2047,7 +2104,7 @@ class RuntimeController:
         if self._lock.acquire(blocking=False):
             try:
                 self._auto_reconcile_if_recovery_required(reason="operator_tick")
-                return self._run_cycle_once_locked()
+                return self._run_cycle_once_locked(trigger_source="manual_tick")
             finally:
                 self._lock.release()
 
@@ -2065,7 +2122,7 @@ class RuntimeController:
                     )
                 if self._lock.acquire(timeout=0.1):
                     try:
-                        return self._run_cycle_once_locked()
+                        return self._run_cycle_once_locked(trigger_source="manual_tick")
                     finally:
                         self._lock.release()
                 time.sleep(0.1)
@@ -2080,7 +2137,7 @@ class RuntimeController:
 
         if self._lock.acquire(timeout=6.0):
             try:
-                return self._run_cycle_once_locked()
+                return self._run_cycle_once_locked(trigger_source="manual_tick")
             finally:
                 self._lock.release()
         snapshot = apply_tick_busy_cycle_state(self._last_cycle, finished_at=_utcnow_iso())
@@ -2104,7 +2161,12 @@ class RuntimeController:
             reported_at=_utcnow_iso(),
         )
         message = self._format_daily_report_message(payload)
-        result = self.notifier.send_with_result(message)
+        result = self.notifier.send_notification(
+            build_report_notification(
+                payload=payload,
+                context=self._notification_context(),
+            )
+        )
         payload["notifier_sent"] = bool(result.sent)
         if result.error and result.error != "disabled":
             payload["notifier_error"] = result.error
@@ -2144,13 +2206,25 @@ class RuntimeController:
             self._persist_risk_config()
             return build_risk_response(capture_public_risk_config(self))
 
-    async def close_position(self, *, symbol: str) -> dict[str, Any]:
+    async def close_position(
+        self,
+        *,
+        symbol: str,
+        notify_reason: str = "forced_close",
+    ) -> dict[str, Any]:
         self._log_event("flatten_requested", action="close_position", symbol=symbol.upper())
         result = await self.ops.flatten(symbol=symbol)
+        _ = self.notifier.send_notification(
+            build_position_close_notification(
+                symbol=result.symbol,
+                reason=notify_reason,
+                context=self._notification_context(),
+            )
+        )
         self._report_stats["closes"] += 1
         return build_trade_close_response(flatten_result=result)
 
-    async def close_all(self) -> dict[str, Any]:
+    async def close_all(self, *, notify_reason: str = "forced_close") -> dict[str, Any]:
         self._log_event("flatten_requested", action="close_all")
         symbols = set(
             self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]
@@ -2159,7 +2233,7 @@ class RuntimeController:
             symbols.add(sym)
         details: list[dict[str, Any]] = []
         for symbol in sorted({str(s).upper() for s in symbols if str(s).strip()}):
-            details.append(await self.close_position(symbol=symbol))
+            details.append(await self.close_position(symbol=symbol, notify_reason=notify_reason))
         return build_trade_close_all_response(results=details)
 
     def clear_cooldown(self) -> dict[str, Any]:

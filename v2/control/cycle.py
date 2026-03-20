@@ -87,7 +87,11 @@ def is_live_reentry_blocked(controller: Any) -> bool:
     )
 
 
-def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
+def run_cycle_once_locked(
+    controller: Any,
+    *,
+    trigger_source: str = "scheduler",
+) -> dict[str, Any]:
     controller._cycle_seq += 1
     cycle_seq = controller._cycle_seq
     controller._last_cycle["tick_started_at"] = _utcnow_iso()
@@ -317,6 +321,10 @@ def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
             candidate_side=(
                 getattr(cycle.candidate, "side", None) if cycle.candidate is not None else None
             ),
+            notify_interval_sec=int(
+                _to_float(controller._risk.get("notify_interval_sec"), default=30.0)
+            ),
+            trigger_source=trigger_source,
             event_time=controller._last_cycle["tick_finished_at"],
         )
         ok = True
@@ -343,6 +351,10 @@ def run_cycle_once_locked(controller: Any) -> dict[str, Any]:
             "cycle_result",
             action="error",
             reason=error_message,
+            notify_interval_sec=int(
+                _to_float(controller._risk.get("notify_interval_sec"), default=30.0)
+            ),
+            trigger_source=trigger_source,
             event_time=controller._last_cycle["tick_finished_at"],
         )
         ok = False
