@@ -4600,6 +4600,45 @@ def test_readyz_fails_for_uncertainty_and_stale_freshness(tmp_path) -> None:  # 
     assert stale_market.json()["market_data_stale"] is True
 
 
+def test_readyz_stays_ready_with_fresh_user_stream_even_if_reconcile_age_is_old(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_HealthyREST(),
+        market_data_state={
+            "last_market_data_at": now_iso,
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": now_iso,
+        },
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = now_iso
+    controller._last_private_stream_ok_at = now_iso
+    controller.state_store.get().last_reconcile_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=600)
+    ).isoformat()
+
+    readyz = controller._readyz_snapshot()
+    readiness = controller._live_readiness_snapshot()
+
+    assert readyz["ready"] is True
+    assert readiness["checks"]["startup_reconcile"]["status"] == "pass"
+    assert readiness["checks"]["startup_reconcile"]["detail"]["reconcile_age_ok"] is False
+    assert readiness["checks"]["startup_reconcile"]["detail"]["reconcile_live_sync_ok"] is True
+
+
 def test_readyz_fails_when_bracket_recovery_fails(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class _HealthyREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:

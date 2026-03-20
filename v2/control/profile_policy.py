@@ -239,6 +239,8 @@ def build_live_readiness_snapshot(
             "last_reconcile_at": gate["freshness"]["last_reconcile_at"],
             "age_sec": gate["freshness"]["reconcile_age_sec"],
             "max_age_sec": gate["freshness"]["reconcile_max_age_sec"],
+            "reconcile_age_ok": bool(gate.get("reconcile_age_ok")),
+            "reconcile_live_sync_ok": bool(gate.get("reconcile_live_sync_ok")),
         },
     )
     _set_check(

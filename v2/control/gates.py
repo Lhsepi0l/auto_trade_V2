@@ -13,17 +13,23 @@ def gate_snapshot(controller: Any, *, probe_private_rest: bool = False) -> dict[
     if probe_private_rest and controller.cfg.mode == "live":
         controller._fetch_live_usdt_balance()
     last_reconcile_at = freshness["last_reconcile_at"]
-    last_reconcile_ok = controller.cfg.mode != "live" or (
-        controller._startup_reconcile_ok is True
-        and last_reconcile_at is not None
-        and freshness["reconcile_age_sec"] is not None
-        and freshness["reconcile_age_sec"] <= freshness["reconcile_max_age_sec"]
-    )
     user_ws_ok = controller.cfg.mode != "live" or (
         controller._user_stream_started
         and freshness["private_stream_seen"]
         and not freshness["user_ws_stale"]
     )
+    reconcile_age_ok = (
+        controller._startup_reconcile_ok is True
+        and last_reconcile_at is not None
+        and freshness["reconcile_age_sec"] is not None
+        and freshness["reconcile_age_sec"] <= freshness["reconcile_max_age_sec"]
+    )
+    reconcile_live_sync_ok = (
+        controller.cfg.mode == "live"
+        and controller._startup_reconcile_ok is True
+        and user_ws_ok
+    )
+    last_reconcile_ok = controller.cfg.mode != "live" or reconcile_age_ok or reconcile_live_sync_ok
     market_data_ok = controller.cfg.mode != "live" or (
         freshness["market_data_seen"] and not freshness["market_data_stale"]
     )
@@ -58,6 +64,8 @@ def gate_snapshot(controller: Any, *, probe_private_rest: bool = False) -> dict[
         "submission_recovery_ok": bool(submission_recovery["ok"]),
         "bracket_recovery_ok": bracket_recovery_ok,
         "last_reconcile_ok": last_reconcile_ok,
+        "reconcile_age_ok": reconcile_age_ok,
+        "reconcile_live_sync_ok": reconcile_live_sync_ok,
         "user_ws_ok": user_ws_ok,
         "market_data_ok": market_data_ok,
         "private_auth_ok": private_auth_ok,
