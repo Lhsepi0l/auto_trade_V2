@@ -63,6 +63,13 @@ def build_status_snapshot(controller: RuntimeController) -> dict[str, Any]:
     available_usdt = live_available_usdt if live_available_usdt is not None else effective_margin
     wallet_usdt = live_wallet_usdt if live_wallet_usdt is not None else effective_margin
     config = controller._public_risk_config()
+    ops_state = state.operational
+    if bool(ops_state.safe_mode):
+        ops_block_reason = "safe_mode"
+    elif bool(ops_state.paused):
+        ops_block_reason = "ops_paused"
+    else:
+        ops_block_reason = None
 
     return {
         "profile": controller.cfg.profile,
@@ -112,7 +119,7 @@ def build_status_snapshot(controller: RuntimeController) -> dict[str, Any]:
             "block_reason": (
                 controller._risk.get("last_strategy_block_reason")
                 or controller._risk.get("last_auto_risk_reason")
-                or ("ops_paused" if not controller.ops.can_open_new_entries() else None)
+                or ops_block_reason
             ),
         },
         "binance": {

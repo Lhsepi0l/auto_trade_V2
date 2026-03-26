@@ -52,3 +52,23 @@ def test_risk_aware_sizer_candidate_leverage_cap_does_not_inflate_margin_usage()
 
     assert sized.leverage == 10.0
     assert sized.notional == 200.0
+
+
+def test_risk_aware_sizer_preserves_operator_notional_when_strategy_risk_hints_exist() -> None:
+    sizer = RiskAwareSizer(fallback_notional=10.0, default_leverage=10.0)
+    sizer.set_leverage_config(symbol_leverage_map={"BTCUSDT": 10.0}, max_leverage=10.0)
+    candidate = Candidate(
+        symbol="BTCUSDT",
+        side="BUY",
+        score=1.0,
+        entry_price=100.0,
+        stop_distance_frac=0.012,
+        risk_per_trade_pct=0.012,
+    )
+    risk = RiskDecision(allow=True, reason="ok", max_notional=None)
+
+    sized = sizer.size(candidate=candidate, risk=risk, context=_context())
+
+    assert sized.leverage == 10.0
+    assert sized.notional == 100.0
+    assert sized.qty == 1.0

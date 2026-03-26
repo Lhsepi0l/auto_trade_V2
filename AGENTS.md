@@ -2576,3 +2576,46 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 최종 검증:
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 live 레버리지 미반영(실질 10 USDT 근처 진입) 버그 수정:
+  - 원인은 `v2/clean_room/defaults.py`의 `RiskAwareSizer`가 operator가 지정한 `margin budget x leverage` 목표 notional을 만든 뒤에도, 전략 payload의 `risk_per_trade_pct` / `stop_distance_frac`로 다시 더 작은 risk-budget notional로 clamp 하던 숨은 2차 sizing 경로였다.
+  - 이 때문에 예를 들어 target margin `10 USDT`, leverage `10x`, strategy `risk_per_trade_pct=0.012`, `stop_distance_frac=0.012` 조합에서는 실제 주문 notional이 `100 USDT`가 아니라 `10 USDT`로 잘려 레버리지 설정이 사실상 무시됐다.
+  - 대응으로 live runtime `RiskAwareSizer`에서는 operator/runtime budget-leverage sizing을 SSOT로 유지하고, 해당 전략 risk-hint clamp를 제거했다. runtime risk gate의 `size_factor`, `max_notional`, candidate `max_effective_leverage` cap은 그대로 유지된다.
+  - 회귀 테스트로 `v2/tests/test_dynamic_notional_sizer.py`에 strategy risk 힌트가 있어도 configured notional(`10 x 10 = 100 USDT`)이 보존되는 케이스를 추가했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_dynamic_notional_sizer.py` 통과
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'status_notional_tracks_effective_budget_leverage or syncs_kernel_runtime_overrides'` 통과
+    - `python -m pytest -q v2/tests/test_live_execution_service.py` 통과
+    - `python -m ruff check v2/clean_room/defaults.py v2/tests/test_dynamic_notional_sizer.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 상태 오표시 및 구조 진단:
+  - `v2/control/status_payloads.py`가 `ops.can_open_new_entries()==false`만 보면 실제 ops state 구분 없이 `ops_paused`로 뭉개서 반환하고 있어, 실상은 `safe_mode`인데 웹/operator 화면에 `운영 일시정지`로 잘못 보일 수 있었다.
+  - 대응으로 status snapshot의 `capital_snapshot.block_reason`은 이제 실제 ops state를 기준으로 `safe_mode`와 `ops_paused`를 구분해 반환한다.
+  - 회귀 테스트로 `v2/tests/test_control_api.py`에 safe mode 상태가 `ops_paused`로 오표시되지 않는 케이스를 추가했다.
+  - 동시에 현재 runtime 구조를 재확인했다: 보유 포지션에 대해 매 tick 전략적 hold/exit 재평가를 수행하는 엔진은 없고, 실시간 관리는 대부분 TP/SL bracket + trailing watchdog에 의존한다. 즉 operator 기대 수준의 “계속 시장을 보며 보유 유지/청산을 판단하는 포지션 매니저”는 아직 구현되어 있지 않다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'status_notional_tracks_effective_budget_leverage or status_reports_safe_mode_without_mislabeling_as_ops_paused'` 통과
+    - `python -m ruff check v2/control/status_payloads.py v2/tests/test_control_api.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과
+- 2026-03-27 실전 디버깅용 로그 번들 추출기 추가:
+  - operator/debugging 속도를 위해 `v2/scripts/export_runtime_debug_bundle.py`를 추가했다. 이 스크립트는 control API 상태(`/healthz`, `/readyz`, `/readiness`, `/status`), SQLite runtime state(`operator_events`, `runtime_risk_config`, `runtime_markers`, `ops_state`, `submission_intents`, `bracket_states`), 로컬 로그 tail, git 상태, process/socket 상태, optional `systemctl`/`journalctl`을 한 번에 수집한다.
+  - 출력은 `logs/runtime_debug/<timestamp>_<label>/` 아래에 저장되며, 바로 열어볼 수 있는 `SUMMARY.md`를 함께 생성한다. HTTP나 journalctl이 unavailable이어도 전체 수집은 실패하지 않게 설계했다.
+  - 회귀 테스트로 `v2/tests/test_export_runtime_debug_bundle.py`를 추가해 sqlite export, summary 생성, custom log dir tail 수집이 동작하는지 검증했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_export_runtime_debug_bundle.py` 통과
+    - `python -m ruff check v2/scripts/export_runtime_debug_bundle.py v2/tests/test_export_runtime_debug_bundle.py` 통과
+    - `python v2/scripts/export_runtime_debug_bundle.py --label local_smoke --skip-journal --base-url http://127.0.0.1:9 --tail-lines 20` 로컬 smoke 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그 페이지 직접 추출 버튼 추가:
+  - `/operator/logs` 화면에 `로그추출` 버튼을 추가했고, 버튼 클릭 시 서버가 현재 request base URL을 사용해 디버그 번들을 즉시 생성하도록 연결했다.
+  - 백엔드 액션은 `POST /operator/actions/debug-bundle`이며, `v2/operator/debug_bundle.py`를 통해 기존 `v2/scripts/export_runtime_debug_bundle.py`를 호출하고 결과 경로(`bundle_dir`, `summary_path`)를 operator action 응답으로 반환한다.
+  - 추출 성공 시 `debug_bundle_exported` operator event도 함께 기록되므로 로그 화면 새로고침 없이도 방금 생성한 추출 이력이 서버 로그에 남는다.
+  - 프론트는 logs 페이지에서 액션 후 `loadLogsFeed()`를 다시 호출하도록 분기해, 같은 화면에서 바로 새 로그 이벤트를 볼 수 있게 했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_web_panel_routes.py` 통과
+    - `python -m pytest -q v2/tests/test_export_runtime_debug_bundle.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2/operator/debug_bundle.py v2/operator/actions.py v2/operator/service.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

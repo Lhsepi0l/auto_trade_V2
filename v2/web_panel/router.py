@@ -4,7 +4,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -299,5 +299,9 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.post("/operator/actions/report")
     async def operator_report() -> dict[str, Any]:
         return service.trigger_report()
+
+    @router.post("/operator/actions/debug-bundle")
+    async def operator_debug_bundle(request: Request) -> dict[str, Any]:
+        return service.export_debug_bundle(base_url=str(request.base_url).rstrip("/"))
 
     app.include_router(router)

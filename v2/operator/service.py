@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from v2.operator.actions import wrap_operator_action
+from v2.operator.debug_bundle import export_runtime_debug_bundle
 from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import PRESETS, PROFILE_KEYS, build_profile_payload
 from v2.operator.read_models import build_operator_console_payload
@@ -322,6 +323,20 @@ class OperatorService:
     def trigger_report(self) -> dict[str, Any]:
         result = self._controller.send_daily_report()
         return wrap_operator_action(action="report", raw_result=result)
+
+    def export_debug_bundle(self, *, base_url: str) -> dict[str, Any]:
+        result = export_runtime_debug_bundle(label="operator_logs", base_url=base_url)
+        if bool(result.get("ok")):
+            self._controller._log_event(
+                "debug_bundle_exported",
+                bundle_dir=result.get("bundle_dir"),
+                summary_path=result.get("summary_path"),
+            )
+        return wrap_operator_action(
+            action="debug_bundle",
+            raw_result=result,
+            context={"base_url": base_url},
+        )
 
     def list_operator_events(
         self,

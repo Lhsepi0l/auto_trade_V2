@@ -3071,6 +3071,18 @@ def test_control_api_status_notional_tracks_effective_budget_leverage(tmp_path) 
     assert payload["capital_snapshot"]["notional_usdt"] == 24.5
 
 
+def test_control_api_status_reports_safe_mode_without_mislabeling_as_ops_paused(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    controller.ops.safe_mode()
+
+    payload = controller._status_snapshot()
+
+    assert payload["capital_snapshot"]["blocked"] is True
+    assert payload["capital_snapshot"]["block_reason"] == "safe_mode"
+
+
 def test_control_api_status_surfaces_alpha_reject_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_live_candidate",

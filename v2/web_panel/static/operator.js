@@ -616,6 +616,10 @@ async function postAction(path, body) {
   });
   const payload = await resp.json();
   setFeedback(payload.summary || `요청 처리: ${resp.status}`, payload.status || "success");
+  if (pageId === "logs") {
+    await loadLogsFeed();
+    return;
+  }
   await loadConsole();
   await loadEventFeed();
 }
@@ -897,6 +901,15 @@ function bindConfirmModal() {
 }
 
 function bindLogsPage() {
+  document.getElementById("logs-export-bundle")?.addEventListener("click", () => {
+    runConfirmedAction(
+      {
+        title: "로그 번들을 추출할까요?",
+        message: "현재 상태, DB 이벤트, 로그 tail을 묶어 디버그 번들을 생성합니다.",
+      },
+      () => postAction("/operator/actions/debug-bundle")
+    ).catch((error) => setFeedback(String(error), "failed"));
+  });
   document.getElementById("logs-refresh")?.addEventListener("click", () => {
     loadLogsFeed().catch((error) => setFeedback(String(error), "failed"));
   });

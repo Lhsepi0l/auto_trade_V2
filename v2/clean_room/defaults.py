@@ -390,17 +390,6 @@ class RiskAwareSizer(DynamicNotionalSizer):
         if risk.max_notional and risk.max_notional > 0:
             configured_notional = min(configured_notional, float(risk.max_notional))
 
-        stop_frac = self._candidate_stop_frac(candidate)
-        risk_per_trade_pct = (
-            float(candidate.risk_per_trade_pct)
-            if candidate.risk_per_trade_pct is not None and candidate.risk_per_trade_pct > 0.0
-            else None
-        )
-        if capital_base > 0.0 and stop_frac is not None and stop_frac > 0.0 and risk_per_trade_pct:
-            risk_budget = capital_base * risk_per_trade_pct
-            risk_based_notional = risk_budget / max(stop_frac, 1e-9)
-            configured_notional = min(configured_notional, max(risk_based_notional, 0.0))
-
         size_factor = float(risk.size_factor or 1.0)
         if size_factor > 0.0:
             configured_notional *= size_factor

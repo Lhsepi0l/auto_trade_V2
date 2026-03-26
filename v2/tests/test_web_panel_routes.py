@@ -8,6 +8,7 @@ from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
 from v2.notify import Notifier
+from v2.operator import OperatorService
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 
@@ -64,6 +65,7 @@ def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyp
 
     assert response.status_code == 200
     assert "운영 로그" in response.text
+    assert "로그추출" in response.text
     assert "/operator/api/logs" not in response.text
     assert 'data-operator-page="logs"' in response.text
 
@@ -285,3 +287,32 @@ def test_operator_logs_api_supports_offset_pagination(tmp_path) -> None:  # type
     assert payload["has_prev"] is True
     assert payload["has_next"] is True
     assert len(payload["items"]) == 2
+
+
+def test_operator_debug_bundle_action_uses_request_base_url(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    app = _build_operator_app(tmp_path)
+    client = TestClient(app)
+
+    def _fake_export(self, *, base_url: str) -> dict[str, object]:  # type: ignore[no-untyped-def]
+        return {
+            "ok": True,
+            "status": "success",
+            "action": "debug_bundle",
+            "action_label": "로그 추출",
+            "summary": f"로그 번들 추출 완료: {base_url}/SUMMARY.md",
+            "context": {"base_url": base_url},
+            "result": {
+                "ok": True,
+                "bundle_dir": "/tmp/runtime_debug",
+                "summary_path": "/tmp/runtime_debug/SUMMARY.md",
+            },
+        }
+
+    monkeypatch.setattr(OperatorService, "export_debug_bundle", _fake_export)
+
+    response = client.post("/operator/actions/debug-bundle")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "debug_bundle"
+    assert payload["context"]["base_url"] == "http://testserver"
