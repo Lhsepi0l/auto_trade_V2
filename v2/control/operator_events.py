@@ -193,6 +193,71 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
         if mfe_r is not None:
             sub_parts.append(f"mfe_r={mfe_r}")
         sub_text = " / ".join(sub_parts) if sub_parts else None
+    elif raw_event == "position_entry_opened":
+        category = "position"
+        side = str(fields.get("side") or "").strip().upper()
+        action_state = str(fields.get("action") or "").strip().lower()
+        side_label = "LONG" if side == "BUY" else "SHORT" if side == "SELL" else side or "-"
+        if action_state == "dry_run":
+            title = f"{symbol or '-'} {side_label} 모의 진입"
+        else:
+            title = f"{symbol or '-'} {side_label} 진입"
+        alpha_id = str(fields.get("alpha_id") or "").strip()
+        entry_family = str(fields.get("entry_family") or "").strip()
+        parts = [part for part in [alpha_id, entry_family] if part]
+        main_text = " / ".join(parts) if parts else "진입 실행"
+        detail_parts = []
+        if fields.get("qty") is not None:
+            detail_parts.append(f"qty={fields.get('qty'):.6f}" if isinstance(fields.get("qty"), (int, float)) else f"qty={fields.get('qty')}")
+        if fields.get("leverage") is not None:
+            detail_parts.append(f"lev={fields.get('leverage')}")
+        if fields.get("notional") is not None:
+            detail_parts.append(f"notional={fields.get('notional')}")
+        if fields.get("entry_price") is not None:
+            detail_parts.append(f"entry={fields.get('entry_price')}")
+        sub_text = " / ".join(detail_parts) if detail_parts else None
+    elif raw_event == "position_reduced":
+        category = "position"
+        title = f"{symbol or '-'} 부분청산"
+        main_text = humanize_reason_token(str(reason or "partial_reduce_executed"))
+        parts = []
+        if fields.get("reduced_qty") is not None:
+            parts.append(f"reduced={fields.get('reduced_qty')}")
+        if fields.get("remaining_qty") is not None:
+            parts.append(f"remain={fields.get('remaining_qty')}")
+        if fields.get("current_r") is not None:
+            parts.append(f"r={fields.get('current_r')}")
+        sub_text = " / ".join(parts) if parts else None
+    elif raw_event == "position_closed":
+        category = "position"
+        raw_reason = str(reason or "position_closed").strip()
+        if raw_reason == "take_profit":
+            title = f"{symbol or '-'} 익절 청산"
+        elif raw_reason == "stop_loss":
+            title = f"{symbol or '-'} 손절 청산"
+        elif raw_reason == "progress_failed_close":
+            title = f"{symbol or '-'} 진전부족 청산"
+        elif raw_reason == "time_stop_close":
+            title = f"{symbol or '-'} 시간종료 청산"
+        elif raw_reason == "management_breakeven_close":
+            title = f"{symbol or '-'} 본전보호 청산"
+        elif raw_reason == "auto_risk_close":
+            title = f"{symbol or '-'} 자동 리스크 청산"
+        elif raw_reason == "close_all":
+            title = "전체 포지션 종료"
+        else:
+            title = f"{symbol or '-'} 포지션 종료"
+        main_text = humanize_reason_token(raw_reason)
+        parts = []
+        realized_pnl = fields.get("realized_pnl")
+        if realized_pnl is not None:
+            parts.append(f"realized={realized_pnl}")
+        if fields.get("closed_qty") is not None:
+            parts.append(f"qty={fields.get('closed_qty')}")
+        outcome = str(fields.get("outcome") or "").strip()
+        if outcome:
+            parts.append(f"outcome={outcome}")
+        sub_text = " / ".join(parts) if parts else None
     else:
         if reason:
             main_text = humanize_reason_token(str(reason))

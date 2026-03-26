@@ -193,6 +193,25 @@ def run_cycle_once_locked(
 
         for actionable in actionable_cycles:
             controller._record_position_management_plan(cycle=actionable)
+            if actionable.candidate is not None and actionable.size is not None:
+                controller._log_event(
+                    "position_entry_opened",
+                    symbol=str(actionable.candidate.symbol or "").strip().upper(),
+                    side=str(actionable.candidate.side or "").strip().upper(),
+                    alpha_id=getattr(actionable.candidate, "alpha_id", None),
+                    entry_family=getattr(actionable.candidate, "entry_family", None),
+                    entry_price=getattr(actionable.candidate, "entry_price", None),
+                    qty=getattr(actionable.size, "qty", None),
+                    leverage=getattr(actionable.size, "leverage", None),
+                    notional=getattr(actionable.size, "notional", None),
+                    action=actionable.state,
+                    order_id=(
+                        getattr(actionable.execution, "order_id", None)
+                        if actionable.execution is not None
+                        else None
+                    ),
+                    event_time=controller._last_cycle["tick_finished_at"],
+                )
             controller._place_brackets_for_cycle(cycle=actionable)
 
         controller._last_cycle["tick_finished_at"] = _utcnow_iso()

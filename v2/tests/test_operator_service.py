@@ -161,6 +161,64 @@ def test_wrap_operator_action_builds_consistent_response() -> None:
     assert wrapped["summary"] == "BTCUSDT 레버리지 7x 적용"
 
 
+def test_operator_event_payload_humanizes_position_entry_and_close() -> None:
+    entry = build_operator_event_payload(
+        event="position_entry_opened",
+        fields={
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "alpha_id": "alpha_expansion",
+            "entry_family": "expansion",
+            "qty": 0.0123,
+            "leverage": 45.0,
+            "notional": 22.0,
+            "entry_price": 101234.5,
+            "event_time": "2026-03-27T00:00:00+00:00",
+        },
+    )
+    assert entry is not None
+    assert entry["category"] == "position"
+    assert entry["title"] == "BTCUSDT LONG 진입"
+    assert entry["main_text"] == "alpha_expansion / expansion"
+    assert "qty=0.012300" in str(entry["sub_text"])
+
+    close = build_operator_event_payload(
+        event="position_closed",
+        fields={
+            "symbol": "BTCUSDT",
+            "reason": "take_profit",
+            "realized_pnl": 5.25,
+            "closed_qty": 0.01,
+            "outcome": "TP",
+            "event_time": "2026-03-27T00:10:00+00:00",
+        },
+    )
+    assert close is not None
+    assert close["category"] == "position"
+    assert close["title"] == "BTCUSDT 익절 청산"
+    assert close["main_text"] == "익절 청산"
+    assert "realized=5.25" in str(close["sub_text"])
+
+
+def test_operator_event_payload_humanizes_partial_reduce() -> None:
+    payload = build_operator_event_payload(
+        event="position_reduced",
+        fields={
+            "symbol": "BTCUSDT",
+            "reason": "partial_reduce_executed",
+            "reduced_qty": 0.01,
+            "remaining_qty": 0.03,
+            "current_r": 1.1,
+            "event_time": "2026-03-27T00:05:00+00:00",
+        },
+    )
+    assert payload is not None
+    assert payload["category"] == "position"
+    assert payload["title"] == "BTCUSDT 부분청산"
+    assert payload["main_text"] == "부분청산 실행"
+    assert "remain=0.03" in str(payload["sub_text"])
+
+
 def test_wrap_operator_action_classifies_busy_response() -> None:
     wrapped = wrap_operator_action(
         action="tick_now",

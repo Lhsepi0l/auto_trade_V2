@@ -2683,3 +2683,11 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_live_execution_service.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그 포지션 이벤트 가독성 개선:
+  - 기존 `/operator/logs`의 `포지션` 카테고리는 내부 이벤트(`flatten_requested`, 일반 `cycle_result`) 위주라서 운영자가 "언제 진입했고 왜 청산됐는지"를 한눈에 파악하기 어려웠다.
+  - 대응으로 `position_entry_opened`, `position_reduced`, `position_closed`를 별도 position 이벤트로 남기고, 제목/본문을 `BTCUSDT LONG 진입`, `BTCUSDT 부분청산`, `BTCUSDT 익절 청산`, `BTCUSDT 진전부족 청산`처럼 사람이 바로 읽히는 형태로 바꿨다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_operator_service.py` 통과
+    - `python -m ruff check v2/common/operator_labels.py v2/control/cycle.py v2/control/api.py v2/control/operator_events.py v2/tests/test_operator_service.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

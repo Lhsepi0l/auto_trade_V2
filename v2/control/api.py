@@ -1578,6 +1578,16 @@ class RuntimeController:
                         plan["take_profit_price"] = float(take_profit_price)
 
                 self._log_event(
+                    "position_reduced",
+                    symbol=symbol,
+                    reason="partial_reduce_executed",
+                    side=exit_side,
+                    reduced_qty=round(float(reduce_qty), 8),
+                    remaining_qty=round(float(remaining_qty), 8),
+                    current_r=round(float(current_r), 4),
+                    event_time=_utcnow_iso(),
+                )
+                self._log_event(
                     "position_management_update",
                     symbol=symbol,
                     reason="partial_reduce_executed",
@@ -2252,6 +2262,14 @@ class RuntimeController:
             )
         except Exception:  # noqa: BLE001
             logger.exception("bracket_exit_notify_failed symbol=%s outcome=%s", symbol, outcome)
+        self._log_event(
+            "position_closed",
+            symbol=symbol,
+            reason="take_profit" if outcome == "TP" else "stop_loss",
+            realized_pnl=normalized_realized,
+            outcome=outcome,
+            event_time=_utcnow_iso(),
+        )
 
     def _poll_brackets_once(self) -> None:
         rest_client = self.rest_client
@@ -2877,6 +2895,8 @@ class RuntimeController:
         symbol: str,
         notify_reason: str = "forced_close",
     ) -> dict[str, Any]:
+        position_state = self.state_store.get().current_position.get(symbol.upper())
+        close_qty = abs(_to_float(getattr(position_state, "position_amt", 0.0), default=0.0))
         self._log_event("flatten_requested", action="close_position", symbol=symbol.upper())
         result = await self.ops.flatten(symbol=symbol)
         _ = self.notifier.send_notification(
@@ -2885,6 +2905,14 @@ class RuntimeController:
                 reason=notify_reason,
                 context=self._notification_context(),
             )
+        )
+        self._log_event(
+            "position_closed",
+            symbol=result.symbol,
+            reason=notify_reason,
+            closed_qty=round(float(close_qty), 8),
+            realized_pnl=self._resolve_symbol_realized_pnl(symbol=result.symbol),
+            event_time=_utcnow_iso(),
         )
         self._report_stats["closes"] += 1
         return build_trade_close_response(flatten_result=result)

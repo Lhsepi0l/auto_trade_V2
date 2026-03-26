@@ -63,6 +63,17 @@ REASON_LABELS_KO: dict[str, str] = {
     "breakout_stability_edge_missing": "돌파 안정성 엣지 기준 미충족",
     "volume_missing": "거래량 조건 미충족",
     "cost_missing": "비용 대비 기대값 부족",
+    "partial_reduce_executed": "부분청산 실행",
+    "partial_reduce_reprice": "부분청산 후 브래킷 재배치",
+    "selective_extension_reprice": "연장 조건 충족으로 TP 재배치",
+    "breakeven_reprice": "본전 보호 브래킷 재배치",
+    "progress_extension_applied": "진전 확인으로 보유 연장",
+    "selective_extension_activated": "선별 연장 조건 충족",
+    "management_breakeven_close": "본전 보호 청산",
+    "progress_failed_close": "진전 부족 청산",
+    "time_stop_close": "시간 종료 청산",
+    "take_profit": "익절 청산",
+    "stop_loss": "손절 청산",
 }
 
 REASON_PREFIX_LABELS_KO: dict[str, str] = {
