@@ -42,16 +42,19 @@ def resolve_runtime_debug_bundle_archive(*, archive_name: str) -> Path | None:
     return candidate
 
 
-def export_runtime_debug_bundle(*, label: str, base_url: str) -> dict[str, Any]:
+def export_runtime_debug_bundle(*, label: str, base_url: str, include_all: bool = False) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(SCRIPT_PATH),
+        "--label",
+        str(label),
+        "--base-url",
+        str(base_url),
+    ]
+    if include_all:
+        command.append("--all")
     proc = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT_PATH),
-            "--label",
-            str(label),
-            "--base-url",
-            str(base_url),
-        ],
+        command,
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -90,5 +93,6 @@ def export_runtime_debug_bundle(*, label: str, base_url: str) -> dict[str, Any]:
         "archive_path": str(archive_path),
         "archive_name": archive_path.name,
         "download_url": f"{base_url_clean}/operator/api/debug-bundles/{archive_path.name}",
+        "full_export": bool(include_all),
         "returncode": proc.returncode,
     }

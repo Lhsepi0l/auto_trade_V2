@@ -122,3 +122,59 @@ def test_create_runtime_debug_bundle_archive_writes_zip(tmp_path) -> None:  # ty
         names = set(archive.namelist())
     assert f"{bundle_dir.name}/SUMMARY.md" in names
     assert f"{bundle_dir.name}/sqlite/operator_events.json" in names
+
+
+def test_export_runtime_debug_bundle_all_mode_captures_full_log_file(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    sqlite_path = tmp_path / "runtime_all.sqlite3"
+    storage = RuntimeStorage(sqlite_path=str(sqlite_path))
+    storage.ensure_schema()
+    storage.append_operator_event(
+        event_type="runtime_start",
+        category="action",
+        title="엔진 시작",
+        main_text="started",
+        sub_text=None,
+        event_time="2026-03-27T00:00:00+00:00",
+        context={},
+    )
+
+    custom_log_dir = tmp_path / "logs_all"
+    custom_log_dir.mkdir(parents=True)
+    log_file = custom_log_dir / "control_api.log"
+    log_file.write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    output_root = tmp_path / "bundle_all_out"
+    script = Path("v2/scripts/export_runtime_debug_bundle.py")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--label",
+            "unit_all",
+            "--sqlite-path",
+            str(sqlite_path),
+            "--output-root",
+            str(output_root),
+            "--skip-journal",
+            "--skip-http",
+            "--log-dir",
+            str(custom_log_dir),
+            "--all",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    bundle_dir = Path(lines[0])
+    tail_text = next((bundle_dir / "logs").glob("*.tail.log")).read_text(encoding="utf-8")
+    assert "line1" in tail_text
+    assert "line2" in tail_text
+    assert "line3" in tail_text
+
+    manifest = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["full_export"] is True

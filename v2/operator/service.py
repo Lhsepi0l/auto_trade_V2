@@ -325,7 +325,11 @@ class OperatorService:
         return wrap_operator_action(action="report", raw_result=result)
 
     def export_debug_bundle(self, *, base_url: str) -> dict[str, Any]:
-        result = export_runtime_debug_bundle(label="operator_logs", base_url=base_url)
+        result = export_runtime_debug_bundle(
+            label="operator_logs",
+            base_url=base_url,
+            include_all=True,
+        )
         if bool(result.get("ok")):
             self._controller._log_event(
                 "debug_bundle_exported",

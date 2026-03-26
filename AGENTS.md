@@ -2639,3 +2639,13 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/operator/debug_bundle.py v2/operator/service.py v2/operator/actions.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_export_runtime_debug_bundle.py v2/tests/test_web_panel_routes.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그추출 기본값을 전체 이력 모드로 변경:
+  - 기존 기본 추출은 `operator_events=200`, `journal_events=200`, `submission_intents=200`, 각 로그 파일 tail 400줄, `journalctl -n 400`으로 잘린 번들이었다.
+  - operator/web 다운로드 목적에는 이 제한이 부족하다고 판단해 `v2/scripts/export_runtime_debug_bundle.py`에 `--all` 플래그를 추가했고, 웹 액션(`v2/operator/service.py -> export_runtime_debug_bundle(..., include_all=True)`)은 이제 기본적으로 전체 이력 모드로 실행한다.
+  - 전체 이력 모드에서는 `operator_events`, `journal_events`, `submission_intents`, 로컬 로그 파일, systemd journal을 제한 없이 모두 수집한다. 상태 API 캡처(`/healthz`, `/readyz`, `/readiness`, `/status`)는 원래부터 현재 스냅샷 1회라 그대로 유지된다.
+  - 회귀 테스트로 `--all` 모드에서 로그 파일 전체 내용이 잘리지 않고 들어가는 케이스를 추가했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_export_runtime_debug_bundle.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2/scripts/export_runtime_debug_bundle.py v2/operator/debug_bundle.py v2/operator/service.py v2/tests/test_export_runtime_debug_bundle.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

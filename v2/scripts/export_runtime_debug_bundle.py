@@ -53,7 +53,9 @@ def _write_json(path: Path, payload: Any) -> None:
     _write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
-def _tail_lines(path: Path, *, limit: int) -> str:
+def _tail_lines(path: Path, *, limit: int | None) -> str:
+    if limit is None:
+        return path.read_text(encoding="utf-8", errors="replace")
     lines: deque[str] = deque(maxlen=max(1, int(limit)))
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
@@ -159,8 +161,9 @@ def _sqlite_rows(conn: sqlite3.Connection, query: str, params: tuple[Any, ...] =
 def _read_sqlite_snapshot(
     sqlite_path: Path,
     *,
-    operator_limit: int,
-    journal_limit: int,
+    operator_limit: int | None,
+    journal_limit: int | None,
+    submission_limit: int | None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "exists": sqlite_path.exists(),
@@ -224,45 +227,46 @@ def _read_sqlite_snapshot(
             out["runtime_markers"] = markers
 
         if "operator_events" in tables:
-            rows = _sqlite_rows(
-                conn,
-                """
+            operator_query = """
                 SELECT id, event_type, category, title, main_text, sub_text, event_time, context_json, created_at
                 FROM operator_events
                 ORDER BY id DESC
-                LIMIT ?
-                """.strip(),
-                (max(1, int(operator_limit)),),
-            )
+            """.strip()
+            operator_params: tuple[Any, ...] = ()
+            if operator_limit is not None:
+                operator_query += "\nLIMIT ?"
+                operator_params = (max(1, int(operator_limit)),)
+            rows = _sqlite_rows(conn, operator_query, operator_params)
             for row in rows:
                 row["context"] = _parse_json_text(row.get("context_json")) or {}
             out["operator_events"] = rows
 
         if "journal_events" in tables:
-            rows = _sqlite_rows(
-                conn,
-                """
+            journal_query = """
                 SELECT id, event_id, event_type, reason, payload_json, created_at
                 FROM journal_events
                 ORDER BY id DESC
-                LIMIT ?
-                """.strip(),
-                (max(1, int(journal_limit)),),
-            )
+            """.strip()
+            journal_params: tuple[Any, ...] = ()
+            if journal_limit is not None:
+                journal_query += "\nLIMIT ?"
+                journal_params = (max(1, int(journal_limit)),)
+            rows = _sqlite_rows(conn, journal_query, journal_params)
             for row in rows:
                 row["payload"] = _parse_json_text(row.get("payload_json")) or {}
             out["journal_events"] = rows
 
         if "submission_intents" in tables:
-            out["submission_intents"] = _sqlite_rows(
-                conn,
-                """
+            submission_query = """
                 SELECT intent_id, client_order_id, symbol, side, status, order_id, created_at, updated_at
                 FROM submission_intents
                 ORDER BY updated_at DESC
-                LIMIT 200
-                """.strip(),
-            )
+            """.strip()
+            submission_params: tuple[Any, ...] = ()
+            if submission_limit is not None:
+                submission_query += "\nLIMIT ?"
+                submission_params = (max(1, int(submission_limit)),)
+            out["submission_intents"] = _sqlite_rows(conn, submission_query, submission_params)
 
         if "bracket_states" in tables:
             out["bracket_states"] = _sqlite_rows(
@@ -338,6 +342,7 @@ def _summary_lines(
         f"- Control API: `{manifest['base_url']}`",
         f"- SQLite: `{manifest['sqlite_path']}`",
         f"- Service Unit: `{manifest['service_unit']}`",
+        f"- 전체 추출 모드: `{manifest['full_export']}`",
         "",
     ]
 
@@ -494,6 +499,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Additional log directory to tail. Can be passed multiple times.",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Export full operator/journal/log history instead of bounded tails.",
+    )
     return parser
 
 
@@ -520,6 +530,7 @@ def main(argv: list[str] | None = None) -> int:
         "service_unit": args.service_unit,
         "repo_root": str(REPO_ROOT),
         "log_dirs": [str(path) for path in log_dirs],
+        "full_export": bool(args.all),
     }
     _write_json(bundle_dir / "manifest.json", manifest)
 
@@ -541,19 +552,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if not args.skip_journal:
+        journal_command = ["journalctl", "-u", args.service_unit, "--no-pager"]
+        if not args.all:
+            journal_command[3:3] = ["-n", str(max(1, int(args.journal_lines)))]
         journal_specs = [
             ("systemctl_status.txt", ["systemctl", "status", args.service_unit, "--no-pager"]),
-            (
-                "journalctl_tail.txt",
-                [
-                    "journalctl",
-                    "-u",
-                    args.service_unit,
-                    "-n",
-                    str(max(1, int(args.journal_lines))),
-                    "--no-pager",
-                ],
-            ),
+            ("journalctl_tail.txt", journal_command),
         ]
         for filename, command in journal_specs:
             _write_command_capture(
@@ -576,8 +580,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sqlite_data = _read_sqlite_snapshot(
         sqlite_path,
-        operator_limit=args.operator_limit,
-        journal_limit=args.journal_limit,
+        operator_limit=None if args.all else args.operator_limit,
+        journal_limit=None if args.all else args.journal_limit,
+        submission_limit=None if args.all else 200,
     )
     _write_json(sqlite_dir / "snapshot.json", sqlite_data)
 
@@ -599,7 +604,10 @@ def main(argv: list[str] | None = None) -> int:
     captured_logs: list[str] = []
     for source in _scan_log_files(log_dirs):
         try:
-            content = _tail_lines(source, limit=max(1, int(args.tail_lines)))
+            content = _tail_lines(
+                source,
+                limit=None if args.all else max(1, int(args.tail_lines)),
+            )
         except Exception as exc:  # noqa: BLE001
             content = f"{type(exc).__name__}: {exc}\n"
         label_name = _slug(_relative_label(source))
