@@ -74,6 +74,11 @@ REASON_LABELS_KO: dict[str, str] = {
     "time_stop_close": "시간 종료 청산",
     "take_profit": "익절 청산",
     "stop_loss": "손절 청산",
+    "signal_flip_close": "신호 반전 청산",
+    "regime_bias_lost_close": "레짐/바이어스 상실 청산",
+    "signal_weakness_reduce": "신호 약화 감속",
+    "weakness_reduce_reprice": "약화 감속 후 브래킷 재배치",
+    "runner_lock_reprice": "러너 보호 브래킷 재배치",
 }
 
 REASON_PREFIX_LABELS_KO: dict[str, str] = {

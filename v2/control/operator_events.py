@@ -241,6 +241,10 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
             title = f"{symbol or '-'} 시간종료 청산"
         elif raw_reason == "management_breakeven_close":
             title = f"{symbol or '-'} 본전보호 청산"
+        elif raw_reason == "signal_flip_close":
+            title = f"{symbol or '-'} 신호반전 청산"
+        elif raw_reason == "regime_bias_lost_close":
+            title = f"{symbol or '-'} 레짐상실 청산"
         elif raw_reason == "auto_risk_close":
             title = f"{symbol or '-'} 자동 리스크 청산"
         elif raw_reason == "close_all":

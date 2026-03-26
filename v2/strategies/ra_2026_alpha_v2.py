@@ -1518,6 +1518,34 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
         if callable(updater):
             updater(**kwargs)
 
+    def inspect_symbol_decision(
+        self,
+        *,
+        symbol: str,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        symbol_u = str(symbol).strip().upper()
+        if not symbol_u:
+            return None
+        base_snapshot: dict[str, Any] = {"symbol": symbol_u}
+        provided = snapshot if isinstance(snapshot, dict) else None
+        if provided is None and self._snapshot_provider is not None:
+            candidate_snapshot = self._snapshot_provider()
+            if isinstance(candidate_snapshot, dict):
+                provided = candidate_snapshot
+        if isinstance(provided, dict):
+            base_snapshot.update(provided)
+
+        symbols_market = base_snapshot.get("symbols")
+        if isinstance(symbols_market, dict):
+            market = symbols_market.get(symbol_u)
+            if isinstance(market, dict):
+                base_snapshot["market"] = market
+        base_snapshot["symbol"] = symbol_u
+
+        decision = self._strategy.decide(base_snapshot)
+        return copy.deepcopy(decision) if isinstance(decision, dict) else None
+
     def select(self, *, context: KernelContext) -> Candidate | None:
         _ = context
         self._last_no_candidate_reason = None

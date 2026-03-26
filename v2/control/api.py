@@ -1305,6 +1305,7 @@ class RuntimeController:
         plan = {
             "symbol": symbol,
             "side": self._position_management_side(getattr(candidate, "side", None)),
+            "entry_score": float(_to_float(getattr(candidate, "score", 0.0), default=0.0)),
             "entry_price": float(entry_price),
             "stop_price": float(stop_price),
             "take_profit_price": _to_float(candidate.take_profit_hint, default=0.0),
@@ -1516,11 +1517,163 @@ class RuntimeController:
         plan["held_bars"] = int(held_bars)
         plan["current_r"] = float(current_r)
         plan["last_evaluated_at"] = _utcnow_iso()
+        plan.setdefault("weak_reduce_stage", 0)
+        plan.setdefault("runner_lock_stage", 0)
+        plan.setdefault("entry_score", 0.0)
 
         position_amt = abs(_to_float(row.get("positionAmt"), default=0.0))
         position_side = str(row.get("positionSide") or "BOTH").strip().upper() or "BOTH"
         entry_side: Literal["BUY", "SELL"] = "BUY" if side == "LONG" else "SELL"
         exit_side: Literal["BUY", "SELL"] = "SELL" if side == "LONG" else "BUY"
+
+        signal_view = self._inspect_position_signal(symbol=symbol)
+        if signal_view is not None:
+            signal_state = str(signal_view.get("state") or "").strip().lower()
+            signal_reason = str(signal_view.get("reason") or "").strip().lower()
+            current_signal_side = str(signal_view.get("side") or "").strip().upper()
+            current_score = _to_float(signal_view.get("score"), default=0.0)
+            current_regime_strength = _to_float(signal_view.get("regime_strength"), default=0.0)
+            current_bias_strength = _to_float(signal_view.get("bias_strength"), default=0.0)
+            entry_score = max(_to_float(plan.get("entry_score"), default=0.0), 0.0)
+            if current_signal_side and current_signal_side not in {side} and signal_state == "candidate":
+                self._clear_position_management_state(symbol=symbol)
+                _ = _run_async_blocking(
+                    lambda s=symbol: self.close_position(
+                        symbol=s,
+                        notify_reason="signal_flip_close",
+                    ),
+                    timeout_sec=30.0,
+                )
+                self._log_event(
+                    "position_management_exit",
+                    symbol=symbol,
+                    reason="signal_flip_close",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                    signal_side=current_signal_side,
+                )
+                return True, plan
+
+            if signal_state != "candidate" and signal_reason in {"regime_missing", "bias_missing"}:
+                self._clear_position_management_state(symbol=symbol)
+                _ = _run_async_blocking(
+                    lambda s=symbol: self.close_position(
+                        symbol=s,
+                        notify_reason="regime_bias_lost_close",
+                    ),
+                    timeout_sec=30.0,
+                )
+                self._log_event(
+                    "position_management_exit",
+                    symbol=symbol,
+                    reason="regime_bias_lost_close",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                    signal_reason=signal_reason,
+                )
+                return True, plan
+
+            weak_reduce_stage = int(_to_float(plan.get("weak_reduce_stage"), default=0.0))
+            score_weak = (
+                current_score > 0.0
+                and entry_score > 0.0
+                and current_score < max(entry_score * 0.7, 0.52)
+            )
+            structure_weak = (
+                current_regime_strength > 0.0
+                and current_regime_strength < max(_to_float(plan.get("entry_regime_strength"), default=0.0) * 0.7, 0.45)
+            ) or (
+                current_bias_strength > 0.0
+                and current_bias_strength < max(_to_float(plan.get("entry_bias_strength"), default=0.0) * 0.7, 0.45)
+            )
+            blocked_weak = signal_state != "candidate" and signal_reason in {
+                "volume_missing",
+                "trigger_missing",
+                "quality_score_v2_missing",
+                "quality_score_missing",
+                "breakout_efficiency_missing",
+                "breakout_stability_missing",
+                "breakout_stability_edge_missing",
+            }
+            if position_amt > 0.0 and weak_reduce_stage == 0 and (score_weak or structure_weak or blocked_weak):
+                reduce_qty = max(position_amt * 0.25, 0.0)
+                if reduce_qty > 0.0 and self.rest_client is not None and hasattr(self.rest_client, "place_reduce_only_market_order"):
+                    rest_client_any: Any = self.rest_client
+                    _ = _run_async_blocking(
+                        lambda s=symbol, side_out=exit_side, qty=reduce_qty, ps=position_side: (
+                            rest_client_any.place_reduce_only_market_order(
+                                symbol=s,
+                                side=side_out,
+                                quantity=qty,
+                                position_side=cast(Literal["BOTH", "LONG", "SHORT"], ps),
+                            )
+                        ),
+                        timeout_sec=15.0,
+                    )
+                    plan["weak_reduce_stage"] = 1
+                    plan["breakeven_protection_armed"] = True
+                    remaining_qty = max(position_amt - reduce_qty, 0.0)
+                    if remaining_qty > 0.0 and _to_float(plan.get("take_profit_price"), default=0.0) > 0.0:
+                        self._replace_management_bracket(
+                            symbol=symbol,
+                            entry_side=entry_side,
+                            position_side=position_side,
+                            quantity=remaining_qty,
+                            take_profit_price=_to_float(plan.get("take_profit_price"), default=0.0),
+                            stop_loss_price=float(entry_price),
+                            reason="weakness_reduce_reprice",
+                        )
+                        plan["stop_price"] = float(entry_price)
+                    self._log_event(
+                        "position_reduced",
+                        symbol=symbol,
+                        reason="signal_weakness_reduce",
+                        reduced_qty=round(float(reduce_qty), 8),
+                        remaining_qty=round(float(remaining_qty), 8),
+                        current_r=round(float(current_r), 4),
+                        event_time=_utcnow_iso(),
+                    )
+                    return False, plan
+
+        runner_lock_stage = int(_to_float(plan.get("runner_lock_stage"), default=0.0))
+        if bool(plan.get("partial_reduce_done")):
+            lock_target_r = 0.0
+            if max_favorable_r >= 2.0 and runner_lock_stage < 2:
+                lock_target_r = 1.0
+                plan["runner_lock_stage"] = 2
+            elif max_favorable_r >= 1.5 and runner_lock_stage < 1:
+                lock_target_r = 0.5
+                plan["runner_lock_stage"] = 1
+            if lock_target_r > 0.0 and position_amt > 0.0:
+                locked_stop = (
+                    entry_price + (risk_per_unit * lock_target_r)
+                    if side == "LONG"
+                    else entry_price - (risk_per_unit * lock_target_r)
+                )
+                if (side == "LONG" and locked_stop > _to_float(plan.get("stop_price"), default=0.0)) or (
+                    side == "SHORT" and (
+                        _to_float(plan.get("stop_price"), default=0.0) <= 0.0
+                        or locked_stop < _to_float(plan.get("stop_price"), default=0.0)
+                    )
+                ):
+                    self._replace_management_bracket(
+                        symbol=symbol,
+                        entry_side=entry_side,
+                        position_side=position_side,
+                        quantity=position_amt,
+                        take_profit_price=_to_float(plan.get("take_profit_price"), default=0.0),
+                        stop_loss_price=locked_stop,
+                        reason="runner_lock_reprice",
+                    )
+                    plan["stop_price"] = float(locked_stop)
+                    self._log_event(
+                        "position_management_update",
+                        symbol=symbol,
+                        reason="runner_lock_reprice",
+                        held_bars=int(held_bars),
+                        max_favorable_r=round(float(max_favorable_r), 4),
+                        locked_r=lock_target_r,
+                    )
 
         tp_partial_ratio = min(max(_to_float(plan.get("tp_partial_ratio"), default=0.0), 0.0), 1.0)
         tp_partial_at_r = _to_float(plan.get("tp_partial_at_r"), default=0.0)
@@ -1758,6 +1911,37 @@ class RuntimeController:
             return True, plan
 
         return False, plan
+
+    def _inspect_position_signal(self, *, symbol: str) -> dict[str, Any] | None:
+        probe = getattr(self.kernel, "probe_market_data", None)
+        snapshot = None
+        if callable(probe):
+            try:
+                snapshot = probe()
+            except Exception:  # noqa: BLE001
+                logger.exception("position_signal_probe_failed symbol=%s", symbol)
+                return None
+        inspector = getattr(self.kernel, "inspect_symbol_decision", None)
+        if not callable(inspector):
+            return None
+        try:
+            decision = inspector(symbol=symbol, snapshot=snapshot)
+        except Exception:  # noqa: BLE001
+            logger.exception("position_signal_inspect_failed symbol=%s", symbol)
+            return None
+        if not isinstance(decision, dict):
+            return None
+        intent = str(decision.get("intent") or "").strip().upper()
+        state = "candidate" if intent in {"LONG", "SHORT"} else "blocked"
+        side = "LONG" if intent == "LONG" else "SHORT" if intent == "SHORT" else "NONE"
+        return {
+            "state": state,
+            "side": side,
+            "reason": str(decision.get("reason") or "").strip(),
+            "score": _to_float(decision.get("score"), default=0.0),
+            "regime_strength": _to_float(decision.get("regime_strength"), default=0.0),
+            "bias_strength": _to_float(decision.get("bias_strength"), default=0.0),
+        }
 
     def _replace_management_bracket(
         self,

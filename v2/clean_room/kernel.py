@@ -79,6 +79,16 @@ class RejectContextAwareSelector(Protocol):
     def get_last_no_candidate_context(self) -> dict[str, Any] | None: ...
 
 
+@runtime_checkable
+class SymbolDecisionInspectableSelector(Protocol):
+    def inspect_symbol_decision(
+        self,
+        *,
+        symbol: str,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None: ...
+
+
 @dataclass(frozen=True)
 class TradeKernelConfig:
     mode: str
@@ -436,6 +446,16 @@ class TradeKernel:
         if self._market_data_probe is None:
             return None
         return self._market_data_probe()
+
+    def inspect_symbol_decision(
+        self,
+        *,
+        symbol: str,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if isinstance(self._selector, SymbolDecisionInspectableSelector):
+            return self._selector.inspect_symbol_decision(symbol=symbol, snapshot=snapshot)
+        return None
 
 
 def _build_default_risk_gate(risk_cfg: RiskConfig | None = None) -> RiskGate:
