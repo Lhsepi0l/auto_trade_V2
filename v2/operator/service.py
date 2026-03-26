@@ -324,11 +324,11 @@ class OperatorService:
         result = self._controller.send_daily_report()
         return wrap_operator_action(action="report", raw_result=result)
 
-    def export_debug_bundle(self, *, base_url: str) -> dict[str, Any]:
+    def export_debug_bundle(self, *, base_url: str, include_all: bool = False) -> dict[str, Any]:
         result = export_runtime_debug_bundle(
             label="operator_logs",
             base_url=base_url,
-            include_all=True,
+            include_all=bool(include_all),
         )
         if bool(result.get("ok")):
             self._controller._log_event(
@@ -337,11 +337,12 @@ class OperatorService:
                 summary_path=result.get("summary_path"),
                 archive_path=result.get("archive_path"),
                 download_url=result.get("download_url"),
+                full_export=bool(result.get("full_export")),
             )
         return wrap_operator_action(
             action="debug_bundle",
             raw_result=result,
-            context={"base_url": base_url},
+            context={"base_url": base_url, "include_all": bool(include_all)},
         )
 
     def list_operator_events(

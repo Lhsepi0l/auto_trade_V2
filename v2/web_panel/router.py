@@ -102,6 +102,10 @@ class OperatorScoringConfigRequest(BaseModel):
     donchian_slow_ema_period: int
 
 
+class OperatorDebugBundleRequest(BaseModel):
+    mode: str = "quick"
+
+
 def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
@@ -310,8 +314,17 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
         return service.trigger_report()
 
     @router.post("/operator/actions/debug-bundle")
-    async def operator_debug_bundle(request: Request) -> dict[str, Any]:
-        return service.export_debug_bundle(base_url=str(request.base_url).rstrip("/"))
+    async def operator_debug_bundle(
+        request: Request,
+        payload: OperatorDebugBundleRequest,
+    ) -> dict[str, Any]:
+        mode = str(payload.mode or "quick").strip().lower()
+        if mode not in {"quick", "full"}:
+            raise HTTPException(status_code=422, detail="debug_bundle_mode_invalid")
+        return service.export_debug_bundle(
+            base_url=str(request.base_url).rstrip("/"),
+            include_all=(mode == "full"),
+        )
 
     @router.get("/operator/api/debug-bundles/{archive_name}")
     async def operator_debug_bundle_download(archive_name: str) -> FileResponse:

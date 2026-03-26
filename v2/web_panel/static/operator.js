@@ -915,14 +915,26 @@ function bindConfirmModal() {
 }
 
 function bindLogsPage() {
-  document.getElementById("logs-export-bundle")?.addEventListener("click", () => {
+  document.getElementById("logs-export-bundle-quick")?.addEventListener("click", () => {
     runConfirmedAction(
       {
-        title: "로그 번들을 추출할까요?",
-        message: "현재 상태, DB 이벤트, 로그 tail을 묶어 디버그 번들을 생성합니다.",
+        title: "빠른 로그 번들을 추출할까요?",
+        message: "최근 운영 이벤트와 최근 로그 tail 기준으로 빠르게 번들을 생성합니다.",
       },
       async () => {
-        const payload = await postAction("/operator/actions/debug-bundle");
+        const payload = await postAction("/operator/actions/debug-bundle", { mode: "quick" });
+        triggerDownload(payload?.result?.download_url);
+      }
+    ).catch((error) => setFeedback(String(error), "failed"));
+  });
+  document.getElementById("logs-export-bundle-full")?.addEventListener("click", () => {
+    runConfirmedAction(
+      {
+        title: "전체 로그 번들을 추출할까요?",
+        message: "누적 운영 이벤트, DB 이력, 전체 로그 파일을 묶습니다. 파일이 크고 시간이 더 걸릴 수 있습니다.",
+      },
+      async () => {
+        const payload = await postAction("/operator/actions/debug-bundle", { mode: "full" });
         triggerDownload(payload?.result?.download_url);
       }
     ).catch((error) => setFeedback(String(error), "failed"));

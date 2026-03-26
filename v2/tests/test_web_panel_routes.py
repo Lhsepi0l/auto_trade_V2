@@ -65,7 +65,8 @@ def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyp
 
     assert response.status_code == 200
     assert "운영 로그" in response.text
-    assert "로그추출" in response.text
+    assert "빠른 추출" in response.text
+    assert "전체 추출" in response.text
     assert "/operator/api/logs" not in response.text
     assert 'data-operator-page="logs"' in response.text
 
@@ -293,31 +294,34 @@ def test_operator_debug_bundle_action_uses_request_base_url(tmp_path, monkeypatc
     app = _build_operator_app(tmp_path)
     client = TestClient(app)
 
-    def _fake_export(self, *, base_url: str) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    def _fake_export(self, *, base_url: str, include_all: bool = False) -> dict[str, object]:  # type: ignore[no-untyped-def]
         return {
             "ok": True,
             "status": "success",
             "action": "debug_bundle",
             "action_label": "로그 추출",
             "summary": f"로그 번들 추출 완료: {base_url}/SUMMARY.md",
-            "context": {"base_url": base_url},
+            "context": {"base_url": base_url, "include_all": include_all},
             "result": {
                 "ok": True,
                 "bundle_dir": "/tmp/runtime_debug",
                 "summary_path": "/tmp/runtime_debug/SUMMARY.md",
                 "download_url": "http://testserver/operator/api/debug-bundles/runtime_debug.zip",
+                "full_export": include_all,
             },
         }
 
     monkeypatch.setattr(OperatorService, "export_debug_bundle", _fake_export)
 
-    response = client.post("/operator/actions/debug-bundle")
+    response = client.post("/operator/actions/debug-bundle", json={"mode": "full"})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["action"] == "debug_bundle"
     assert payload["context"]["base_url"] == "http://testserver"
+    assert payload["context"]["include_all"] is True
     assert payload["result"]["download_url"].endswith("/operator/api/debug-bundles/runtime_debug.zip")
+    assert payload["result"]["full_export"] is True
 
 
 def test_operator_debug_bundle_download_serves_zip(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

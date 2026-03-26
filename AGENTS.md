@@ -2649,3 +2649,12 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/scripts/export_runtime_debug_bundle.py v2/operator/debug_bundle.py v2/operator/service.py v2/tests/test_export_runtime_debug_bundle.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그 페이지 추출 모드 분리:
+  - 전체 추출이 기본인 상태는 실사용에 무거워서 `/operator/logs` UI를 `빠른 추출` / `전체 추출` 두 버튼으로 분리했다.
+  - `빠른 추출`은 기존 bounded export(최근 operator/journal/log tail), `전체 추출`은 full history export를 사용한다. 서버 액션은 `POST /operator/actions/debug-bundle`에 `mode=quick|full`을 받아 `include_all`로 매핑한다.
+  - 액션 summary와 operator event headline도 quick/full 문맥에 맞게 바뀌도록 조정했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_web_panel_routes.py v2/tests/test_export_runtime_debug_bundle.py` 통과
+    - `python -m ruff check v2/operator/service.py v2/operator/actions.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

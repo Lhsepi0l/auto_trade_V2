@@ -137,19 +137,20 @@ def _action_summary(action: str, raw_result: dict[str, Any], context: dict[str, 
             return f"리포트 생성 완료, 전송 실패: {error}"
         return "리포트 생성 완료"
     if action == "debug_bundle":
+        mode_label = "전체" if bool(raw_result.get("full_export")) else "빠른"
         download_url = str(raw_result.get("download_url") or "").strip()
         if download_url:
-            return f"로그 번들 생성 완료, 다운로드 시작: {download_url}"
+            return f"{mode_label} 로그 번들 생성 완료, 다운로드 시작: {download_url}"
         summary_path = str(raw_result.get("summary_path") or "").strip()
         if summary_path:
-            return f"로그 번들 추출 완료: {summary_path}"
+            return f"{mode_label} 로그 번들 추출 완료: {summary_path}"
         bundle_dir = str(raw_result.get("bundle_dir") or "").strip()
         if bundle_dir:
-            return f"로그 번들 추출 완료: {bundle_dir}"
+            return f"{mode_label} 로그 번들 추출 완료: {bundle_dir}"
         error = str(raw_result.get("error") or "").strip()
         if error:
-            return f"로그 번들 추출 실패: {error}"
-        return "로그 번들 추출 완료"
+            return f"{mode_label} 로그 번들 추출 실패: {error}"
+        return f"{mode_label} 로그 번들 추출 완료"
     if action == "risk_basic":
         return "리스크 기본 설정 적용"
     if action == "risk_advanced":

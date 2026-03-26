@@ -154,7 +154,7 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
         sub_text = str(fields.get("notifier_error") or "").strip() or None
     elif raw_event == "debug_bundle_exported":
         category = "action"
-        title = "로그 추출 완료"
+        title = "전체 로그 추출 완료" if bool(fields.get("full_export")) else "빠른 로그 추출 완료"
         main_text = "디버그 로그 번들이 생성되었습니다."
         sub_text = (
             str(
