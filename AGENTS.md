@@ -121,6 +121,10 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - For long-running local jobs, user prefers visible percent-progress output during execution.
 - User prefers Korean human-readable report output first (Markdown) and uses JSON only as secondary detail.
 - User wants generated backtest artifacts to stay local and not be uploaded to Git.
+- Git 운영 기준은 `git + GitHub(origin)` 하나로 고정하고, GitLab은 병행 기준으로 쓰지 않는다.
+- 서버는 pull-only 원칙을 유지한다. 운영 서버에서 직접 코드 수정/커밋하지 않고, GitHub에 push 된 커밋만 `git pull --ff-only`로 반영한다.
+- 현재 작업 브랜치 기준은 `migration/web-operator-panel`, 안정 운영 기준 브랜치는 `main`으로 본다.
+- 운영 반영 시점은 태그로 남기는 것을 선호한다. 예: `prod-YYYYMMDD-a`.
 
 ### Security and Ops Notes
 - `.env` remains secrets-only; runtime behavior flags stay in `v2/config/config.yaml` or runtime risk config storage.
