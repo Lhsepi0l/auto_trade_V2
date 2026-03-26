@@ -2619,3 +2619,12 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/operator/debug_bundle.py v2/operator/actions.py v2/operator/service.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그추출 버튼 무반응 캐시 이슈 수정:
+  - 원인은 `/operator/logs` 템플릿은 새 HTML을 받았지만, `base.html`이 `/operator/static/operator.js` / `operator.css`를 버전 쿼리 없이 고정 경로로 참조해 브라우저가 예전 JS를 캐시할 수 있던 점이었다.
+  - 이 경우 새 버튼은 보이는데 구 JS에는 click binding이 없어 “눌러도 아무 일도 없음” 증상이 날 수 있었다.
+  - 대응으로 `v2/web_panel/router.py`에서 static asset URL에 파일 mtime 기반 `?v=` 캐시 버스터를 붙이도록 하고, `v2/web_panel/templates/base.html`은 해당 버전 URL placeholder를 사용하게 변경했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

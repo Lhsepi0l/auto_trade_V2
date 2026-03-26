@@ -105,6 +105,12 @@ def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
 
+def _asset_url(filename: str) -> str:
+    path = _STATIC_DIR / filename
+    version = int(path.stat().st_mtime_ns) if path.exists() else 0
+    return f"/operator/static/{filename}?v={version}"
+
+
 def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLResponse:
     base = _read_template("base.html")
     body = _read_template(body_template)
@@ -114,6 +120,8 @@ def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLRespons
         .replace("{{ PAGE_ID }}", escape(page_id))
         .replace("{{ NAV_CONSOLE_ACTIVE }}", "is-active" if page_id == "console" else "")
         .replace("{{ NAV_LOGS_ACTIVE }}", "is-active" if page_id == "logs" else "")
+        .replace("{{ OPERATOR_CSS_URL }}", _asset_url("operator.css"))
+        .replace("{{ OPERATOR_JS_URL }}", _asset_url("operator.js"))
     )
     return HTMLResponse(content=content)
 
