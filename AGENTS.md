@@ -2668,7 +2668,8 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
   - 웹 로그 추출 액션은 same-process HTTP self-call 때문에 `readyz/status/readiness`가 timeout 날 수 있어, export 완료 후 controller 직접 스냅샷으로 `control/*.json`을 hydrate 하도록 변경했다.
   - q070 운영 프로파일의 `min_volume_ratio_15m`를 `0.9 -> 0.8`로 완화했고, local backtest/profile override도 동일 값으로 정렬했다.
   - 1차 보유 관리 루프를 추가했다. 진입 성공 시 strategy `execution` 힌트를 symbol별 management plan으로 저장하고, 보유 중에는 `progress_failed_close`, `time_stop_close`, `progress_extension_applied`, `selective_extension_activated`, `management_breakeven_close`를 평가한다.
-  - 이번 단계의 보유 관리 루프는 `hold / extend / exit / breakeven protection`까지이며, partial reduce와 TP 재배치는 아직 미구현으로 남겨뒀다.
+  - 당시 1차 단계 기준으로는 보유 관리 루프가 `hold / extend / exit / breakeven protection`까지였고, partial reduce와 TP 재배치는 아직 미구현이었다.
+  - 이 제한은 같은 날 후속 2차/3차 확장으로 해소되었으며, 현재 최신 기준은 아래 2차/3차 항목을 따른다.
   - 검증:
     - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py v2/tests/test_operator_service.py v2/tests/test_web_panel_routes.py v2/tests/test_export_runtime_debug_bundle.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
@@ -2702,3 +2703,6 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 문서 정합성 보정:
+  - `v2/docs/20260327_live_operator_upgrade/03_position_management_loop.md`의 `## 8. 아직 남은 것`이 구현 완료된 항목(2단계 weakness reduce, alpha/regime별 reduce 비율, volatility runner lock)을 TODO처럼 남기고 있어 오해를 만들었다.
+  - 현재 기준 문서에서는 위 3개를 구현 완료 항목으로 명확히 구분하고, 남은 것은 수치 튜닝과 실운용 검증 단계라고 정정했다.

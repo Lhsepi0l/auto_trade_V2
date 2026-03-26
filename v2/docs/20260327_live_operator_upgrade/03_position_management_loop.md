@@ -153,12 +153,18 @@
   - 반대 신호/레짐 붕괴는 강제 종료
 가 가능해졌다.
 
-## 8. 아직 남은 것
-완전한 의미의 "최종형"으로 보려면 아래가 남아 있다.
+## 8. 남은 것
+이번 단계까지 아래 항목은 **이미 구현됨**:
 
-1. signal weakness를 1단계가 아니라 2단계(25% -> 50%)로 더 세분화
-2. alpha별 / regime별 동적 reduce 비율 차등화
-3. volatility 기반 runner lock을 ATR/시장 상태 기반으로 더 세밀하게 조정
-4. live 성과 로그를 보고 q070 gate를 한 번 더 튜닝
+1. signal weakness 2단계 reduce
+2. alpha / regime별 동적 reduce 비율 차등화
+3. volatility 기반 runner lock
 
-위 1, 2, 3은 이번 단계에서 1차 구현이 이미 들어갔고, 이후에는 숫자 조정과 성과 검증이 핵심이다.
+즉, 위 3개는 더 이상 TODO가 아니다.
+
+현재 남은 것은 구현 자체보다 **튜닝과 검증**에 가깝다.
+
+1. signal weakness reduce 비율을 alpha별로 더 정교하게 튜닝
+2. volatility bucket 기준을 ATR/시장 상태 로그로 다시 보정
+3. q070 entry gate를 live 로그 기준으로 한 번 더 미세조정
+4. 실제 운용 로그에서 reduce / exit / extension 분포를 수집해 손익 분포 개선 여부 확인
