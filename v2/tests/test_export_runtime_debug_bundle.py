@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
+from v2.operator.debug_bundle import create_runtime_debug_bundle_archive
 from v2.storage import RuntimeStorage
 
 
@@ -96,3 +98,27 @@ def test_export_runtime_debug_bundle_creates_summary_and_sqlite_exports(
     assert "line2" in tail_text
     assert "line3" in tail_text
     assert "line1" not in tail_text
+
+
+def test_create_runtime_debug_bundle_archive_writes_zip(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    bundle_root = tmp_path / "logs" / "runtime_debug"
+    bundle_dir = bundle_root / "20260327T000000Z_unit"
+    nested = bundle_dir / "sqlite"
+    nested.mkdir(parents=True)
+    (bundle_dir / "SUMMARY.md").write_text("# summary\n", encoding="utf-8")
+    (nested / "operator_events.json").write_text("[]\n", encoding="utf-8")
+
+    from v2.operator import debug_bundle as debug_bundle_module
+
+    original_root = debug_bundle_module.DEBUG_BUNDLE_ROOT
+    debug_bundle_module.DEBUG_BUNDLE_ROOT = bundle_root
+    try:
+        archive_path = create_runtime_debug_bundle_archive(bundle_dir=bundle_dir)
+    finally:
+        debug_bundle_module.DEBUG_BUNDLE_ROOT = original_root
+
+    assert archive_path.exists()
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
+    assert f"{bundle_dir.name}/SUMMARY.md" in names
+    assert f"{bundle_dir.name}/sqlite/operator_events.json" in names

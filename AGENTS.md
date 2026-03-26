@@ -2628,3 +2628,14 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 operator 로그 번들 zip 다운로드 지원:
+  - 로그 페이지의 `로그추출`은 이제 번들 디렉터리 생성만 하지 않고, 같은 시점의 bundle을 `.zip`으로 압축한 뒤 브라우저가 바로 다운로드하도록 변경했다.
+  - `v2/operator/debug_bundle.py`에 bundle archive 생성과 archive path resolve helper를 추가했고, action 응답에는 `download_url`을 포함시킨다.
+  - `v2/web_panel/router.py`에는 `GET /operator/api/debug-bundles/{archive_name}` 파일 다운로드 라우트를 추가했고, `v2/web_panel/static/operator.js`는 `POST /operator/actions/debug-bundle` 성공 후 `download_url`을 받아 즉시 다운로드를 트리거한다.
+  - `debug_bundle_exported` operator event는 summary path뿐 아니라 download URL도 남기도록 확장했다.
+  - 회귀 테스트로 zip archive 생성과 다운로드 라우트 응답까지 추가 검증했다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_export_runtime_debug_bundle.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2/operator/debug_bundle.py v2/operator/service.py v2/operator/actions.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_export_runtime_debug_bundle.py v2/tests/test_web_panel_routes.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

@@ -156,7 +156,15 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
         category = "action"
         title = "로그 추출 완료"
         main_text = "디버그 로그 번들이 생성되었습니다."
-        sub_text = str(fields.get("summary_path") or fields.get("bundle_dir") or "").strip() or None
+        sub_text = (
+            str(
+                fields.get("download_url")
+                or fields.get("summary_path")
+                or fields.get("bundle_dir")
+                or ""
+            ).strip()
+            or None
+        )
     else:
         if reason:
             main_text = humanize_reason_token(str(reason))

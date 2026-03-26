@@ -137,6 +137,9 @@ def _action_summary(action: str, raw_result: dict[str, Any], context: dict[str, 
             return f"리포트 생성 완료, 전송 실패: {error}"
         return "리포트 생성 완료"
     if action == "debug_bundle":
+        download_url = str(raw_result.get("download_url") or "").strip()
+        if download_url:
+            return f"로그 번들 생성 완료, 다운로드 시작: {download_url}"
         summary_path = str(raw_result.get("summary_path") or "").strip()
         if summary_path:
             return f"로그 번들 추출 완료: {summary_path}"

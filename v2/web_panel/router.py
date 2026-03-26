@@ -4,12 +4,13 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from v2.operator import OperatorService
+from v2.operator.debug_bundle import resolve_runtime_debug_bundle_archive
 
 if TYPE_CHECKING:
     from v2.control.api import RuntimeController
@@ -311,5 +312,16 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.post("/operator/actions/debug-bundle")
     async def operator_debug_bundle(request: Request) -> dict[str, Any]:
         return service.export_debug_bundle(base_url=str(request.base_url).rstrip("/"))
+
+    @router.get("/operator/api/debug-bundles/{archive_name}")
+    async def operator_debug_bundle_download(archive_name: str) -> FileResponse:
+        archive_path = resolve_runtime_debug_bundle_archive(archive_name=archive_name)
+        if archive_path is None:
+            raise HTTPException(status_code=404, detail="debug_bundle_archive_not_found")
+        return FileResponse(
+            path=str(archive_path),
+            media_type="application/zip",
+            filename=archive_path.name,
+        )
 
     app.include_router(router)

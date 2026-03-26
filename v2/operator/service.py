@@ -331,6 +331,8 @@ class OperatorService:
                 "debug_bundle_exported",
                 bundle_dir=result.get("bundle_dir"),
                 summary_path=result.get("summary_path"),
+                archive_path=result.get("archive_path"),
+                download_url=result.get("download_url"),
             )
         return wrap_operator_action(
             action="debug_bundle",

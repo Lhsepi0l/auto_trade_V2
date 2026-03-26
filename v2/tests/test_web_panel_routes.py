@@ -305,6 +305,7 @@ def test_operator_debug_bundle_action_uses_request_base_url(tmp_path, monkeypatc
                 "ok": True,
                 "bundle_dir": "/tmp/runtime_debug",
                 "summary_path": "/tmp/runtime_debug/SUMMARY.md",
+                "download_url": "http://testserver/operator/api/debug-bundles/runtime_debug.zip",
             },
         }
 
@@ -316,3 +317,25 @@ def test_operator_debug_bundle_action_uses_request_base_url(tmp_path, monkeypatc
     payload = response.json()
     assert payload["action"] == "debug_bundle"
     assert payload["context"]["base_url"] == "http://testserver"
+    assert payload["result"]["download_url"].endswith("/operator/api/debug-bundles/runtime_debug.zip")
+
+
+def test_operator_debug_bundle_download_serves_zip(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    app = _build_operator_app(tmp_path)
+    client = TestClient(app)
+    archive_path = tmp_path / "runtime_debug.zip"
+    archive_path.write_bytes(b"zip-bytes")
+
+    from v2.web_panel import router as router_module
+
+    def _fake_resolve(*, archive_name: str):  # type: ignore[no-untyped-def]
+        assert archive_name == "runtime_debug.zip"
+        return archive_path
+
+    monkeypatch.setattr(router_module, "resolve_runtime_debug_bundle_archive", _fake_resolve)
+
+    response = client.get("/operator/api/debug-bundles/runtime_debug.zip")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.content == b"zip-bytes"

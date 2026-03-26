@@ -618,10 +618,24 @@ async function postAction(path, body) {
   setFeedback(payload.summary || `요청 처리: ${resp.status}`, payload.status || "success");
   if (pageId === "logs") {
     await loadLogsFeed();
-    return;
+    return payload;
   }
   await loadConsole();
   await loadEventFeed();
+  return payload;
+}
+
+function triggerDownload(downloadUrl) {
+  if (!downloadUrl) {
+    return;
+  }
+  const anchor = document.createElement("a");
+  anchor.href = downloadUrl;
+  anchor.download = "";
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function bindActionButtons() {
@@ -907,7 +921,10 @@ function bindLogsPage() {
         title: "로그 번들을 추출할까요?",
         message: "현재 상태, DB 이벤트, 로그 tail을 묶어 디버그 번들을 생성합니다.",
       },
-      () => postAction("/operator/actions/debug-bundle")
+      async () => {
+        const payload = await postAction("/operator/actions/debug-bundle");
+        triggerDownload(payload?.result?.download_url);
+      }
     ).catch((error) => setFeedback(String(error), "failed"));
   });
   document.getElementById("logs-refresh")?.addEventListener("click", () => {
