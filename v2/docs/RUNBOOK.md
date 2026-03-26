@@ -6,6 +6,7 @@
 - `.env`는 키/시크릿 보관용만 사용합니다.
 - 실전(API 실거래) 전에는 테스트넷에서 충분히 점검해야 합니다.
 - 실계정 키를 저장소에 넣거나, 로그/리포트에 키를 기록하지 않습니다.
+- Git / GitHub 운영 기준은 [GIT_WORKFLOW_KO.md](./GIT_WORKFLOW_KO.md)를 따른다.
 
 ## 2. 빠른 시작
 
@@ -139,6 +140,14 @@ bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrad
 sudo systemctl status v2-stack.service --no-pager
 sudo journalctl -u v2-stack.service -f
 ```
+
+### GitHub 기준 서버 업데이트
+```bash
+bash v2/scripts/update_server_from_git.sh --branch migration/web-operator-panel --restart
+```
+
+- 서버는 원칙적으로 GitHub에 push 된 커밋만 pull 한다.
+- 실거래 안정판 전환 시에는 `--branch main`으로 기준을 바꾼다.
 
 - 템플릿 유닛 파일은 `v2/systemd/v2-stack.service`에 포함되어 있습니다.
 - 설치 스크립트는 `/etc/systemd/system/v2-stack.service`를 생성하고 `enable --now`까지 수행합니다.
