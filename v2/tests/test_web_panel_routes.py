@@ -160,7 +160,8 @@ def test_operator_console_supports_structured_control_actions(tmp_path) -> None:
     notify = client.post("/operator/actions/notify-interval", json={"notify_interval_sec": 45})
     assert notify.status_code == 200
     assert notify.json()["action"] == "notify_interval"
-    assert notify.json()["result"]["risk_config"]["scheduler_tick_sec"] == 45
+    assert notify.json()["result"]["risk_config"]["notify_interval_sec"] == 45
+    assert notify.json()["result"]["risk_config"]["scheduler_tick_sec"] == 600
 
     preset = client.post("/operator/actions/preset", json={"name": "normal"})
     assert preset.status_code == 200

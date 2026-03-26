@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from v2.clean_room.contracts import KernelCycleResult
 from v2.common.async_bridge import run_async_blocking
@@ -133,6 +133,7 @@ _RUNTIME_DERIVED_RISK_KEYS = (
     "last_alpha_reject_metrics",
     "overheat_state",
 )
+_POSITION_MANAGEMENT_MARKER_KEY = "position_management_state"
 
 
 def _utcnow_iso() -> str:
@@ -1241,6 +1242,562 @@ class RuntimeController:
     def _fetch_live_usdt_balance(self) -> tuple[float | None, float | None, str]:
         return fetch_live_usdt_balance(self)
 
+    def _load_position_management_state(self) -> dict[str, dict[str, Any]]:
+        payload = self.state_store.runtime_storage().load_runtime_marker(
+            marker_key=_POSITION_MANAGEMENT_MARKER_KEY
+        )
+        if not isinstance(payload, dict):
+            return {}
+        positions = payload.get("positions")
+        if not isinstance(positions, dict):
+            return {}
+        normalized: dict[str, dict[str, Any]] = {}
+        for symbol, row in positions.items():
+            symbol_u = str(symbol or "").strip().upper()
+            if not symbol_u or not isinstance(row, dict):
+                continue
+            normalized[symbol_u] = dict(row)
+        return normalized
+
+    def _save_position_management_state(self, state: dict[str, dict[str, Any]]) -> None:
+        normalized = {
+            str(symbol).strip().upper(): dict(payload)
+            for symbol, payload in state.items()
+            if str(symbol).strip() and isinstance(payload, dict)
+        }
+        self.state_store.runtime_storage().save_runtime_marker(
+            marker_key=_POSITION_MANAGEMENT_MARKER_KEY,
+            payload={"positions": normalized, "updated_at": _utcnow_iso()},
+        )
+
+    def _clear_position_management_state(self, *, symbol: str) -> None:
+        state = self._load_position_management_state()
+        state.pop(str(symbol).strip().upper(), None)
+        self._save_position_management_state(state)
+
+    @staticmethod
+    def _position_management_side(candidate_side: str | None) -> str:
+        side = str(candidate_side or "").strip().upper()
+        return "LONG" if side == "BUY" else "SHORT"
+
+    def _record_position_management_plan(self, *, cycle: KernelCycleResult) -> None:
+        candidate = cycle.candidate
+        if candidate is None or cycle.state != "executed":
+            return
+        execution_hints = (
+            dict(candidate.execution_hints)
+            if isinstance(candidate.execution_hints, dict)
+            else None
+        )
+        if not execution_hints:
+            return
+        symbol = str(candidate.symbol or "").strip().upper()
+        if not symbol:
+            return
+        entry_price = _to_float(candidate.entry_price, default=0.0)
+        stop_price = _to_float(candidate.stop_price_hint, default=0.0)
+        if entry_price <= 0.0 or stop_price <= 0.0:
+            return
+        risk_per_unit = abs(entry_price - stop_price)
+        if risk_per_unit <= 0.0:
+            return
+
+        plan = {
+            "symbol": symbol,
+            "side": self._position_management_side(getattr(candidate, "side", None)),
+            "entry_price": float(entry_price),
+            "stop_price": float(stop_price),
+            "take_profit_price": _to_float(candidate.take_profit_hint, default=0.0),
+            "risk_per_unit": float(risk_per_unit),
+            "entry_time_ms": int(time.time() * 1000),
+            "created_at": _utcnow_iso(),
+            "alpha_id": getattr(candidate, "alpha_id", None),
+            "entry_family": getattr(candidate, "entry_family", None),
+            "max_favorable_price": float(entry_price),
+            "max_favorable_r": 0.0,
+            "progress_check_bars": int(_to_float(execution_hints.get("progress_check_bars"), default=0.0)),
+            "progress_min_mfe_r": float(_to_float(execution_hints.get("progress_min_mfe_r"), default=0.0)),
+            "progress_extend_trigger_r": float(
+                _to_float(execution_hints.get("progress_extend_trigger_r"), default=0.0)
+            ),
+            "progress_extend_bars": int(_to_float(execution_hints.get("progress_extend_bars"), default=0.0)),
+            "reward_risk_reference_r": float(
+                _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0)
+            ),
+            "tp_partial_ratio": float(
+                _to_float(
+                    execution_hints.get("tp_partial_ratio"),
+                    default=0.25
+                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
+                    else 0.0,
+                )
+            ),
+            "tp_partial_at_r": float(
+                _to_float(
+                    execution_hints.get("tp_partial_at_r"),
+                    default=min(
+                        max(
+                            _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0)
+                            * 0.6,
+                            1.0,
+                        ),
+                        1.2,
+                    )
+                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
+                    else 0.0,
+                )
+            ),
+            "move_stop_to_be_at_r": float(
+                _to_float(
+                    execution_hints.get("move_stop_to_be_at_r"),
+                    default=1.0
+                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
+                    else 0.0,
+                )
+            ),
+            "time_stop_bars": int(_to_float(execution_hints.get("time_stop_bars"), default=0.0)),
+            "current_time_stop_bars": int(
+                _to_float(execution_hints.get("time_stop_bars"), default=0.0)
+            ),
+            "entry_quality_score_v2": float(
+                _to_float(execution_hints.get("entry_quality_score_v2"), default=0.0)
+            ),
+            "entry_regime_strength": float(
+                _to_float(execution_hints.get("entry_regime_strength"), default=0.0)
+            ),
+            "entry_bias_strength": float(
+                _to_float(execution_hints.get("entry_bias_strength"), default=0.0)
+            ),
+            "quality_exit_applied": bool(execution_hints.get("quality_exit_applied")),
+            "selective_extension_proof_bars": int(
+                _to_float(execution_hints.get("selective_extension_proof_bars"), default=0.0)
+            ),
+            "selective_extension_min_mfe_r": float(
+                _to_float(execution_hints.get("selective_extension_min_mfe_r"), default=0.0)
+            ),
+            "selective_extension_min_regime_strength": float(
+                _to_float(
+                    execution_hints.get("selective_extension_min_regime_strength"),
+                    default=0.0,
+                )
+            ),
+            "selective_extension_min_bias_strength": float(
+                _to_float(
+                    execution_hints.get("selective_extension_min_bias_strength"),
+                    default=0.0,
+                )
+            ),
+            "selective_extension_min_quality_score_v2": float(
+                _to_float(
+                    execution_hints.get("selective_extension_min_quality_score_v2"),
+                    default=0.0,
+                )
+            ),
+            "selective_extension_time_stop_bars": int(
+                _to_float(execution_hints.get("selective_extension_time_stop_bars"), default=0.0)
+            ),
+            "selective_extension_take_profit_r": float(
+                _to_float(execution_hints.get("selective_extension_take_profit_r"), default=0.0)
+            ),
+            "selective_extension_move_stop_to_be_at_r": float(
+                _to_float(
+                    execution_hints.get("selective_extension_move_stop_to_be_at_r"),
+                    default=0.0,
+                )
+            ),
+            "progress_extension_applied": False,
+            "selective_extension_activated": False,
+            "breakeven_protection_armed": False,
+            "partial_reduce_done": False,
+        }
+
+        state = self._load_position_management_state()
+        state[symbol] = plan
+        self._save_position_management_state(state)
+
+    @staticmethod
+    def _extract_latest_market_bar(snapshot: dict[str, Any], *, symbol: str) -> dict[str, float] | None:
+        symbols_payload = snapshot.get("symbols")
+        market = None
+        if isinstance(symbols_payload, dict):
+            market = symbols_payload.get(symbol)
+        if not isinstance(market, dict):
+            market = snapshot.get("market")
+        if not isinstance(market, dict):
+            return None
+        candles = market.get("15m")
+        if not isinstance(candles, list) or not candles:
+            return None
+        row = candles[-1]
+        if isinstance(row, dict):
+            open_time = _to_float(row.get("open_time") or row.get("openTime") or row.get("t"), default=0.0)
+            close_time = _to_float(row.get("close_time") or row.get("closeTime") or row.get("T"), default=0.0)
+            open_v = _to_float(row.get("open"), default=0.0)
+            high_v = _to_float(row.get("high"), default=0.0)
+            low_v = _to_float(row.get("low"), default=0.0)
+            close_v = _to_float(row.get("close"), default=0.0)
+        elif isinstance(row, (list, tuple)) and len(row) >= 7:
+            open_time = _to_float(row[0], default=0.0)
+            open_v = _to_float(row[1], default=0.0)
+            high_v = _to_float(row[2], default=0.0)
+            low_v = _to_float(row[3], default=0.0)
+            close_v = _to_float(row[4], default=0.0)
+            close_time = _to_float(row[6], default=0.0)
+        else:
+            return None
+        if close_v <= 0.0:
+            return None
+        return {
+            "open_time_ms": float(open_time),
+            "close_time_ms": float(close_time),
+            "open": float(open_v),
+            "high": float(high_v),
+            "low": float(low_v),
+            "close": float(close_v),
+        }
+
+    @staticmethod
+    def _bars_held_for_management(plan: dict[str, Any], bar: dict[str, float] | None) -> int:
+        entry_time_ms = int(_to_float(plan.get("entry_time_ms"), default=0.0))
+        if entry_time_ms <= 0:
+            return 0
+        current_time_ms = (
+            int(_to_float((bar or {}).get("close_time_ms"), default=0.0))
+            if isinstance(bar, dict)
+            else 0
+        )
+        if current_time_ms <= 0:
+            current_time_ms = int(time.time() * 1000)
+        return max((current_time_ms - entry_time_ms) // (15 * 60 * 1000), 0)
+
+    def _maybe_manage_open_position(
+        self,
+        *,
+        symbol: str,
+        row: dict[str, Any],
+        plan: dict[str, Any],
+        market_bar: dict[str, float] | None,
+    ) -> tuple[bool, dict[str, Any]]:
+        mark_price = _to_float(row.get("markPrice"), default=0.0)
+        if mark_price <= 0.0 and isinstance(market_bar, dict):
+            mark_price = _to_float(market_bar.get("close"), default=0.0)
+        entry_price = _to_float(plan.get("entry_price"), default=0.0)
+        risk_per_unit = _to_float(plan.get("risk_per_unit"), default=0.0)
+        side = str(plan.get("side") or "").strip().upper()
+        if mark_price <= 0.0 or entry_price <= 0.0 or risk_per_unit <= 0.0 or side not in {"LONG", "SHORT"}:
+            return False, plan
+
+        favorable_price = mark_price
+        if isinstance(market_bar, dict):
+            if side == "LONG":
+                favorable_price = max(
+                    favorable_price,
+                    _to_float(market_bar.get("high"), default=favorable_price),
+                )
+            else:
+                favorable_price = min(
+                    favorable_price,
+                    _to_float(market_bar.get("low"), default=favorable_price),
+                )
+
+        previous_best = _to_float(plan.get("max_favorable_price"), default=entry_price)
+        if side == "LONG":
+            best_price = max(previous_best, favorable_price)
+            max_favorable_r = max((best_price - entry_price) / risk_per_unit, 0.0)
+            current_r = (mark_price - entry_price) / risk_per_unit
+        else:
+            best_price = min(previous_best, favorable_price)
+            max_favorable_r = max((entry_price - best_price) / risk_per_unit, 0.0)
+            current_r = (entry_price - mark_price) / risk_per_unit
+
+        plan["max_favorable_price"] = float(best_price)
+        plan["max_favorable_r"] = float(max_favorable_r)
+        held_bars = self._bars_held_for_management(plan, market_bar)
+        plan["held_bars"] = int(held_bars)
+        plan["current_r"] = float(current_r)
+        plan["last_evaluated_at"] = _utcnow_iso()
+
+        position_amt = abs(_to_float(row.get("positionAmt"), default=0.0))
+        position_side = str(row.get("positionSide") or "BOTH").strip().upper() or "BOTH"
+        entry_side: Literal["BUY", "SELL"] = "BUY" if side == "LONG" else "SELL"
+        exit_side: Literal["BUY", "SELL"] = "SELL" if side == "LONG" else "BUY"
+
+        tp_partial_ratio = min(max(_to_float(plan.get("tp_partial_ratio"), default=0.0), 0.0), 1.0)
+        tp_partial_at_r = _to_float(plan.get("tp_partial_at_r"), default=0.0)
+        if (
+            position_amt > 0.0
+            and tp_partial_ratio > 0.0
+            and tp_partial_at_r > 0.0
+            and not bool(plan.get("partial_reduce_done"))
+            and current_r >= tp_partial_at_r
+            and self.rest_client is not None
+            and hasattr(self.rest_client, "place_reduce_only_market_order")
+        ):
+            reduce_qty = max(position_amt * tp_partial_ratio, 0.0)
+            if reduce_qty > 0.0:
+                rest_client_any: Any = self.rest_client
+                _ = _run_async_blocking(
+                    lambda s=symbol, side_out=exit_side, qty=reduce_qty, ps=position_side: (
+                        rest_client_any.place_reduce_only_market_order(
+                            symbol=s,
+                            side=side_out,
+                            quantity=qty,
+                            position_side=cast(Literal["BOTH", "LONG", "SHORT"], ps),
+                        )
+                    ),
+                    timeout_sec=15.0,
+                )
+                plan["partial_reduce_done"] = True
+                plan["partial_reduce_qty"] = float(reduce_qty)
+                plan["partial_reduce_at_r_done"] = float(current_r)
+                plan["breakeven_protection_armed"] = True
+
+                remaining_qty = max(position_amt - reduce_qty, 0.0)
+                if remaining_qty > 0.0:
+                    reward_r = max(_to_float(plan.get("reward_risk_reference_r"), default=0.0), 0.0)
+                    if reward_r > 0.0:
+                        take_profit_price = (
+                            entry_price + (risk_per_unit * reward_r)
+                            if side == "LONG"
+                            else entry_price - (risk_per_unit * reward_r)
+                        )
+                    else:
+                        take_profit_price = _to_float(plan.get("take_profit_price"), default=0.0)
+                    stop_price = float(entry_price)
+                    self._replace_management_bracket(
+                        symbol=symbol,
+                        entry_side=entry_side,
+                        position_side=position_side,
+                        quantity=remaining_qty,
+                        take_profit_price=take_profit_price,
+                        stop_loss_price=stop_price,
+                        reason="partial_reduce_reprice",
+                    )
+                    plan["stop_price"] = float(stop_price)
+                    if take_profit_price > 0.0:
+                        plan["take_profit_price"] = float(take_profit_price)
+
+                self._log_event(
+                    "position_management_update",
+                    symbol=symbol,
+                    reason="partial_reduce_executed",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                    partial_reduce_qty=round(float(reduce_qty), 8),
+                    partial_reduce_at_r=round(float(current_r), 4),
+                )
+                return False, plan
+
+        extend_trigger_r = _to_float(plan.get("progress_extend_trigger_r"), default=0.0)
+        extend_bars = int(_to_float(plan.get("progress_extend_bars"), default=0.0))
+        if (
+            extend_trigger_r > 0.0
+            and extend_bars > 0
+            and not bool(plan.get("progress_extension_applied"))
+            and max_favorable_r >= extend_trigger_r
+        ):
+            current_time_stop = int(_to_float(plan.get("current_time_stop_bars"), default=0.0))
+            plan["current_time_stop_bars"] = current_time_stop + extend_bars
+            plan["progress_extension_applied"] = True
+            self._log_event(
+                "position_management_update",
+                symbol=symbol,
+                reason="progress_extension_applied",
+                held_bars=int(held_bars),
+                max_favorable_r=round(float(max_favorable_r), 4),
+                current_time_stop_bars=int(plan["current_time_stop_bars"]),
+            )
+
+        if not bool(plan.get("selective_extension_activated")):
+            proof_bars = int(_to_float(plan.get("selective_extension_proof_bars"), default=0.0))
+            if (
+                proof_bars > 0
+                and held_bars <= proof_bars
+                and max_favorable_r >= _to_float(plan.get("selective_extension_min_mfe_r"), default=0.0)
+                and _to_float(plan.get("entry_regime_strength"), default=0.0)
+                >= _to_float(plan.get("selective_extension_min_regime_strength"), default=0.0)
+                and _to_float(plan.get("entry_bias_strength"), default=0.0)
+                >= _to_float(plan.get("selective_extension_min_bias_strength"), default=0.0)
+                and _to_float(plan.get("entry_quality_score_v2"), default=0.0)
+                >= _to_float(plan.get("selective_extension_min_quality_score_v2"), default=0.0)
+            ):
+                selective_time_stop = int(
+                    _to_float(plan.get("selective_extension_time_stop_bars"), default=0.0)
+                )
+                if selective_time_stop > int(_to_float(plan.get("current_time_stop_bars"), default=0.0)):
+                    plan["current_time_stop_bars"] = selective_time_stop
+                plan["selective_extension_activated"] = True
+                extension_tp_r = _to_float(plan.get("selective_extension_take_profit_r"), default=0.0)
+                if position_amt > 0.0 and extension_tp_r > 0.0:
+                    take_profit_price = (
+                        entry_price + (risk_per_unit * extension_tp_r)
+                        if side == "LONG"
+                        else entry_price - (risk_per_unit * extension_tp_r)
+                    )
+                    stop_price = float(entry_price) if bool(plan.get("breakeven_protection_armed")) else _to_float(
+                        plan.get("stop_price"),
+                        default=0.0,
+                    )
+                    if stop_price > 0.0:
+                        self._replace_management_bracket(
+                            symbol=symbol,
+                            entry_side=entry_side,
+                            position_side=position_side,
+                            quantity=position_amt,
+                            take_profit_price=take_profit_price,
+                            stop_loss_price=stop_price,
+                            reason="selective_extension_reprice",
+                        )
+                        plan["take_profit_price"] = float(take_profit_price)
+                        plan["stop_price"] = float(stop_price)
+                self._log_event(
+                    "position_management_update",
+                    symbol=symbol,
+                    reason="selective_extension_activated",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                    current_time_stop_bars=int(_to_float(plan.get("current_time_stop_bars"), default=0.0)),
+                )
+
+        breakeven_trigger_r = _to_float(
+            plan.get("selective_extension_move_stop_to_be_at_r"),
+            default=0.0,
+        )
+        if breakeven_trigger_r <= 0.0:
+            breakeven_trigger_r = _to_float(plan.get("move_stop_to_be_at_r"), default=0.0)
+        if breakeven_trigger_r > 0.0 and max_favorable_r >= breakeven_trigger_r:
+            if not bool(plan.get("breakeven_protection_armed")):
+                plan["breakeven_protection_armed"] = True
+                if position_amt > 0.0 and _to_float(plan.get("take_profit_price"), default=0.0) > 0.0:
+                    self._replace_management_bracket(
+                        symbol=symbol,
+                        entry_side=entry_side,
+                        position_side=position_side,
+                        quantity=position_amt,
+                        take_profit_price=_to_float(plan.get("take_profit_price"), default=0.0),
+                        stop_loss_price=float(entry_price),
+                        reason="breakeven_reprice",
+                    )
+                    plan["stop_price"] = float(entry_price)
+                self._log_event(
+                    "position_management_update",
+                    symbol=symbol,
+                    reason="breakeven_protection_armed",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                )
+
+        if bool(plan.get("breakeven_protection_armed")) and current_r <= 0.0:
+            self._clear_position_management_state(symbol=symbol)
+            _ = _run_async_blocking(
+                lambda s=symbol: self.close_position(
+                    symbol=s,
+                    notify_reason="management_breakeven_close",
+                ),
+                timeout_sec=30.0,
+            )
+            self._log_event(
+                "position_management_exit",
+                symbol=symbol,
+                reason="management_breakeven_close",
+                held_bars=int(held_bars),
+                max_favorable_r=round(float(max_favorable_r), 4),
+            )
+            return True, plan
+
+        progress_check_bars = int(_to_float(plan.get("progress_check_bars"), default=0.0))
+        progress_min_mfe_r = _to_float(plan.get("progress_min_mfe_r"), default=0.0)
+        if progress_check_bars > 0 and progress_min_mfe_r > 0.0 and held_bars >= progress_check_bars:
+            if max_favorable_r < progress_min_mfe_r:
+                self._clear_position_management_state(symbol=symbol)
+                _ = _run_async_blocking(
+                    lambda s=symbol: self.close_position(
+                        symbol=s,
+                        notify_reason="progress_failed_close",
+                    ),
+                    timeout_sec=30.0,
+                )
+                self._log_event(
+                    "position_management_exit",
+                    symbol=symbol,
+                    reason="progress_failed_close",
+                    held_bars=int(held_bars),
+                    max_favorable_r=round(float(max_favorable_r), 4),
+                    progress_min_mfe_r=round(float(progress_min_mfe_r), 4),
+                )
+                return True, plan
+
+        time_stop_bars = int(_to_float(plan.get("current_time_stop_bars"), default=0.0))
+        if time_stop_bars > 0 and held_bars >= time_stop_bars:
+            self._clear_position_management_state(symbol=symbol)
+            _ = _run_async_blocking(
+                lambda s=symbol: self.close_position(
+                    symbol=s,
+                    notify_reason="time_stop_close",
+                ),
+                timeout_sec=30.0,
+            )
+            self._log_event(
+                "position_management_exit",
+                symbol=symbol,
+                reason="time_stop_close",
+                held_bars=int(held_bars),
+                max_favorable_r=round(float(max_favorable_r), 4),
+                time_stop_bars=int(time_stop_bars),
+            )
+            return True, plan
+
+        return False, plan
+
+    def _replace_management_bracket(
+        self,
+        *,
+        symbol: str,
+        entry_side: Literal["BUY", "SELL"],
+        position_side: str,
+        quantity: float,
+        take_profit_price: float,
+        stop_loss_price: float,
+        reason: str,
+    ) -> None:
+        if self.cfg.mode != "live" or self.rest_client is None or quantity <= 0.0:
+            return
+        if take_profit_price <= 0.0 or stop_loss_price <= 0.0:
+            return
+        runtime_bracket_service = BracketService(
+            planner=BracketPlanner(
+                cfg=BracketConfig(
+                    take_profit_pct=float(self.cfg.behavior.tpsl.take_profit_pct),
+                    stop_loss_pct=float(self.cfg.behavior.tpsl.stop_loss_pct),
+                )
+            ),
+            storage=self.state_store.runtime_storage(),
+            rest_client=self.rest_client,
+            mode=self.cfg.mode,
+        )
+        try:
+            _ = _run_async_blocking(
+                lambda: runtime_bracket_service.replace_with_prices(
+                    symbol=symbol,
+                    entry_side=entry_side,
+                    position_side=cast(Literal["BOTH", "LONG", "SHORT"], position_side),
+                    quantity=float(quantity),
+                    take_profit_price=float(take_profit_price),
+                    stop_loss_price=float(stop_loss_price),
+                ),
+                timeout_sec=15.0,
+            )
+            self._log_event(
+                "position_management_update",
+                symbol=symbol,
+                reason=reason,
+                take_profit_price=round(float(take_profit_price), 6),
+                stop_loss_price=round(float(stop_loss_price), 6),
+                quantity=round(float(quantity), 8),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("position_management_bracket_replace_failed symbol=%s reason=%s", symbol, reason)
+
     def _resolve_bracket_config_for_cycle(
         self,
         *,
@@ -1703,30 +2260,51 @@ class RuntimeController:
         rest_client_any: Any = rest_client
 
         tracked = self._list_tracked_brackets()
-        if not tracked:
+        management_state = self._load_position_management_state()
+        if not tracked and not management_state:
             return
 
         positions, position_rows, positions_ok, _position_error = self._fetch_live_positions()
-        for row in tracked:
-            symbol = str(row.get("symbol") or "").strip().upper()
+        snapshot = None
+        probe = getattr(self.kernel, "probe_market_data", None)
+        if callable(probe):
+            try:
+                snapshot = probe()
+            except Exception:  # noqa: BLE001
+                logger.exception("position_management_market_probe_failed")
+
+        tracked_by_symbol = {
+            str(row.get("symbol") or "").strip().upper(): row for row in tracked if str(row.get("symbol") or "").strip()
+        }
+        symbols = sorted(
+            {
+                *tracked_by_symbol.keys(),
+                *management_state.keys(),
+                *(str(symbol).strip().upper() for symbol in position_rows.keys()),
+            }
+        )
+        next_management_state = dict(management_state)
+
+        for symbol in symbols:
             if not symbol:
                 continue
-            tp_id = str(row.get("tp_order_client_id") or "").strip()
-            sl_id = str(row.get("sl_order_client_id") or "").strip()
-            if not tp_id or not sl_id:
-                continue
+            row = tracked_by_symbol.get(symbol)
+            tp_id = str((row or {}).get("tp_order_client_id") or "").strip()
+            sl_id = str((row or {}).get("sl_order_client_id") or "").strip()
 
-            try:
-                open_orders = _run_async_blocking(
-                    lambda s=symbol: rest_client_any.get_open_algo_orders(symbol=s),
-                    timeout_sec=8.0,
-                )
-            except FutureTimeoutError:
-                logger.warning("open_algo_orders_fetch_timed_out symbol=%s", symbol)
-                continue
-            except Exception:  # noqa: BLE001
-                logger.exception("open_algo_orders_fetch_failed symbol=%s", symbol)
-                continue
+            open_orders: list[dict[str, Any]] = []
+            if tp_id or sl_id:
+                try:
+                    open_orders = _run_async_blocking(
+                        lambda s=symbol: rest_client_any.get_open_algo_orders(symbol=s),
+                        timeout_sec=8.0,
+                    )
+                except FutureTimeoutError:
+                    logger.warning("open_algo_orders_fetch_timed_out symbol=%s", symbol)
+                    continue
+                except Exception:  # noqa: BLE001
+                    logger.exception("open_algo_orders_fetch_failed symbol=%s", symbol)
+                    continue
 
             open_ids: set[str] = set()
             if isinstance(open_orders, list):
@@ -1736,50 +2314,73 @@ class RuntimeController:
                     cid = str(item.get("clientAlgoId") or item.get("clientOrderId") or "").strip()
                     if cid:
                         open_ids.add(cid)
-            extra_managed_ids = {
-                cid
-                for cid in open_ids
-                if cid not in {tp_id, sl_id} and self._is_managed_bracket_algo_id(cid)
-            }
-            for cid in sorted(extra_managed_ids):
-                try:
-                    _ = _run_async_blocking(
-                        lambda s=symbol, current_id=cid: rest_client_any.cancel_algo_order(
-                            params={"symbol": s, "clientAlgoId": current_id}
-                        ),
-                        timeout_sec=8.0,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "extra_bracket_algo_cancel_failed symbol=%s client_algo_id=%s",
-                        symbol,
-                        cid,
-                    )
-
-            if positions_ok:
-                position_amt = _to_float(positions.get(symbol), default=0.0)
-                if abs(position_amt) <= 0.0:
+            if tp_id or sl_id:
+                extra_managed_ids = {
+                    cid
+                    for cid in open_ids
+                    if cid not in {tp_id, sl_id} and self._is_managed_bracket_algo_id(cid)
+                }
+                for cid in sorted(extra_managed_ids):
                     try:
                         _ = _run_async_blocking(
-                            lambda s=symbol: self._bracket_service.cleanup_if_flat(
-                                symbol=s,
-                                position_amt=0.0,
+                            lambda s=symbol, current_id=cid: rest_client_any.cancel_algo_order(
+                                params={"symbol": s, "clientAlgoId": current_id}
                             ),
                             timeout_sec=8.0,
                         )
                     except Exception:  # noqa: BLE001
-                        logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
+                        logger.exception(
+                            "extra_bracket_algo_cancel_failed symbol=%s client_algo_id=%s",
+                            symbol,
+                            cid,
+                        )
+
+            if positions_ok:
+                position_amt = _to_float(positions.get(symbol), default=0.0)
+                if abs(position_amt) <= 0.0:
+                    next_management_state.pop(symbol, None)
+                    if tp_id or sl_id:
+                        try:
+                            _ = _run_async_blocking(
+                                lambda s=symbol: self._bracket_service.cleanup_if_flat(
+                                    symbol=s,
+                                    position_amt=0.0,
+                                ),
+                                timeout_sec=8.0,
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
                     continue
 
                 position_row = position_rows.get(symbol)
+                management_plan = next_management_state.get(symbol)
+                if isinstance(position_row, dict) and isinstance(management_plan, dict):
+                    exited, updated_plan = self._maybe_manage_open_position(
+                        symbol=symbol,
+                        row=position_row,
+                        plan=dict(management_plan),
+                        market_bar=(
+                            self._extract_latest_market_bar(snapshot, symbol=symbol)
+                            if isinstance(snapshot, dict)
+                            else None
+                        ),
+                    )
+                    if exited:
+                        next_management_state.pop(symbol, None)
+                        continue
+                    next_management_state[symbol] = dict(updated_plan)
+
                 if isinstance(position_row, dict):
                     if self._maybe_trigger_trailing_exit(
                         symbol=symbol,
                         row=position_row,
                         rest_client=rest_client_any,
                     ):
+                        next_management_state.pop(symbol, None)
                         continue
 
+            if not (tp_id and sl_id):
+                continue
             tp_open = tp_id in open_ids
             sl_open = sl_id in open_ids
             if tp_open == sl_open:
@@ -1800,6 +2401,8 @@ class RuntimeController:
                     self._maybe_trigger_symbol_sl_flatten(trigger_symbol=symbol)
             except Exception:  # noqa: BLE001
                 logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
+
+        self._save_position_management_state(next_management_state)
 
     def _start_bracket_loop(self) -> None:
         if self.cfg.mode != "live" or self.rest_client is None:

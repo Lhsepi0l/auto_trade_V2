@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from v2.operator.actions import wrap_operator_action
-from v2.operator.debug_bundle import export_runtime_debug_bundle
+from v2.operator.debug_bundle import (
+    export_runtime_debug_bundle,
+    hydrate_runtime_debug_bundle_control_snapshots,
+)
 from v2.operator.guidance import build_operator_guidance
 from v2.operator.presets import PRESETS, PROFILE_KEYS, build_profile_payload
 from v2.operator.read_models import build_operator_console_payload
@@ -154,7 +157,6 @@ class OperatorService:
 
     def set_notify_interval(self, *, notify_interval_sec: int) -> dict[str, Any]:
         sec = max(1, int(notify_interval_sec))
-        _ = self._controller.set_scheduler_interval(float(sec))
         result = self._controller.set_value(
             key="notify_interval_sec",
             value=self._stringify_value(sec),
@@ -164,7 +166,6 @@ class OperatorService:
             raw_result=result,
             context={
                 "notify_interval_sec": sec,
-                "scheduler_tick_sec": sec,
             },
         )
 
@@ -331,6 +332,12 @@ class OperatorService:
             include_all=bool(include_all),
         )
         if bool(result.get("ok")):
+            written = hydrate_runtime_debug_bundle_control_snapshots(
+                bundle_dir=str(result.get("bundle_dir") or ""),
+                controller=self._controller,
+                base_url=base_url,
+            )
+            result["hydrated_control_snapshots"] = written
             self._controller._log_event(
                 "debug_bundle_exported",
                 bundle_dir=result.get("bundle_dir"),

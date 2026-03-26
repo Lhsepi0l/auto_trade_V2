@@ -165,6 +165,34 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
             ).strip()
             or None
         )
+    elif raw_event == "position_management_update":
+        category = "decision"
+        title = "보유 관리 업데이트"
+        main_text = humanize_reason_token(str(reason or "position_management_update"))
+        held_bars = fields.get("held_bars")
+        mfe_r = fields.get("max_favorable_r")
+        sub_parts = []
+        if symbol:
+            sub_parts.append(symbol)
+        if held_bars is not None:
+            sub_parts.append(f"held={held_bars}")
+        if mfe_r is not None:
+            sub_parts.append(f"mfe_r={mfe_r}")
+        sub_text = " / ".join(sub_parts) if sub_parts else None
+    elif raw_event == "position_management_exit":
+        category = "position"
+        title = "보유 관리 청산"
+        main_text = humanize_reason_token(str(reason or "position_management_exit"))
+        held_bars = fields.get("held_bars")
+        mfe_r = fields.get("max_favorable_r")
+        sub_parts = []
+        if symbol:
+            sub_parts.append(symbol)
+        if held_bars is not None:
+            sub_parts.append(f"held={held_bars}")
+        if mfe_r is not None:
+            sub_parts.append(f"mfe_r={mfe_r}")
+        sub_text = " / ".join(sub_parts) if sub_parts else None
     else:
         if reason:
             main_text = humanize_reason_token(str(reason))

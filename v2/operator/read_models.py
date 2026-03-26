@@ -144,6 +144,18 @@ def build_operator_console_payload(
         if default_symbol is not None
         else None
     )
+    effective_margin_budget = _maybe_float(capital.get("budget_usdt"))
+    if effective_margin_budget is None:
+        margin_use_pct = _to_float(risk_config.get("margin_use_pct"), default=1.0)
+        if margin_use_pct <= 0.0:
+            margin_use_pct = 1.0
+        capital_mode = str(risk_config.get("capital_mode") or "").upper()
+        base_budget = (
+            _to_float(risk_config.get("capital_usdt"), default=0.0)
+            if capital_mode == "FIXED_USDT"
+            else _to_float(risk_config.get("margin_budget_usdt"), default=0.0)
+        )
+        effective_margin_budget = base_budget * margin_use_pct
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -313,7 +325,7 @@ def build_operator_console_payload(
         },
         "risk_forms": {
             "margin_budget": {
-                "margin_budget_usdt": _to_float(risk_config.get("margin_budget_usdt"), default=0.0),
+                "margin_budget_usdt": float(effective_margin_budget or 0.0),
                 "max_leverage": _to_float(risk_config.get("max_leverage"), default=0.0),
                 "margin_use_pct": _to_float(risk_config.get("margin_use_pct"), default=1.0),
             },

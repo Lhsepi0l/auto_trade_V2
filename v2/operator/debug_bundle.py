@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "v2" / "scripts" / "export_runtime_debug_bundle.py"
 DEBUG_BUNDLE_ROOT = REPO_ROOT / "logs" / "runtime_debug"
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    _write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def _safe_bundle_dir(bundle_dir: Path) -> Path:
@@ -40,6 +55,53 @@ def resolve_runtime_debug_bundle_archive(*, archive_name: str) -> Path | None:
     if not candidate.exists() or not candidate.is_file():
         return None
     return candidate
+
+
+def hydrate_runtime_debug_bundle_control_snapshots(
+    *,
+    bundle_dir: str | Path,
+    controller: Any,
+    base_url: str,
+) -> list[str]:
+    bundle_path = Path(bundle_dir).resolve()
+    control_dir = bundle_path / "control"
+    base_url_clean = str(base_url).rstrip("/")
+    snapshots = {
+        "healthz": controller._healthz_snapshot(),
+        "readyz": controller._readyz_snapshot(),
+        "readiness": controller._live_readiness_snapshot(),
+        "status": controller._status_snapshot(),
+    }
+    written: list[str] = []
+    for name, payload in snapshots.items():
+        raw_text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+        meta = {
+            "captured_at": _utcnow_iso(),
+            "error": None,
+            "headers": {},
+            "json": payload,
+            "ok": True,
+            "raw_text": raw_text,
+            "source": "controller_snapshot",
+            "status": 200,
+            "url": f"{base_url_clean}/{name}",
+        }
+        _write_json(control_dir / f"{name}.meta.json", meta)
+        _write_text(control_dir / f"{name}.raw.txt", raw_text + "\n")
+        _write_json(control_dir / f"{name}.json", payload)
+        written.append(name)
+
+    summary_path = bundle_path / "SUMMARY.md"
+    if summary_path.exists():
+        extra = (
+            "\n## Direct Control Snapshots\n"
+            "- source: `controller_snapshot`\n"
+            "- files: `control/healthz.json`, `control/readyz.json`, `control/readiness.json`, `control/status.json`\n"
+        )
+        with summary_path.open("a", encoding="utf-8") as handle:
+            handle.write(extra)
+
+    return written
 
 
 def export_runtime_debug_bundle(*, label: str, base_url: str, include_all: bool = False) -> dict[str, Any]:

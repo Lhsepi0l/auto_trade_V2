@@ -255,6 +255,32 @@ def test_alpha_v2_expansion_still_rejects_weak_breakout_after_relaxation() -> No
     assert decision["alpha_blocks"]["alpha_expansion"] == "volume_missing"
 
 
+def test_alpha_v2_expansion_accepts_borderline_volume_after_q070_tuning() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 2.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.70,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    market = _market_for_borderline_expansion()
+    market["15m"][-1]["volume"] = 1600.0
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": market})
+
+    assert decision["intent"] == "LONG"
+    assert decision["alpha_id"] == "alpha_expansion"
+
+
 def test_alpha_v2_expansion_emits_progress_aware_exit_hints() -> None:
     strategy = RA2026AlphaV2(
         params={

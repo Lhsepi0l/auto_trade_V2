@@ -2658,3 +2658,24 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/operator/service.py v2/operator/actions.py v2/control/operator_events.py v2/web_panel/router.py v2/tests/test_web_panel_routes.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 live 운영 병목 1차 실전 수정:
+  - 번들 분석 결과 최근 실거래 구간은 실행 실패가 아니라 `cycle_result=no_candidate` 연속이었고, 주된 이유는 `volume_missing` / `trigger_missing`이었다.
+  - 웹 operator의 `notify_interval` 액션이 `scheduler_tick_sec`까지 같이 바꾸는 버그를 제거했다. 이제 알림 주기는 알림만 바꾸고 엔진 판단 주기는 유지된다.
+  - 웹 로그 추출 액션은 same-process HTTP self-call 때문에 `readyz/status/readiness`가 timeout 날 수 있어, export 완료 후 controller 직접 스냅샷으로 `control/*.json`을 hydrate 하도록 변경했다.
+  - q070 운영 프로파일의 `min_volume_ratio_15m`를 `0.9 -> 0.8`로 완화했고, local backtest/profile override도 동일 값으로 정렬했다.
+  - 1차 보유 관리 루프를 추가했다. 진입 성공 시 strategy `execution` 힌트를 symbol별 management plan으로 저장하고, 보유 중에는 `progress_failed_close`, `time_stop_close`, `progress_extension_applied`, `selective_extension_activated`, `management_breakeven_close`를 평가한다.
+  - 이번 단계의 보유 관리 루프는 `hold / extend / exit / breakeven protection`까지이며, partial reduce와 TP 재배치는 아직 미구현으로 남겨뒀다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py v2/tests/test_operator_service.py v2/tests/test_web_panel_routes.py v2/tests/test_export_runtime_debug_bundle.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과
+- 2026-03-27 live 보유 관리 루프 2차 확장:
+  - 1차 `hold / extend / exit / breakeven protection` 위에 `partial reduce`와 `TP 재배치`를 추가했다.
+  - 실거래 management state는 이제 `tp_partial_ratio`, `tp_partial_at_r`, `move_stop_to_be_at_r`, `partial_reduce_done`를 추적하고, 일정 `R` 도달 시 reduce-only market order로 일부 청산한 뒤 남은 수량 기준으로 브래킷을 재배치한다.
+  - selective extension 활성 시 `selective_extension_take_profit_r` 기준으로 TP를 더 먼 가격으로 재배치하고, 필요 시 stop도 entry 기준으로 끌어올린다.
+  - 동시에 live execution 쪽 `insufficient_available_margin`은 더 이상 고정 크기 아니면 통째로 실패하지 않고, fee buffer를 고려한 최대 가능 수량으로 자동 다운사이징 후 그래도 거래소 최소 수량/노셔널을 못 맞출 때만 실패하도록 바꿨다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'position_management or trailing_exit_closes_position_on_profit_drawdown'` 통과
+    - `python -m pytest -q v2/tests/test_live_execution_service.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

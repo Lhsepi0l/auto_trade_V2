@@ -117,11 +117,36 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
     assert payload["report"]["status"] == "success"
     assert payload["notification"]["provider"] == "ntfy"
     assert payload["notification"]["last_title"] == "자동 리스크 트립"
+    assert payload["risk_forms"]["margin_budget"]["margin_budget_usdt"] == 80.0
     assert payload["guidance"]["panel_scope"]
     assert payload["risk_forms"]["margin_budget"]["margin_use_pct"] == 0.8
     assert payload["risk_forms"]["trailing"]["trailing_mode"] == "PCT"
     assert payload["risk_forms"]["scoring"]["weights"]["10m"] == 0.25
     assert payload["recent_result"]["last_reason_label"] == "이미 판단 작업이 진행중"
+
+
+def test_build_operator_console_payload_prefills_effective_margin_budget_not_base_budget() -> None:
+    payload = build_operator_console_payload(
+        {
+            "profile": "normal",
+            "mode": "live",
+            "env": "prod",
+            "engine_state": {"state": "RUNNING", "updated_at": None},
+            "health": {"ready": True},
+            "scheduler": {"tick_sec": 30.0, "running": True},
+            "capital_snapshot": {"symbol": "BTCUSDT", "budget_usdt": 22.0},
+            "risk_config": {
+                "capital_mode": "MARGIN_BUDGET_USDT",
+                "margin_budget_usdt": 220.0,
+                "margin_use_pct": 0.1,
+                "max_leverage": 50.0,
+                "universe_symbols": ["BTCUSDT"],
+            },
+            "binance": {"positions": {}, "usdt_balance": {}},
+        }
+    )
+
+    assert payload["risk_forms"]["margin_budget"]["margin_budget_usdt"] == 22.0
 
 
 def test_wrap_operator_action_builds_consistent_response() -> None:
@@ -202,9 +227,12 @@ def test_operator_service_updates_universe_and_scoring(tmp_path) -> None:  # typ
     assert risk_after_scoring["score_tf_15m_enabled"] is False
 
 
-def test_operator_service_notify_interval_syncs_scheduler_tick(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_operator_service_notify_interval_does_not_change_scheduler_tick(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
     service = OperatorService(controller=controller)
+    before = controller.get_risk()["scheduler_tick_sec"]
 
     out = service.set_notify_interval(notify_interval_sec=600)
     risk = controller.get_risk()
@@ -212,7 +240,38 @@ def test_operator_service_notify_interval_syncs_scheduler_tick(tmp_path) -> None
     assert out["action"] == "notify_interval"
     assert out["result"]["applied_value"] == 600
     assert risk["notify_interval_sec"] == 600
-    assert risk["scheduler_tick_sec"] == 600
+    assert risk["scheduler_tick_sec"] == before
+
+
+def test_operator_service_export_debug_bundle_hydrates_control_snapshots(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+    bundle_dir = tmp_path / "logs" / "runtime_debug" / "20260327T000000Z_operator_logs"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "SUMMARY.md").write_text("# Runtime Debug Bundle\n", encoding="utf-8")
+
+    def _fake_export(*, label: str, base_url: str, include_all: bool = False) -> dict[str, object]:
+        return {
+            "ok": True,
+            "bundle_dir": str(bundle_dir),
+            "summary_path": str(bundle_dir / "SUMMARY.md"),
+            "archive_path": str(bundle_dir.with_suffix(".zip")),
+            "archive_name": "20260327T000000Z_operator_logs.zip",
+            "download_url": f"{base_url}/operator/api/debug-bundles/20260327T000000Z_operator_logs.zip",
+            "full_export": include_all,
+        }
+
+    monkeypatch.setattr("v2.operator.service.export_runtime_debug_bundle", _fake_export)
+
+    out = service.export_debug_bundle(base_url="http://testserver", include_all=False)
+
+    assert out["action"] == "debug_bundle"
+    assert out["result"]["hydrated_control_snapshots"] == ["healthz", "readyz", "readiness", "status"]
+    assert (bundle_dir / "control" / "status.json").exists()
+    assert (bundle_dir / "control" / "readyz.json").exists()
 
 
 def test_read_model_marks_unset_scoring_fields_clearly() -> None:

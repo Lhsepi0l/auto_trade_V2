@@ -216,6 +216,31 @@ def test_live_execution_rejects_when_available_margin_insufficient() -> None:
     assert len(rest.calls) == 0
 
 
+def test_live_execution_downsizes_qty_to_fit_available_margin() -> None:
+    @dataclass
+    class _TightBalanceREST(_FakeREST):
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "10.0"}]
+
+    rest = _TightBalanceREST(calls=[], leverage_calls=[])
+    svc = BinanceLiveExecutionService(rest_client=rest)
+    out = svc.execute(
+        candidate=Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0),
+        size=SizePlan(symbol="BTCUSDT", qty=1.0, leverage=10.0, notional=100.0),
+        context=KernelContext(
+            mode="live",
+            profile="ra_2026_alpha_v2_expansion_live_candidate",
+            symbol="BTCUSDT",
+            tick=1,
+            dry_run=False,
+        ),
+    )
+
+    assert out.ok is True
+    assert len(rest.calls) == 1
+    assert rest.calls[0]["quantity"] == "0.99000000"
+
+
 def test_live_execution_reuses_existing_submission_for_same_intent(tmp_path) -> None:  # type: ignore[no-untyped-def]
     storage = RuntimeStorage(sqlite_path=str(tmp_path / "live_execution_idempotency.sqlite3"))
     storage.ensure_schema()

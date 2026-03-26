@@ -1601,6 +1601,12 @@ class RA2026AlphaV2CandidateSelector(CandidateSelector):
                     expected_move_frac=_to_float(decision.get("expected_move_frac")),
                     required_move_frac=_to_float(decision.get("required_move_frac")),
                     spread_pct=spread_pct,
+                    take_profit_hint=_to_float((decision.get("sl_tp") or {}).get("take_profit")),
+                    execution_hints=(
+                        copy.deepcopy(decision.get("execution"))
+                        if isinstance(decision.get("execution"), dict)
+                        else None
+                    ),
                 )
             )
 

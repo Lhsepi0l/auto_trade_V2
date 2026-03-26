@@ -173,7 +173,7 @@ def test_local_backtest_profile_alpha_overrides_maps_expansion_profiles() -> Non
         "expansion_body_ratio_min": 0.18,
         "expansion_close_location_min": 0.35,
         "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.9,
+        "min_volume_ratio_15m": 0.8,
         "take_profit_r": 2.0,
         "time_stop_bars": 18,
         "trend_adx_min_4h": 14.0,

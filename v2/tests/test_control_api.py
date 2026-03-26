@@ -226,7 +226,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert risk_payload["universe_symbols"] == ["BTCUSDT"]
     assert risk_payload["trend_adx_min_4h"] == 14.0
     assert risk_payload["trend_adx_rising_lookback_4h"] == 0
-    assert risk_payload["min_volume_ratio_15m"] == 0.9
+    assert risk_payload["min_volume_ratio_15m"] == 0.8
     assert risk_payload["expansion_buffer_bps"] == 2.0
     assert risk_payload["expansion_quality_score_v2_min"] == 0.7
 
@@ -250,7 +250,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     status_payload = status.json()
     assert status_payload["live_readiness"]["profile"] == "ra_2026_alpha_v2_expansion_verified_q070"
     assert status_payload["config_summary"]["strategy_runtime"]["trend_adx_min_4h"] == 14.0
-    assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 0.9
+    assert status_payload["config_summary"]["strategy_runtime"]["min_volume_ratio_15m"] == 0.8
     assert status_payload["config_summary"]["strategy_runtime"]["squeeze_percentile_threshold"] == 0.35
     assert status_payload["config_summary"]["strategy_runtime"]["expansion_body_ratio_min"] == 0.18
     assert status_payload["config_summary"]["strategy_runtime"]["expansion_close_location_min"] == 0.35
@@ -296,7 +296,7 @@ def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> No
     assert kwargs["trend_adx_min_4h"] == 24.0
     assert kwargs["trend_adx_rising_lookback_4h"] == 0
     assert kwargs["breakout_buffer_bps"] == 3.0
-    assert kwargs["min_volume_ratio_15m"] == 0.9
+    assert kwargs["min_volume_ratio_15m"] == 0.8
     assert kwargs["expansion_buffer_bps"] == 2.0
     assert kwargs["expansion_range_atr_min"] == 0.7
     assert kwargs["expected_move_cost_mult"] == 1.6
@@ -359,7 +359,7 @@ def test_legacy_strategy_runtime_defaults_migrate_to_profile_values(tmp_path) ->
     risk = controller.get_risk()
     assert risk["trend_adx_min_4h"] == 14.0
     assert risk["breakout_buffer_bps"] == 3.0
-    assert risk["min_volume_ratio_15m"] == 0.9
+    assert risk["min_volume_ratio_15m"] == 0.8
 
     persisted = state_store.load_runtime_risk_config()
     assert "trend_adx_min_4h" not in persisted
@@ -2671,6 +2671,577 @@ def test_control_api_trailing_exit_closes_position_on_profit_drawdown(
     rows = storage.list_bracket_states()
     assert rows[0]["state"] == "CLEANED"
     assert float(controller._status_snapshot()["watchdog"]["last_trailing_distance_pct"]) == 0.5
+
+
+def test_control_api_records_position_management_plan_for_executed_cycle(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    cycle = KernelCycleResult(
+        state="executed",
+        reason="executed",
+        candidate=Candidate(
+            symbol="BTCUSDT",
+            side="BUY",
+            score=1.0,
+            entry_price=100.0,
+            stop_price_hint=98.0,
+            take_profit_hint=104.0,
+            execution_hints={
+                "time_stop_bars": 12,
+                "progress_check_bars": 6,
+                "progress_min_mfe_r": 0.35,
+                "progress_extend_trigger_r": 1.0,
+                "progress_extend_bars": 6,
+                "entry_quality_score_v2": 0.82,
+            },
+        ),
+        size=SizePlan(symbol="BTCUSDT", qty=0.01, leverage=3.0, notional=1.0),
+        execution=ExecutionResult(ok=True, order_id="oid-1", reason="live_order_submitted"),
+    )
+
+    controller._record_position_management_plan(cycle=cycle)
+
+    payload = controller.state_store.runtime_storage().load_runtime_marker(
+        marker_key="position_management_state"
+    )
+    assert payload is not None
+    plan = payload["positions"]["BTCUSDT"]
+    assert plan["entry_price"] == 100.0
+    assert plan["stop_price"] == 98.0
+    assert plan["take_profit_price"] == 104.0
+    assert plan["progress_check_bars"] == 6
+
+
+def test_control_api_position_management_progress_failure_closes_position(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_position_manage_progress.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+        def probe_market_data(self) -> dict[str, object]:
+            now_ms = int(time.time() * 1000)
+            return {
+                "symbol": "BTCUSDT",
+                "market": {
+                    "15m": [
+                        [now_ms - 900000, "100.0", "100.4", "99.8", "100.1", "1500", now_ms]
+                    ]
+                },
+                "symbols": {},
+            }
+
+    class _AlgoRESTNoop:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.01",
+                    "entryPrice": "100.0",
+                    "markPrice": "100.1",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_AlgoRESTNoop(),
+    )
+
+    entry_time_ms = int(time.time() * 1000) - (2 * 15 * 60 * 1000)
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "entry_price": 100.0,
+                    "stop_price": 98.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": entry_time_ms,
+                    "max_favorable_price": 100.0,
+                    "max_favorable_r": 0.0,
+                    "progress_check_bars": 1,
+                    "progress_min_mfe_r": 0.5,
+                    "progress_extend_trigger_r": 0.0,
+                    "progress_extend_bars": 0,
+                    "time_stop_bars": 12,
+                    "current_time_stop_bars": 12,
+                    "selective_extension_proof_bars": 0,
+                    "selective_extension_min_mfe_r": 0.0,
+                    "selective_extension_min_regime_strength": 0.0,
+                    "selective_extension_min_bias_strength": 0.0,
+                    "selective_extension_min_quality_score_v2": 0.0,
+                    "selective_extension_time_stop_bars": 0,
+                    "selective_extension_move_stop_to_be_at_r": 0.0,
+                }
+            }
+        },
+    )
+
+    calls: list[tuple[str, str]] = []
+
+    async def _fake_close_position(
+        *,
+        symbol: str,
+        notify_reason: str = "forced_close",
+    ) -> dict[str, object]:
+        calls.append((symbol, notify_reason))
+        return {"symbol": symbol, "detail": {}}
+
+    controller.close_position = _fake_close_position  # type: ignore[method-assign]
+
+    controller._poll_brackets_once()
+
+    assert calls == [("BTCUSDT", "progress_failed_close")]
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    assert payload["positions"] == {}
+
+
+def test_control_api_position_management_selective_extension_extends_hold_window(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_position_manage_extend.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+        def probe_market_data(self) -> dict[str, object]:
+            now_ms = int(time.time() * 1000)
+            return {
+                "symbol": "BTCUSDT",
+                "market": {
+                    "15m": [
+                        [now_ms - 900000, "100.0", "103.0", "99.9", "102.2", "2500", now_ms]
+                    ]
+                },
+                "symbols": {},
+            }
+
+    class _AlgoRESTNoop:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.01",
+                    "entryPrice": "100.0",
+                    "markPrice": "102.2",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_AlgoRESTNoop(),
+    )
+
+    entry_time_ms = int(time.time() * 1000) - (15 * 60 * 1000)
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "entry_price": 100.0,
+                    "stop_price": 98.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": entry_time_ms,
+                    "entry_regime_strength": 0.7,
+                    "entry_bias_strength": 0.7,
+                    "entry_quality_score_v2": 0.82,
+                    "max_favorable_price": 100.0,
+                    "max_favorable_r": 0.0,
+                    "progress_check_bars": 0,
+                    "progress_min_mfe_r": 0.0,
+                    "progress_extend_trigger_r": 0.5,
+                    "progress_extend_bars": 3,
+                    "time_stop_bars": 12,
+                    "current_time_stop_bars": 12,
+                    "selective_extension_proof_bars": 2,
+                    "selective_extension_min_mfe_r": 0.75,
+                    "selective_extension_min_regime_strength": 0.55,
+                    "selective_extension_min_bias_strength": 0.55,
+                    "selective_extension_min_quality_score_v2": 0.78,
+                    "selective_extension_time_stop_bars": 24,
+                    "selective_extension_move_stop_to_be_at_r": 0.75,
+                }
+            }
+        },
+    )
+
+    controller._poll_brackets_once()
+
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    plan = payload["positions"]["BTCUSDT"]
+    assert plan["progress_extension_applied"] is True
+    assert plan["selective_extension_activated"] is True
+    assert plan["current_time_stop_bars"] == 24
+    assert plan["breakeven_protection_armed"] is True
+
+
+def test_control_api_position_management_partial_reduce_reprices_bracket(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_position_manage_partial.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="v2tp-old",
+        sl_order_client_id="v2sl-old",
+        state="ACTIVE",
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+        def probe_market_data(self) -> dict[str, object]:
+            now_ms = int(time.time() * 1000)
+            return {
+                "symbol": "BTCUSDT",
+                "market": {
+                    "15m": [
+                        [now_ms - 900000, "100.0", "102.8", "99.8", "102.5", "2400", now_ms]
+                    ]
+                },
+                "symbols": {},
+            }
+
+    class _AlgoRESTManage:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+            self.place_calls: list[dict[str, str]] = []
+            self.reduce_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.place_calls.append(dict(params))
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2tp-old"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2sl-old"},
+            ]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.04",
+                    "entryPrice": "100.0",
+                    "markPrice": "102.5",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+        async def place_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: str,
+            quantity: float,
+            position_side: str = "BOTH",
+        ) -> dict[str, str]:
+            self.reduce_calls.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": f"{quantity:.8f}",
+                    "position_side": position_side,
+                }
+            )
+            return {}
+
+    rest = _AlgoRESTManage()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    entry_time_ms = int(time.time() * 1000) - (15 * 60 * 1000)
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "entry_price": 100.0,
+                    "stop_price": 98.0,
+                    "take_profit_price": 104.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": entry_time_ms,
+                    "max_favorable_price": 100.0,
+                    "max_favorable_r": 0.0,
+                    "progress_check_bars": 0,
+                    "progress_min_mfe_r": 0.0,
+                    "progress_extend_trigger_r": 0.0,
+                    "progress_extend_bars": 0,
+                    "reward_risk_reference_r": 2.0,
+                    "tp_partial_ratio": 0.25,
+                    "tp_partial_at_r": 1.0,
+                    "move_stop_to_be_at_r": 1.0,
+                    "time_stop_bars": 12,
+                    "current_time_stop_bars": 12,
+                    "selective_extension_proof_bars": 0,
+                    "selective_extension_min_mfe_r": 0.0,
+                    "selective_extension_min_regime_strength": 0.0,
+                    "selective_extension_min_bias_strength": 0.0,
+                    "selective_extension_min_quality_score_v2": 0.0,
+                    "selective_extension_time_stop_bars": 0,
+                    "selective_extension_take_profit_r": 0.0,
+                    "selective_extension_move_stop_to_be_at_r": 0.0,
+                    "partial_reduce_done": False,
+                    "breakeven_protection_armed": False,
+                }
+            }
+        },
+    )
+
+    controller._poll_brackets_once()
+
+    assert len(rest.reduce_calls) == 1
+    assert rest.reduce_calls[0]["side"] == "SELL"
+    assert rest.reduce_calls[0]["quantity"] == "0.01000000"
+    canceled_ids = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
+    assert canceled_ids == {"v2tp-old", "v2sl-old"}
+    assert len(rest.place_calls) == 2
+    trigger_prices = {call["type"]: call["triggerPrice"] for call in rest.place_calls}
+    assert trigger_prices["TAKE_PROFIT_MARKET"] == "104"
+    assert trigger_prices["STOP_MARKET"] == "100"
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    plan = payload["positions"]["BTCUSDT"]
+    assert plan["partial_reduce_done"] is True
+    assert plan["breakeven_protection_armed"] is True
+    assert plan["stop_price"] == 100.0
+
+
+def test_control_api_position_management_selective_extension_reprices_take_profit(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_position_manage_tp.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="v2tp-old",
+        sl_order_client_id="v2sl-old",
+        state="ACTIVE",
+    )
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+        def probe_market_data(self) -> dict[str, object]:
+            now_ms = int(time.time() * 1000)
+            return {
+                "symbol": "BTCUSDT",
+                "market": {
+                    "15m": [
+                        [now_ms - 900000, "100.0", "102.8", "99.8", "102.4", "2400", now_ms]
+                    ]
+                },
+                "symbols": {},
+            }
+
+    class _AlgoRESTManage:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+            self.place_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.place_calls.append(dict(params))
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2tp-old"},
+                {"symbol": "BTCUSDT", "clientAlgoId": "v2sl-old"},
+            ]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.03",
+                    "entryPrice": "100.0",
+                    "markPrice": "102.4",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+    rest = _AlgoRESTManage()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    entry_time_ms = int(time.time() * 1000) - (15 * 60 * 1000)
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "entry_price": 100.0,
+                    "stop_price": 98.0,
+                    "take_profit_price": 104.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": entry_time_ms,
+                    "entry_regime_strength": 0.7,
+                    "entry_bias_strength": 0.7,
+                    "entry_quality_score_v2": 0.82,
+                    "max_favorable_price": 100.0,
+                    "max_favorable_r": 0.0,
+                    "progress_check_bars": 0,
+                    "progress_min_mfe_r": 0.0,
+                    "progress_extend_trigger_r": 0.0,
+                    "progress_extend_bars": 0,
+                    "reward_risk_reference_r": 2.0,
+                    "tp_partial_ratio": 0.0,
+                    "tp_partial_at_r": 0.0,
+                    "move_stop_to_be_at_r": 0.0,
+                    "time_stop_bars": 12,
+                    "current_time_stop_bars": 12,
+                    "selective_extension_proof_bars": 2,
+                    "selective_extension_min_mfe_r": 0.75,
+                    "selective_extension_min_regime_strength": 0.55,
+                    "selective_extension_min_bias_strength": 0.55,
+                    "selective_extension_min_quality_score_v2": 0.78,
+                    "selective_extension_time_stop_bars": 24,
+                    "selective_extension_take_profit_r": 2.5,
+                    "selective_extension_move_stop_to_be_at_r": 0.0,
+                    "partial_reduce_done": True,
+                    "breakeven_protection_armed": False,
+                }
+            }
+        },
+    )
+
+    controller._poll_brackets_once()
+
+    canceled_ids = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
+    assert canceled_ids == {"v2tp-old", "v2sl-old"}
+    trigger_prices = {call["type"]: call["triggerPrice"] for call in rest.place_calls}
+    assert trigger_prices["TAKE_PROFIT_MARKET"] == "105"
+    assert trigger_prices["STOP_MARKET"] == "98"
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    plan = payload["positions"]["BTCUSDT"]
+    assert plan["selective_extension_activated"] is True
+    assert plan["take_profit_price"] == 105.0
 
 
 def test_control_api_adaptive_regime_tpsl_scales_with_bull_multiplier(

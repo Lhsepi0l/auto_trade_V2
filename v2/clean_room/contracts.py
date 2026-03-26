@@ -63,6 +63,8 @@ class Candidate:
     expected_move_frac: float | None = None
     required_move_frac: float | None = None
     spread_pct: float | None = None
+    take_profit_hint: float | None = None
+    execution_hints: dict[str, float | int | bool] | None = None
 
 
 @dataclass(frozen=True)

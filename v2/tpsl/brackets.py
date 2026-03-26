@@ -259,6 +259,112 @@ class BracketService:
             state=runtime.state,
         )
 
+    async def _cancel_runtime_orders(self, *, symbol: str, runtime: BracketRuntime | None) -> None:
+        if self._mode != "live" or self._rest is None or runtime is None:
+            return
+        cancel_targets = {
+            str(runtime.tp_order_client_id or "").strip(),
+            str(runtime.sl_order_client_id or "").strip(),
+        }
+        cancel_targets = {cid for cid in cancel_targets if cid}
+        for cid in sorted(cancel_targets):
+            await self._rest.cancel_algo_order(
+                params={"symbol": symbol.upper(), "clientAlgoId": cid}
+            )
+
+    async def _place_bracket_orders(
+        self,
+        *,
+        symbol: str,
+        entry_side: EntrySide,
+        position_side: HedgePositionSide,
+        quantity: float,
+        take_profit_price: float,
+        stop_loss_price: float,
+        tp_client_algo_id: str,
+        sl_client_algo_id: str,
+    ) -> dict[str, Any]:
+        exit_side: EntrySide = "SELL" if str(entry_side).upper() == "BUY" else "BUY"
+        step_size, tick_size, min_qty = await self._resolve_symbol_rules(symbol)
+        qty = float(quantity)
+        if step_size > 0:
+            qty = self._floor_to_step(qty, step_size)
+        if min_qty > 0 and qty < min_qty:
+            qty = min_qty
+            if step_size > 0:
+                qty = self._round_to_step(qty, step_size)
+
+        tp_trigger = float(take_profit_price)
+        sl_trigger = float(stop_loss_price)
+        if tick_size > 0:
+            tp_trigger = self._round_to_step(tp_trigger, tick_size)
+            sl_trigger = self._round_to_step(sl_trigger, tick_size)
+
+        tp_payload = {
+            "algoType": "CONDITIONAL",
+            "symbol": str(symbol).upper(),
+            "side": exit_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "positionSide": position_side,
+            "quantity": self._decimal_string(qty),
+            "triggerPrice": self._decimal_string(tp_trigger),
+            "workingType": self._planner.cfg.working_type,
+            "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
+            "reduceOnly": "true",
+            "clientAlgoId": tp_client_algo_id,
+        }
+        sl_payload = {
+            "algoType": "CONDITIONAL",
+            "symbol": str(symbol).upper(),
+            "side": exit_side,
+            "type": "STOP_MARKET",
+            "positionSide": position_side,
+            "quantity": self._decimal_string(qty),
+            "triggerPrice": self._decimal_string(sl_trigger),
+            "workingType": self._planner.cfg.working_type,
+            "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
+            "reduceOnly": "true",
+            "clientAlgoId": sl_client_algo_id,
+        }
+
+        self._persist(
+            runtime=BracketRuntime(
+                symbol=str(symbol).upper(),
+                tp_order_client_id=tp_client_algo_id,
+                sl_order_client_id=sl_client_algo_id,
+                state="PLACED",
+            )
+        )
+
+        tp_resp: dict[str, Any] = {}
+        sl_resp: dict[str, Any] = {}
+        if self._mode == "live":
+            if self._rest is None:
+                raise ValueError("live mode requires rest_client")
+            tp_resp = await self._rest.place_algo_order(params=tp_payload)
+            sl_resp = await self._rest.place_algo_order(params=sl_payload)
+        else:
+            self._print_shadow_payloads(
+                symbol=str(symbol).upper(),
+                tp_payload=tp_payload,
+                sl_payload=sl_payload,
+            )
+
+        self._persist(
+            runtime=BracketRuntime(
+                symbol=str(symbol).upper(),
+                tp_order_client_id=tp_client_algo_id,
+                sl_order_client_id=sl_client_algo_id,
+                state="ACTIVE",
+            )
+        )
+        return {
+            "tp_payload": tp_payload,
+            "sl_payload": sl_payload,
+            "tp_response": tp_resp,
+            "sl_response": sl_resp,
+        }
+
     def _transition(self, *, symbol: str, to_state: BracketState) -> BracketRuntime:
         current = self._get_runtime(symbol=symbol)
         if current is None:
@@ -326,72 +432,66 @@ class BracketService:
                 state="CREATED",
             )
         )
-
-        exit_side: EntrySide = "SELL" if planned.entry_side == "BUY" else "BUY"
-        step_size, tick_size, min_qty = await self._resolve_symbol_rules(planned.symbol)
-        qty = float(planned.quantity)
-        if step_size > 0:
-            qty = self._floor_to_step(qty, step_size)
-        if min_qty > 0 and qty < min_qty:
-            qty = min_qty
-            if step_size > 0:
-                qty = self._round_to_step(qty, step_size)
-
-        tp_trigger = float(planned.take_profit_price)
-        sl_trigger = float(planned.stop_loss_price)
-        if tick_size > 0:
-            tp_trigger = self._round_to_step(tp_trigger, tick_size)
-            sl_trigger = self._round_to_step(sl_trigger, tick_size)
-
-        tp_payload = {
-            "algoType": "CONDITIONAL",
-            "symbol": planned.symbol,
-            "side": exit_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "positionSide": planned.position_side,
-            "quantity": self._decimal_string(qty),
-            "triggerPrice": self._decimal_string(tp_trigger),
-            "workingType": self._planner.cfg.working_type,
-            "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
-            "reduceOnly": "true",
-            "clientAlgoId": planned.tp_client_algo_id,
-        }
-        sl_payload = {
-            "algoType": "CONDITIONAL",
-            "symbol": planned.symbol,
-            "side": exit_side,
-            "type": "STOP_MARKET",
-            "positionSide": planned.position_side,
-            "quantity": self._decimal_string(qty),
-            "triggerPrice": self._decimal_string(sl_trigger),
-            "workingType": self._planner.cfg.working_type,
-            "priceProtect": "TRUE" if self._planner.cfg.price_protect else "FALSE",
-            "reduceOnly": "true",
-            "clientAlgoId": planned.sl_client_algo_id,
-        }
-
-        self._transition(symbol=planned.symbol, to_state="PLACED")
-        tp_resp: dict[str, Any] = {}
-        sl_resp: dict[str, Any] = {}
-        if self._mode == "live":
-            if self._rest is None:
-                raise ValueError("live mode requires rest_client")
-            tp_resp = await self._rest.place_algo_order(params=tp_payload)
-            sl_resp = await self._rest.place_algo_order(params=sl_payload)
-        else:
-            self._print_shadow_payloads(
-                symbol=planned.symbol,
-                tp_payload=tp_payload,
-                sl_payload=sl_payload,
-            )
-        self._transition(symbol=planned.symbol, to_state="ACTIVE")
+        placement = await self._place_bracket_orders(
+            symbol=planned.symbol,
+            entry_side=planned.entry_side,
+            position_side=planned.position_side,
+            quantity=planned.quantity,
+            take_profit_price=planned.take_profit_price,
+            stop_loss_price=planned.stop_loss_price,
+            tp_client_algo_id=planned.tp_client_algo_id,
+            sl_client_algo_id=planned.sl_client_algo_id,
+        )
 
         return {
             "planned": asdict(planned),
-            "tp_payload": tp_payload,
-            "sl_payload": sl_payload,
-            "tp_response": tp_resp,
-            "sl_response": sl_resp,
+            **placement,
+        }
+
+    async def replace_with_prices(
+        self,
+        *,
+        symbol: str,
+        entry_side: EntrySide,
+        position_side: HedgePositionSide = "BOTH",
+        quantity: float,
+        take_profit_price: float,
+        stop_loss_price: float,
+    ) -> dict[str, Any]:
+        symbol_u = str(symbol).upper()
+        runtime = self._get_runtime(symbol=symbol_u)
+        await self._cancel_runtime_orders(symbol=symbol_u, runtime=runtime)
+        cleaned = BracketRuntime(
+            symbol=symbol_u,
+            tp_order_client_id=None,
+            sl_order_client_id=None,
+            state="CLEANED",
+        )
+        self._persist(runtime=cleaned)
+
+        planned = {
+            "symbol": symbol_u,
+            "entry_side": str(entry_side).upper(),
+            "position_side": position_side,
+            "quantity": float(quantity),
+            "take_profit_price": _round_price(float(take_profit_price)),
+            "stop_loss_price": _round_price(float(stop_loss_price)),
+            "tp_client_algo_id": generate_client_order_id(prefix="v2tp", max_length=31),
+            "sl_client_algo_id": generate_client_order_id(prefix="v2sl", max_length=31),
+        }
+        placement = await self._place_bracket_orders(
+            symbol=symbol_u,
+            entry_side=cast(EntrySide, planned["entry_side"]),
+            position_side=position_side,
+            quantity=float(planned["quantity"]),
+            take_profit_price=float(planned["take_profit_price"]),
+            stop_loss_price=float(planned["stop_loss_price"]),
+            tp_client_algo_id=str(planned["tp_client_algo_id"]),
+            sl_client_algo_id=str(planned["sl_client_algo_id"]),
+        )
+        return {
+            "planned": dict(planned),
+            **placement,
         }
 
     async def on_leg_filled(self, *, symbol: str, filled_client_algo_id: str) -> BracketRuntime:

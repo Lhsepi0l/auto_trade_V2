@@ -809,14 +809,26 @@ class BinanceLiveExecutionService:
                 fee_buffer = required_margin * 0.01
                 available_usdt = self._fetch_available_usdt()
                 if available_usdt is not None and (required_margin + fee_buffer) > available_usdt:
-                    return ExecutionResult(
-                        ok=False,
-                        reason=(
-                            "insufficient_available_margin:"
-                            f"required={required_margin + fee_buffer:.6f},"
-                            f"available={available_usdt:.6f}"
-                        ),
-                    )
+                    affordable_margin = float(available_usdt) / 1.01
+                    affordable_notional = max(affordable_margin * float(leverage_int), 0.0)
+                    affordable_qty = affordable_notional / float(candidate.entry_price)
+                    if step_size > 0:
+                        affordable_qty = self._floor_to_step(affordable_qty, step_size)
+                    qty = min(qty, max(affordable_qty, 0.0))
+                    est_notional = qty * float(candidate.entry_price)
+                    if min_notional is not None and est_notional < float(min_notional):
+                        qty = 0.0
+                    if min_qty > 0 and qty < min_qty:
+                        qty = 0.0
+                    if qty <= 0.0:
+                        return ExecutionResult(
+                            ok=False,
+                            reason=(
+                                "insufficient_available_margin:"
+                                f"required={required_margin + fee_buffer:.6f},"
+                                f"available={available_usdt:.6f}"
+                            ),
+                        )
 
             payload["quantity"] = f"{qty:.8f}"
             if self._idempotency_enabled and self._storage is not None:

@@ -192,6 +192,7 @@ def run_cycle_once_locked(
                 controller.order_manager.submit({"symbol": submit_symbol, "mode": controller.cfg.mode})
 
         for actionable in actionable_cycles:
+            controller._record_position_management_plan(cycle=actionable)
             controller._place_brackets_for_cycle(cycle=actionable)
 
         controller._last_cycle["tick_finished_at"] = _utcnow_iso()

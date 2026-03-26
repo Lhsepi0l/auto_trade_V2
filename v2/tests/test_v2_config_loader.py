@@ -63,7 +63,7 @@ def test_alpha_verified_q070_profile_loads() -> None:
     assert enabled[0].params["expansion_body_ratio_min"] == 0.18
     assert enabled[0].params["expansion_close_location_min"] == 0.35
     assert enabled[0].params["expansion_width_expansion_min"] == 0.02
-    assert enabled[0].params["min_volume_ratio_15m"] == 0.9
+    assert enabled[0].params["min_volume_ratio_15m"] == 0.8
     assert enabled[0].params["expansion_quality_score_v2_min"] == 0.70
 
 
