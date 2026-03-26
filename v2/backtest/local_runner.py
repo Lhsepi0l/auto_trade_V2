@@ -179,7 +179,7 @@ def _local_backtest_profile_alpha_overrides(profile_name: str) -> dict[str, Any]
         "ra_2026_alpha_v2_expansion_verified_q070": {
             "enabled_alphas": ["alpha_expansion"],
             "squeeze_percentile_threshold": 0.35,
-            "expansion_buffer_bps": 2.0,
+            "expansion_buffer_bps": 1.5,
             "expansion_range_atr_min": 0.7,
             "expansion_body_ratio_min": 0.18,
             "expansion_close_location_min": 0.35,

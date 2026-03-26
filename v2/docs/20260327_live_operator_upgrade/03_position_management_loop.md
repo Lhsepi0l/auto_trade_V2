@@ -88,16 +88,26 @@
 - 현재 decision이 `volume_missing`, `trigger_missing`, `quality_score_v2_missing` 같은 약화/차단 상태면
 - `25%` reduce-only 청산을 한 번 더 실행한다.
 
-### 4.5 alpha / regime 역전 기반 강제 청산
+### 4.5 signal weakness 2단계 reduce
+- 약화가 stage 1 이후에도 더 심해지면
+- 한 번 더 reduce-only 청산을 실행한다.
+- 현재 구현은 `weak_reduce_stage`
+  - `0 -> 1`
+  - `1 -> 2`
+  두 단계로 관리한다.
+- 2단계 reduce 비율은 alpha / regime 상태에 따라 달라진다.
+
+### 4.6 alpha / regime 역전 기반 강제 청산
 - 현재 심볼에서 반대 방향 candidate가 뜨면 `signal_flip_close`
 - 현재 `regime_missing` 또는 `bias_missing`로 구조가 무너지면 `regime_bias_lost_close`
 
-### 4.6 runner lock
+### 4.7 runner lock
 - partial reduce 이후 이익이 더 커지면
 - stop을 단계적으로 끌어올린다.
-- 현재 구현:
-  - `>= 1.5R`면 `0.5R` lock
-  - `>= 2.0R`면 `1.0R` lock
+- 현재 구현은 고정값이 아니라 변동성 버킷 기반이다.
+  - 고변동 구간: lock을 더 느슨하게
+  - 저변동 구간: lock을 더 타이트하게
+  - 중간 변동 구간: 기본 lock
 - 이때 남은 수량 기준으로 브래킷 stop을 다시 건다.
 
 ## 5. 현재 행동 요약
@@ -126,8 +136,9 @@
 3. BE protection
 4. selective extension과 TP 재배치
 5. signal weakness reduce
-6. signal flip / regime-bias lost close
-7. runner lock 재배치
+6. signal weakness 2단계 reduce
+7. signal flip / regime-bias lost close
+8. volatility-based runner lock 재배치
 
 즉, 이전의 "거의 브래킷/트레일링만 있던 상태"는 넘어섰고, 실전형 `hold / reduce / extend / exit` 루프가 존재한다고 봐도 된다.
 
@@ -147,5 +158,7 @@
 
 1. signal weakness를 1단계가 아니라 2단계(25% -> 50%)로 더 세분화
 2. alpha별 / regime별 동적 reduce 비율 차등화
-3. runner lock을 고정 `0.5R / 1.0R`이 아니라 volatility 기반으로 더 세밀하게 조정
+3. volatility 기반 runner lock을 ATR/시장 상태 기반으로 더 세밀하게 조정
 4. live 성과 로그를 보고 q070 gate를 한 번 더 튜닝
+
+위 1, 2, 3은 이번 단계에서 1차 구현이 이미 들어갔고, 이후에는 숫자 조정과 성과 검증이 핵심이다.

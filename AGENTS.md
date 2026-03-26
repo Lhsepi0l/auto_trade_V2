@@ -2691,3 +2691,14 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
     - `python -m ruff check v2/common/operator_labels.py v2/control/cycle.py v2/control/api.py v2/control/operator_events.py v2/tests/test_operator_service.py` 통과
     - `python -m ruff check v2 v2/tests` 통과
     - `python -m pytest -q` 전체 통과
+- 2026-03-27 live 포지션 매니저 3차 확장:
+  - signal weakness reduce를 1단계에서 끝내지 않고 `weak_reduce_stage=0/1/2` 2단계 감속으로 확장했다.
+  - reduce 비율은 alpha/regime 상태에 따라 다르게 계산하고, `UNKNOWN/SIDEWAYS` 구간은 더 공격적으로 줄이도록 조정했다.
+  - 반대 방향 candidate가 뜨면 `signal_flip_close`, `regime_missing/bias_missing`면 `regime_bias_lost_close`를 수행한다.
+  - partial reduce 이후 runner stop은 고정 `0.5R/1.0R` 대신 `volatility_frac` 버킷 기준으로 lock target을 다르게 적용한다.
+  - q070 진입 완화는 `min_volume_ratio_15m=0.8`에 더해 `expansion_buffer_bps=1.5`까지 내려 `trigger_missing` 과잉 차단을 조금 더 줄였다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_control_api.py -k 'position_management or trailing_exit_closes_position_on_profit_drawdown'` 통과
+    - `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_control_api.py v2/tests/test_v2_local_backtest.py` 통과
+    - `python -m ruff check v2 v2/tests` 통과
+    - `python -m pytest -q` 전체 통과

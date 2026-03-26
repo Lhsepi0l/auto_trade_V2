@@ -60,6 +60,7 @@ def test_alpha_verified_q070_profile_loads() -> None:
     assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
     assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
     assert enabled[0].params["squeeze_percentile_threshold"] == 0.35
+    assert enabled[0].params["expansion_buffer_bps"] == 1.5
     assert enabled[0].params["expansion_body_ratio_min"] == 0.18
     assert enabled[0].params["expansion_close_location_min"] == 0.35
     assert enabled[0].params["expansion_width_expansion_min"] == 0.02

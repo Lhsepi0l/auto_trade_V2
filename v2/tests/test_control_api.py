@@ -227,7 +227,7 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert risk_payload["trend_adx_min_4h"] == 14.0
     assert risk_payload["trend_adx_rising_lookback_4h"] == 0
     assert risk_payload["min_volume_ratio_15m"] == 0.8
-    assert risk_payload["expansion_buffer_bps"] == 2.0
+    assert risk_payload["expansion_buffer_bps"] == 1.5
     assert risk_payload["expansion_quality_score_v2_min"] == 0.7
 
     readiness = client.get("/readiness")
@@ -297,7 +297,7 @@ def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> No
     assert kwargs["trend_adx_rising_lookback_4h"] == 0
     assert kwargs["breakout_buffer_bps"] == 3.0
     assert kwargs["min_volume_ratio_15m"] == 0.8
-    assert kwargs["expansion_buffer_bps"] == 2.0
+    assert kwargs["expansion_buffer_bps"] == 1.5
     assert kwargs["expansion_range_atr_min"] == 0.7
     assert kwargs["expected_move_cost_mult"] == 1.6
     assert kwargs["expansion_quality_score_v2_min"] == 0.7
@@ -3371,6 +3371,8 @@ def test_control_api_position_management_signal_weakness_reduces_position(
                 "BTCUSDT": {
                     "symbol": "BTCUSDT",
                     "side": "LONG",
+                    "alpha_id": "alpha_expansion",
+                    "entry_regime": "TREND_UP",
                     "entry_score": 0.9,
                     "entry_regime_strength": 0.8,
                     "entry_bias_strength": 0.8,
@@ -3410,12 +3412,155 @@ def test_control_api_position_management_signal_weakness_reduces_position(
     controller._poll_brackets_once()
 
     assert len(rest.reduce_calls) == 1
-    assert rest.reduce_calls[0]["quantity"] == "0.01000000"
+    assert rest.reduce_calls[0]["quantity"] == "0.00800000"
     payload = storage.load_runtime_marker(marker_key="position_management_state")
     assert payload is not None
     plan = payload["positions"]["BTCUSDT"]
     assert plan["weak_reduce_stage"] == 1
     assert plan["stop_price"] == 100.0
+
+
+def test_control_api_position_management_signal_weakness_second_stage_reduces_again(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_position_manage_weak_stage2.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelWeak:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+        def probe_market_data(self) -> dict[str, object]:
+            now_ms = int(time.time() * 1000)
+            return {
+                "symbol": "BTCUSDT",
+                "market": {
+                    "15m": [
+                        [now_ms - 900000, "100.0", "100.8", "99.7", "100.2", "1600", now_ms]
+                    ]
+                },
+                "symbols": {},
+            }
+
+        def inspect_symbol_decision(
+            self,
+            *,
+            symbol: str,
+            snapshot: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            _ = symbol
+            _ = snapshot
+            return {
+                "intent": "NONE",
+                "reason": "quality_score_v2_missing",
+                "score": 0.42,
+                "regime_strength": 0.3,
+                "bias_strength": 0.3,
+                "regime": "UNKNOWN",
+            }
+
+    class _AlgoRESTManage:
+        def __init__(self) -> None:
+            self.reduce_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.032",
+                    "entryPrice": "100.0",
+                    "markPrice": "100.2",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+        async def place_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: str,
+            quantity: float,
+            position_side: str = "BOTH",
+        ) -> dict[str, str]:
+            self.reduce_calls.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": f"{quantity:.8f}",
+                    "position_side": position_side,
+                }
+            )
+            return {}
+
+    rest = _AlgoRESTManage()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelWeak(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=rest,
+    )
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "alpha_id": "alpha_expansion",
+                    "entry_regime": "UNKNOWN",
+                    "entry_score": 0.9,
+                    "entry_regime_strength": 0.8,
+                    "entry_bias_strength": 0.8,
+                    "entry_price": 100.0,
+                    "stop_price": 100.0,
+                    "take_profit_price": 104.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": int(time.time() * 1000),
+                    "weak_reduce_stage": 1,
+                    "partial_reduce_done": False,
+                    "max_favorable_price": 100.0,
+                    "max_favorable_r": 0.0,
+                    "time_stop_bars": 12,
+                    "current_time_stop_bars": 12,
+                }
+            }
+        },
+    )
+
+    controller._poll_brackets_once()
+
+    assert len(rest.reduce_calls) == 1
+    assert rest.reduce_calls[0]["quantity"] == "0.01232000"
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    assert payload["positions"]["BTCUSDT"]["weak_reduce_stage"] == 2
 
 
 def test_control_api_position_management_signal_flip_closes_position(
@@ -3639,6 +3784,7 @@ def test_control_api_position_management_runner_lock_reprices_after_partial_redu
                     "stop_price": 100.0,
                     "take_profit_price": 105.0,
                     "risk_per_unit": 2.0,
+                    "volatility_frac": 0.01,
                     "entry_time_ms": int(time.time() * 1000),
                     "partial_reduce_done": True,
                     "runner_lock_stage": 0,

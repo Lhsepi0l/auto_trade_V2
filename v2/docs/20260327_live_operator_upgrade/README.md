@@ -22,7 +22,7 @@
 - 로그 추출은 브라우저에서 바로 zip 다운로드 가능해졌고, 빠른 추출 / 전체 추출로 모드가 분리됐다.
 - 번들 생성 시 `control/*.json`이 비던 self-timeout 경로를 제거했다.
 - q070 실거래 profile의 `volume_missing` 과잉 차단을 완화했다.
-- 보유 중 `hold / extend / reduce / exit / partial reduce / TP 재배치 / BE 보호 / signal flip close`까지 수행하는 2차 포지션 관리 루프가 들어갔다.
+- 보유 중 `hold / extend / reduce / exit / partial reduce / TP 재배치 / BE 보호 / signal flip close / volatility runner lock`까지 수행하는 3차 포지션 관리 루프가 들어갔다.
 - Git / GitHub 운영 기준과 서버 pull-only 원칙을 문서화하고, 서버 업데이트 스크립트를 추가했다.
 
 ## 권장 읽기 순서

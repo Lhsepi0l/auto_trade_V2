@@ -1306,10 +1306,16 @@ class RuntimeController:
             "symbol": symbol,
             "side": self._position_management_side(getattr(candidate, "side", None)),
             "entry_score": float(_to_float(getattr(candidate, "score", 0.0), default=0.0)),
+            "entry_regime": str(getattr(candidate, "regime_hint", "") or "").strip().upper() or None,
             "entry_price": float(entry_price),
             "stop_price": float(stop_price),
             "take_profit_price": _to_float(candidate.take_profit_hint, default=0.0),
             "risk_per_unit": float(risk_per_unit),
+            "volatility_frac": (
+                float(_to_float(getattr(candidate, "volatility_hint", 0.0), default=0.0)) / float(entry_price)
+                if _to_float(getattr(candidate, "volatility_hint", 0.0), default=0.0) > 0.0
+                else float(risk_per_unit) / float(entry_price)
+            ),
             "entry_time_ms": int(time.time() * 1000),
             "created_at": _utcnow_iso(),
             "alpha_id": getattr(candidate, "alpha_id", None),
@@ -1415,6 +1421,50 @@ class RuntimeController:
         state = self._load_position_management_state()
         state[symbol] = plan
         self._save_position_management_state(state)
+
+    @staticmethod
+    def _dynamic_weak_reduce_ratio(
+        plan: dict[str, Any],
+        *,
+        stage: int,
+        signal_view: dict[str, Any] | None = None,
+    ) -> float:
+        alpha_id = str(plan.get("alpha_id") or "").strip().lower()
+        regime = str(
+            (signal_view or {}).get("regime")
+            or plan.get("entry_regime")
+            or ""
+        ).strip().upper()
+        stage_one = 0.25
+        stage_two = 0.50
+        if alpha_id == "alpha_expansion":
+            stage_one = 0.20
+            stage_two = 0.35
+        elif alpha_id == "alpha_breakout":
+            stage_one = 0.30
+            stage_two = 0.50
+        elif alpha_id == "alpha_pullback":
+            stage_one = 0.25
+            stage_two = 0.45
+
+        if regime in {"UNKNOWN", "SIDEWAYS", "NONE"}:
+            stage_one *= 1.1
+            stage_two *= 1.1
+
+        ratio = stage_one if stage <= 1 else stage_two
+        return _clamp(float(ratio), 0.15, 0.60)
+
+    @staticmethod
+    def _runner_lock_targets(plan: dict[str, Any]) -> list[tuple[float, float, int]]:
+        volatility_frac = max(
+            _to_float(plan.get("volatility_frac"), default=0.0),
+            0.0,
+        )
+        if volatility_frac >= 0.015:
+            return [(1.6, 0.35, 1), (2.2, 0.75, 2)]
+        if 0.0 < volatility_frac <= 0.006:
+            return [(1.4, 0.65, 1), (1.9, 1.25, 2)]
+        return [(1.5, 0.50, 1), (2.0, 1.00, 2)]
 
     @staticmethod
     def _extract_latest_market_bar(snapshot: dict[str, Any], *, symbol: str) -> dict[str, float] | None:
@@ -1596,7 +1646,15 @@ class RuntimeController:
                 "breakout_stability_edge_missing",
             }
             if position_amt > 0.0 and weak_reduce_stage == 0 and (score_weak or structure_weak or blocked_weak):
-                reduce_qty = max(position_amt * 0.25, 0.0)
+                reduce_qty = max(
+                    position_amt
+                    * self._dynamic_weak_reduce_ratio(
+                        plan,
+                        stage=1,
+                        signal_view=signal_view,
+                    ),
+                    0.0,
+                )
                 if reduce_qty > 0.0 and self.rest_client is not None and hasattr(self.rest_client, "place_reduce_only_market_order"):
                     rest_client_any: Any = self.rest_client
                     _ = _run_async_blocking(
@@ -1628,6 +1686,70 @@ class RuntimeController:
                         "position_reduced",
                         symbol=symbol,
                         reason="signal_weakness_reduce",
+                        stage=1,
+                        reduced_qty=round(float(reduce_qty), 8),
+                        remaining_qty=round(float(remaining_qty), 8),
+                        current_r=round(float(current_r), 4),
+                        event_time=_utcnow_iso(),
+                    )
+                    return False, plan
+
+            severe_score_weak = (
+                current_score > 0.0
+                and entry_score > 0.0
+                and current_score < max(entry_score * 0.55, 0.45)
+            )
+            severe_structure_weak = (
+                current_regime_strength > 0.0
+                and current_regime_strength
+                < max(_to_float(plan.get("entry_regime_strength"), default=0.0) * 0.55, 0.35)
+            ) or (
+                current_bias_strength > 0.0
+                and current_bias_strength
+                < max(_to_float(plan.get("entry_bias_strength"), default=0.0) * 0.55, 0.35)
+            )
+            if position_amt > 0.0 and weak_reduce_stage == 1 and (
+                severe_score_weak or severe_structure_weak or blocked_weak
+            ):
+                reduce_qty = max(
+                    position_amt
+                    * self._dynamic_weak_reduce_ratio(
+                        plan,
+                        stage=2,
+                        signal_view=signal_view,
+                    ),
+                    0.0,
+                )
+                if reduce_qty > 0.0 and self.rest_client is not None and hasattr(self.rest_client, "place_reduce_only_market_order"):
+                    rest_client_any: Any = self.rest_client
+                    _ = _run_async_blocking(
+                        lambda s=symbol, side_out=exit_side, qty=reduce_qty, ps=position_side: (
+                            rest_client_any.place_reduce_only_market_order(
+                                symbol=s,
+                                side=side_out,
+                                quantity=qty,
+                                position_side=cast(Literal["BOTH", "LONG", "SHORT"], ps),
+                            )
+                        ),
+                        timeout_sec=15.0,
+                    )
+                    plan["weak_reduce_stage"] = 2
+                    remaining_qty = max(position_amt - reduce_qty, 0.0)
+                    if remaining_qty > 0.0 and _to_float(plan.get("take_profit_price"), default=0.0) > 0.0:
+                        self._replace_management_bracket(
+                            symbol=symbol,
+                            entry_side=entry_side,
+                            position_side=position_side,
+                            quantity=remaining_qty,
+                            take_profit_price=_to_float(plan.get("take_profit_price"), default=0.0),
+                            stop_loss_price=_to_float(plan.get("stop_price"), default=entry_price),
+                            reason="weakness_reduce_reprice",
+                        )
+                    self._log_event(
+                        "position_reduced",
+                        symbol=symbol,
+                        reason="signal_weakness_reduce",
+                        stage=2,
                         reduced_qty=round(float(reduce_qty), 8),
                         remaining_qty=round(float(remaining_qty), 8),
                         current_r=round(float(current_r), 4),
@@ -1638,12 +1760,13 @@ class RuntimeController:
         runner_lock_stage = int(_to_float(plan.get("runner_lock_stage"), default=0.0))
         if bool(plan.get("partial_reduce_done")):
             lock_target_r = 0.0
-            if max_favorable_r >= 2.0 and runner_lock_stage < 2:
-                lock_target_r = 1.0
-                plan["runner_lock_stage"] = 2
-            elif max_favorable_r >= 1.5 and runner_lock_stage < 1:
-                lock_target_r = 0.5
-                plan["runner_lock_stage"] = 1
+            target_stage = 0
+            for trigger_r, target_r, stage in self._runner_lock_targets(plan):
+                if max_favorable_r >= trigger_r and runner_lock_stage < stage:
+                    lock_target_r = target_r
+                    target_stage = stage
+            if target_stage > 0:
+                plan["runner_lock_stage"] = target_stage
             if lock_target_r > 0.0 and position_amt > 0.0:
                 locked_stop = (
                     entry_price + (risk_per_unit * lock_target_r)
@@ -1673,6 +1796,8 @@ class RuntimeController:
                         held_bars=int(held_bars),
                         max_favorable_r=round(float(max_favorable_r), 4),
                         locked_r=lock_target_r,
+                        lock_stage=int(target_stage),
+                        volatility_frac=round(_to_float(plan.get("volatility_frac"), default=0.0), 6),
                     )
 
         tp_partial_ratio = min(max(_to_float(plan.get("tp_partial_ratio"), default=0.0), 0.0), 1.0)
@@ -1941,6 +2066,8 @@ class RuntimeController:
             "score": _to_float(decision.get("score"), default=0.0),
             "regime_strength": _to_float(decision.get("regime_strength"), default=0.0),
             "bias_strength": _to_float(decision.get("bias_strength"), default=0.0),
+            "regime": str(decision.get("regime") or "").strip().upper() or None,
+            "alpha_id": str(decision.get("alpha_id") or "").strip() or None,
         }
 
     def _replace_management_bracket(

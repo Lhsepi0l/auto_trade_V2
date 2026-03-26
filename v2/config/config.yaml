@@ -114,7 +114,7 @@ profiles:
           volume_sma_period_15m: 20
           swing_lookback_15m: 8
           breakout_buffer_bps: 3.0
-          expansion_buffer_bps: 2.0
+          expansion_buffer_bps: 1.5
           min_volume_ratio_15m: 0.9
           squeeze_lookback_15m: 48
           squeeze_percentile_threshold: 0.40
@@ -170,7 +170,7 @@ profiles:
           <<: *ra_2026_alpha_v2_params
           enabled_alphas: [alpha_expansion]
           squeeze_percentile_threshold: 0.35
-          expansion_buffer_bps: 2.0
+          expansion_buffer_bps: 1.5
           expansion_range_atr_min: 0.7
           expansion_body_ratio_min: 0.18
           expansion_close_location_min: 0.35
