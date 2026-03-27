@@ -1,82 +1,30 @@
 # 2026-03-28 Runtime Bugfixes
 
-## Summary
+## 문서 목적
+- 오늘 수정한 두 가지 실거래 이슈를 한 번에 정리한다.
+- 운영자 관점에서 "무엇이 고쳐졌는지", 개발자 관점에서 "어디를 보면 되는지"를 빠르게 파악할 수 있게 한다.
+- 이후 동일 증상 재발 시 기준 문서로 바로 참고할 수 있게 한다.
 
-This document records the runtime fixes completed on 2026-03-28 for two live-operation issues:
+## 이 폴더에 들어있는 문서
+- [01_tpsl_bracket_recovery_fix.md](./01_tpsl_bracket_recovery_fix.md)
+  - 진입 후 TP/SL 이 사라지던 문제의 증상, 원인, 수정 내용
+- [02_leverage_intent_fix.md](./02_leverage_intent_fix.md)
+  - 심볼 레버리지 설정이 실제 주문 레버리지로 반영되지 않던 문제의 원인과 수정
+- [03_validation_and_risks.md](./03_validation_and_risks.md)
+  - 이번 수정에서 실제로 돌린 검증 명령과 남은 주의점
+- [04_server_apply_checklist.md](./04_server_apply_checklist.md)
+  - 서버 반영 후 운영자가 바로 확인할 체크리스트와 명령
 
-1. TP/SL brackets could disappear after entry even though the position remained open.
-2. Operator-configured leverage could be silently capped, causing orders to keep entering at an older lower leverage such as `10x`.
+## 오늘 핵심 요약
+- TP/SL 브래킷은 이제 한쪽 leg가 조회에서 잠깐 사라졌다고 바로 청산 처리하지 않는다.
+- 포지션이 아직 살아 있으면 persisted position-management plan 기준으로 TP/SL 을 복구한다.
+- live 브래킷 생성 중 한쪽만 성공하고 다른 한쪽이 실패하면, 성공한 한쪽도 바로 정리해서 orphan 상태를 남기지 않는다.
+- 심볼 레버리지 설정은 이제 운영자 의도를 기준으로 처리한다.
+- 심볼 레버리지가 현재 `max_leverage` 보다 크면 runtime이 `max_leverage` 도 같이 올려서 실제 주문이 요청한 값으로 들어가게 했다.
+- Discord 패널도 같은 경로를 막지 않도록 맞췄다.
 
-## Issues
-
-### 1. TP/SL disappearance after entry
-
-Observed behavior:
-- Position entry succeeded.
-- One TP/SL leg could temporarily disappear from open algo-order polling.
-- The runtime treated the missing leg as an immediate TP/SL fill and cleaned the bracket state too early.
-
-Root cause:
-- The bracket poller in `v2/control/api.py` assumed `one leg missing == filled`.
-- Live placement in `v2/tpsl/brackets.py` was not fully atomic; if one bracket leg succeeded and the second failed, a partial/orphaned state could remain.
-
-Fix:
-- The poller now requires either:
-  - confirmed flat position, or
-  - recent matching fill evidence
-  before it treats a single missing leg as a real TP/SL exit.
-- If the position is still open, the runtime repairs TP/SL from the persisted position-management plan instead of cleaning it.
-- Live bracket placement now cancels any already accepted leg and marks bracket state `CLEANED` if the second leg fails.
-
-### 2. Symbol leverage not applied as requested
-
-Observed behavior:
-- The operator entered leverage `N`.
-- Runtime accepted the setting in the UI/control layer.
-- Actual execution still used a lower effective leverage, commonly the previous runtime max such as `10x`.
-
-Root cause:
-- Symbol leverage was resolved with `min(symbol_leverage, max_leverage)`.
-- When `max_leverage` stayed lower than the explicit symbol leverage, the requested value was silently capped.
-- Discord modal also blocked higher symbol leverage before the backend could reconcile the intended value.
-
-Fix:
-- `set_symbol_leverage(...)` in `v2/control/api.py` now treats explicit symbol leverage as operator intent.
-- If requested symbol leverage is above current runtime `max_leverage`, the runtime lifts `max_leverage` to the requested value before syncing kernel overrides.
-- Discord symbol leverage modal no longer pre-blocks this path and now lets the backend apply the authoritative runtime update.
-
-## Files Changed
-
-- `v2/control/api.py`
-- `v2/tpsl/brackets.py`
-- `v2/discord_bot/views/panel.py`
-- `v2/tests/test_control_api.py`
-- `v2/tests/test_tpsl_brackets.py`
-- `v2/tests/test_discord_panel.py`
-- `AGENTS.md`
-
-## Verification
-
-Executed during this fix:
-
-```bash
-python -m pytest -q v2/tests/test_tpsl_brackets.py v2/tests/test_control_api.py -k 'bracket'
-python -m pytest -q v2/tests/test_tpsl_brackets.py
-python -m pytest -q v2/tests/test_control_api.py -k 'position_management or bracket or trailing'
-python -m pytest -q v2/tests/test_control_api.py -k 'control_api_contract or persists_risk_config_across_restart or restores_kernel_runtime_overrides_after_restart or symbol_leverage_lifts_runtime_max'
-python -m pytest -q v2/tests/test_discord_panel.py -k 'symbol_leverage_modal'
-python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/panel.py v2/tests/test_control_api.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py
-```
-
-## Operator Checks After Deploy
-
-1. Set symbol leverage to a value above the current runtime max, for example `12`.
-2. Confirm `/status` or operator panel shows leverage `12`.
-3. Trigger a supervised entry and confirm the exchange-side leverage reflects the requested value.
-4. After entry, confirm two bracket algo orders remain present together.
-5. If one bracket leg is temporarily missing while the position is still open, confirm runtime repairs the bracket instead of treating it as a completed exit.
-
-## Rollback Note
-
-- If rollback is needed, revert this commit on `migration/web-operator-panel` and redeploy with `git pull --ff-only` to the prior revision.
-- Rolling back removes both the TP/SL safety hardening and the leverage-intent fix, so rollback should be used only if a new regression is confirmed.
+## 권장 읽기 순서
+1. 운영 증상과 TP/SL 문제를 먼저 확인하려면 `01_tpsl_bracket_recovery_fix.md`
+2. 레버리지 입력과 실제 주문 불일치 문제를 보려면 `02_leverage_intent_fix.md`
+3. 오늘 검증 범위와 남은 리스크를 확인하려면 `03_validation_and_risks.md`
+4. 서버에 반영하고 바로 운영 체크까지 이어가려면 `04_server_apply_checklist.md`
