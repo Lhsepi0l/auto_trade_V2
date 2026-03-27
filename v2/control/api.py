@@ -2080,11 +2080,11 @@ class RuntimeController:
         take_profit_price: float,
         stop_loss_price: float,
         reason: str,
-    ) -> None:
+    ) -> bool:
         if self.cfg.mode != "live" or self.rest_client is None or quantity <= 0.0:
-            return
+            return False
         if take_profit_price <= 0.0 or stop_loss_price <= 0.0:
-            return
+            return False
         runtime_bracket_service = BracketService(
             planner=BracketPlanner(
                 cfg=BracketConfig(
@@ -2116,8 +2116,10 @@ class RuntimeController:
                 stop_loss_price=round(float(stop_loss_price), 6),
                 quantity=round(float(quantity), 8),
             )
+            return True
         except Exception:  # noqa: BLE001
             logger.exception("position_management_bracket_replace_failed symbol=%s reason=%s", symbol, reason)
+            return False
 
     def _resolve_bracket_config_for_cycle(
         self,
@@ -2484,6 +2486,63 @@ class RuntimeController:
             tracked.append(row)
         return tracked
 
+    def _has_recent_fill_for_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+        lookback_sec: float = 900.0,
+    ) -> bool:
+        symbol_u = symbol.upper()
+        client_id_s = str(client_id or "").strip()
+        if not client_id_s:
+            return False
+        lookback_ms = max(1, int(float(lookback_sec) * 1000.0))
+        now_ms = int(time.time() * 1000)
+        fills = self.state_store.runtime_storage().recent_fills(limit=100)
+        for row in fills:
+            if not isinstance(row, dict):
+                continue
+            row_symbol = str(row.get("symbol") or "").strip().upper()
+            if row_symbol != symbol_u:
+                continue
+            row_client_id = str(row.get("client_id") or "").strip()
+            if row_client_id != client_id_s:
+                continue
+            fill_ms = int(_to_float(row.get("fill_time_ms"), default=0.0))
+            if fill_ms > 0 and now_ms - fill_ms > lookback_ms:
+                continue
+            return True
+        return False
+
+    def _repair_position_bracket_from_plan(
+        self,
+        *,
+        symbol: str,
+        position_row: dict[str, Any],
+        plan: dict[str, Any],
+        reason: str,
+    ) -> bool:
+        position_amt = _to_float(position_row.get("positionAmt"), default=0.0)
+        if abs(position_amt) <= 0.0:
+            return False
+        quantity = abs(position_amt)
+        take_profit_price = _to_float(plan.get("take_profit_price"), default=0.0)
+        stop_loss_price = _to_float(plan.get("stop_price"), default=0.0)
+        if quantity <= 0.0 or take_profit_price <= 0.0 or stop_loss_price <= 0.0:
+            return False
+        entry_side: Literal["BUY", "SELL"] = "BUY" if position_amt > 0.0 else "SELL"
+        position_side = str(position_row.get("positionSide") or "BOTH").strip().upper() or "BOTH"
+        return self._replace_management_bracket(
+            symbol=symbol,
+            entry_side=entry_side,
+            position_side=position_side,
+            quantity=float(quantity),
+            take_profit_price=float(take_profit_price),
+            stop_loss_price=float(stop_loss_price),
+            reason=reason,
+        )
+
     def _latest_symbol_realized_pnl(
         self, *, symbol: str, lookback_sec: float = 900.0
     ) -> float | None:
@@ -2664,72 +2723,121 @@ class RuntimeController:
                             cid,
                         )
 
-            if positions_ok:
-                position_amt = _to_float(positions.get(symbol), default=0.0)
-                if abs(position_amt) <= 0.0:
+            position_amt = _to_float(positions.get(symbol), default=0.0) if positions_ok else 0.0
+            position_row = position_rows.get(symbol)
+            management_plan = next_management_state.get(symbol)
+            position_is_open = positions_ok and abs(position_amt) > 0.0
+            position_is_flat = positions_ok and not position_is_open
+
+            if position_is_open and isinstance(position_row, dict) and isinstance(management_plan, dict):
+                exited, updated_plan = self._maybe_manage_open_position(
+                    symbol=symbol,
+                    row=position_row,
+                    plan=dict(management_plan),
+                    market_bar=(
+                        self._extract_latest_market_bar(snapshot, symbol=symbol)
+                        if isinstance(snapshot, dict)
+                        else None
+                    ),
+                )
+                if exited:
                     next_management_state.pop(symbol, None)
-                    if tp_id or sl_id:
-                        try:
-                            _ = _run_async_blocking(
-                                lambda s=symbol: self._bracket_service.cleanup_if_flat(
-                                    symbol=s,
-                                    position_amt=0.0,
-                                ),
-                                timeout_sec=8.0,
-                            )
-                        except Exception:  # noqa: BLE001
-                            logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
+                    continue
+                next_management_state[symbol] = dict(updated_plan)
+                management_plan = next_management_state.get(symbol)
+
+            if position_is_open and isinstance(position_row, dict):
+                if self._maybe_trigger_trailing_exit(
+                    symbol=symbol,
+                    row=position_row,
+                    rest_client=rest_client_any,
+                ):
+                    next_management_state.pop(symbol, None)
                     continue
 
-                position_row = position_rows.get(symbol)
-                management_plan = next_management_state.get(symbol)
-                if isinstance(position_row, dict) and isinstance(management_plan, dict):
-                    exited, updated_plan = self._maybe_manage_open_position(
-                        symbol=symbol,
-                        row=position_row,
-                        plan=dict(management_plan),
-                        market_bar=(
-                            self._extract_latest_market_bar(snapshot, symbol=symbol)
-                            if isinstance(snapshot, dict)
-                            else None
-                        ),
-                    )
-                    if exited:
-                        next_management_state.pop(symbol, None)
-                        continue
-                    next_management_state[symbol] = dict(updated_plan)
+            tp_open = tp_id in open_ids if tp_id else False
+            sl_open = sl_id in open_ids if sl_id else False
 
-                if isinstance(position_row, dict):
-                    if self._maybe_trigger_trailing_exit(
-                        symbol=symbol,
-                        row=position_row,
-                        rest_client=rest_client_any,
-                    ):
-                        next_management_state.pop(symbol, None)
-                        continue
-
-            if not (tp_id and sl_id):
-                continue
-            tp_open = tp_id in open_ids
-            sl_open = sl_id in open_ids
-            if tp_open == sl_open:
-                continue
-
-            outcome: Literal["TP", "SL"] = "SL" if tp_open else "TP"
-            filled_id = sl_id if outcome == "SL" else tp_id
-            try:
-                _ = _run_async_blocking(
-                    lambda s=symbol, cid=filled_id: self._bracket_service.on_leg_filled(
-                        symbol=s,
-                        filled_client_algo_id=cid,
-                    ),
-                    timeout_sec=8.0,
+            if tp_id and sl_id and tp_open != sl_open:
+                outcome: Literal["TP", "SL"] = "SL" if tp_open else "TP"
+                filled_id = sl_id if outcome == "SL" else tp_id
+                fill_confirmed = self._has_recent_fill_for_client_id(
+                    symbol=symbol,
+                    client_id=filled_id,
                 )
-                self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
-                if outcome == "SL":
-                    self._maybe_trigger_symbol_sl_flatten(trigger_symbol=symbol)
-            except Exception:  # noqa: BLE001
-                logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
+                if position_is_flat or fill_confirmed:
+                    try:
+                        _ = _run_async_blocking(
+                            lambda s=symbol, cid=filled_id: self._bracket_service.on_leg_filled(
+                                symbol=s,
+                                filled_client_algo_id=cid,
+                            ),
+                            timeout_sec=8.0,
+                        )
+                        next_management_state.pop(symbol, None)
+                        self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
+                        if outcome == "SL":
+                            self._maybe_trigger_symbol_sl_flatten(trigger_symbol=symbol)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("bracket_on_leg_filled_failed symbol=%s", symbol)
+                    continue
+
+                if (
+                    position_is_open
+                    and isinstance(position_row, dict)
+                    and isinstance(management_plan, dict)
+                    and self._repair_position_bracket_from_plan(
+                        symbol=symbol,
+                        position_row=position_row,
+                        plan=management_plan,
+                        reason="missing_bracket_leg_repair",
+                    )
+                ):
+                    continue
+
+                logger.warning(
+                    "bracket_leg_missing_without_exit_confirmation "
+                    "symbol=%s tp_open=%s sl_open=%s position_amt=%s",
+                    symbol,
+                    tp_open,
+                    sl_open,
+                    round(float(position_amt), 8),
+                )
+                continue
+
+            if (
+                position_is_open
+                and isinstance(position_row, dict)
+                and isinstance(management_plan, dict)
+                and (
+                    not tp_id
+                    or not sl_id
+                    or not tp_open
+                    or not sl_open
+                )
+            ):
+                if self._repair_position_bracket_from_plan(
+                    symbol=symbol,
+                    position_row=position_row,
+                    plan=management_plan,
+                    reason="missing_bracket_repair",
+                ):
+                    continue
+
+            if position_is_flat:
+                next_management_state.pop(symbol, None)
+                if tp_id or sl_id:
+                    try:
+                        _ = _run_async_blocking(
+                            lambda s=symbol: self._bracket_service.cleanup_if_flat(
+                                symbol=s,
+                                position_amt=0.0,
+                            ),
+                            timeout_sec=8.0,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("bracket_cleanup_if_flat_failed symbol=%s", symbol)
+                continue
 
         self._save_position_management_state(next_management_state)
 
@@ -2989,7 +3097,19 @@ class RuntimeController:
             if leverage <= 0:
                 mapping.pop(symbol_u, None)
             else:
-                mapping[symbol_u] = float(leverage)
+                leverage_f = float(leverage)
+                mapping[symbol_u] = leverage_f
+                current_max = max(
+                    1.0,
+                    _to_float(
+                        self._risk.get("max_leverage"),
+                        default=float(self.cfg.behavior.risk.max_leverage),
+                    ),
+                )
+                # Treat an explicit symbol leverage override as operator intent.
+                # Lift the runtime max so the requested leverage is not silently capped.
+                if leverage_f > current_max:
+                    self._risk["max_leverage"] = leverage_f
             self._risk["symbol_leverage_map"] = mapping
             self._refresh_runtime_risk_context()
             self._sync_kernel_runtime_overrides()

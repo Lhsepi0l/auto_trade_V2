@@ -968,6 +968,36 @@ async def test_stop_button_reports_success_when_timeout_but_engine_is_stopped(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_symbol_leverage_modal_allows_value_above_current_max_when_server_lifts_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = SimpleNamespace(
+        get_status=AsyncMock(
+            side_effect=[
+                {"risk_config": {"max_leverage": 5}},
+                {"risk_config": {"max_leverage": 12, "symbol_leverage_map": {"BTCUSDT": 12.0}}},
+            ]
+        ),
+        set_symbol_leverage=AsyncMock(
+            return_value={"max_leverage": 12.0, "symbol_leverage_map": {"BTCUSDT": 12.0}}
+        ),
+    )
+    view = AdvancedPanelView(api=api)  # type: ignore[arg-type]
+    monkeypatch.setattr("v2.discord_bot.views.panel._is_admin", lambda _i: True)
+
+    modal = SymbolLeverageModal(api=api, view=view)  # type: ignore[arg-type]
+    modal.symbol._value = "BTCUSDT"  # type: ignore[attr-defined]
+    modal.leverage._value = "12"  # type: ignore[attr-defined]
+
+    it = _FakeInteraction()
+    await modal.on_submit(it)
+
+    api.set_symbol_leverage.assert_awaited_once_with(symbol="BTCUSDT", leverage=12.0)
+    assert any("BTCUSDT 개별 레버리지를 12.0 배로 설정했습니다." in m for m in it.followup.messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_symbol_leverage_modal_reports_success_when_timeout_but_value_applied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

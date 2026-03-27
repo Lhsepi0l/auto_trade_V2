@@ -165,6 +165,50 @@ async def test_live_leg_fill_cancels_counterpart_and_cleans(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_live_create_and_place_cleans_partial_leg_when_second_order_fails(
+    tmp_path: Path,
+) -> None:
+    class _FailSecondAlgoREST(_FakeAlgoREST):
+        async def place_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            self.place_calls.append(dict(params))
+            if len(self.place_calls) == 2:
+                raise RuntimeError("second_leg_reject")
+            return {
+                "algoId": 1000 + len(self.place_calls),
+                "clientAlgoId": params.get("clientAlgoId"),
+                "status": "NEW",
+            }
+
+    store = _storage(tmp_path)
+    rest = _FailSecondAlgoREST()
+    service = BracketService(
+        planner=BracketPlanner(cfg=BracketConfig()),
+        storage=store,
+        rest_client=rest,
+        mode="live",
+    )
+
+    with pytest.raises(RuntimeError, match="second_leg_reject"):
+        await service.create_and_place(
+            symbol="BTCUSDT",
+            entry_side="BUY",
+            position_side="BOTH",
+            entry_price=100.0,
+            quantity=0.01,
+        )
+
+    assert len(rest.place_calls) == 2
+    assert len(rest.cancel_calls) == 1
+    canceled_id = str(rest.cancel_calls[0].get("clientAlgoId") or "")
+    assert canceled_id.startswith("v2tp")
+    rows = store.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "CLEANED"
+    assert rows[0]["tp_order_client_id"] is None
+    assert rows[0]["sl_order_client_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_cleanup_if_flat_cancels_all_open_algo_orders_for_symbol(tmp_path: Path) -> None:
     store = _storage(tmp_path)
     rest = _FakeAlgoREST()

@@ -11,7 +11,13 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from v2.clean_room import build_default_kernel
-from v2.clean_room.contracts import Candidate, ExecutionResult, KernelCycleResult, SizePlan
+from v2.clean_room.contracts import (
+    Candidate,
+    ExecutionResult,
+    KernelContext,
+    KernelCycleResult,
+    SizePlan,
+)
 from v2.config.loader import load_effective_config
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
@@ -1859,6 +1865,11 @@ def test_control_api_tick_reports_bracket_failure_in_last_error(tmp_path) -> Non
     bracket = payload["snapshot"].get("bracket")
     assert isinstance(bracket, dict)
     assert bracket.get("state") == "failed"
+    rows = storage.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "CLEANED"
+    assert rows[0]["tp_order_client_id"] is None
+    assert rows[0]["sl_order_client_id"] is None
 
 
 def test_control_api_recovers_active_brackets_on_live_boot(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -1923,7 +1934,7 @@ def test_control_api_recovers_active_brackets_on_live_boot(tmp_path) -> None:  #
     assert rows[0]["state"] == "ACTIVE"
 
 
-def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
+def test_control_api_bracket_poller_repairs_missing_leg_when_position_still_open(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -1940,6 +1951,22 @@ def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
         tp_order_client_id="tp-1",
         sl_order_client_id="sl-1",
         state="ACTIVE",
+    )
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "entry_price": 100.0,
+                    "stop_price": 99.0,
+                    "take_profit_price": 102.0,
+                    "risk_per_unit": 1.0,
+                    "entry_time_ms": int(time.time() * 1000),
+                }
+            }
+        },
     )
 
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1958,10 +1985,12 @@ def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
     class _AlgoRESTPoller:
         def __init__(self) -> None:
             self.cancel_calls: list[dict[str, str]] = []
+            self.place_calls: list[dict[str, str]] = []
 
         async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
-            _ = params
-            return {}
+            payload = dict(params)
+            self.place_calls.append(payload)
+            return {"clientAlgoId": str(payload.get("clientAlgoId") or "")}
 
         async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
             self.cancel_calls.append(dict(params))
@@ -1990,9 +2019,14 @@ def test_control_api_bracket_poller_cleans_counterpart_when_one_leg_missing(
 
     rows = storage.list_bracket_states()
     assert len(rows) == 1
-    assert rows[0]["state"] == "CLEANED"
-    assert len(rest.cancel_calls) == 1
-    assert str(rest.cancel_calls[0].get("clientAlgoId") or "") == "tp-1"
+    assert rows[0]["state"] == "ACTIVE"
+    assert rows[0]["tp_order_client_id"] != "tp-1"
+    assert rows[0]["sl_order_client_id"] != "sl-1"
+    canceled_ids = {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls}
+    assert canceled_ids == {"tp-1", "sl-1"}
+    assert len(rest.place_calls) == 2
+    place_types = {str(item.get("type") or "") for item in rest.place_calls}
+    assert place_types == {"TAKE_PROFIT_MARKET", "STOP_MARKET"}
 
 
 def test_control_api_bracket_poller_cancels_extra_managed_algo_orders(
@@ -2126,7 +2160,7 @@ def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
             return [{"symbol": "BTCUSDT", "clientAlgoId": "sl-1"}]
 
         async def get_positions(self) -> list[dict[str, str]]:
-            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
     notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
@@ -2210,7 +2244,7 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
             return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
 
         async def get_positions(self) -> list[dict[str, str]]:
-            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
     notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
@@ -2373,7 +2407,7 @@ def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
             return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
 
         async def get_positions(self) -> list[dict[str, str]]:
-            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
     notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
@@ -2455,7 +2489,7 @@ def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pn
             return [{"symbol": "BTCUSDT", "clientAlgoId": "tp-1"}]
 
         async def get_positions(self) -> list[dict[str, str]]:
-            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
     notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
@@ -4528,6 +4562,31 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
     assert kernel.fallback_notional == 3.5
     assert kernel.mapping.get("ETHUSDT") == 7.0
     assert kernel.max_leverage == 20.0
+
+
+def test_control_api_symbol_leverage_lifts_runtime_max_when_needed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
+
+    payload = controller.set_symbol_leverage(symbol="BTCUSDT", leverage=12)
+
+    assert payload["symbol_leverage_map"]["BTCUSDT"] == 12.0
+    assert payload["max_leverage"] == 12.0
+
+    status_payload = controller._status_snapshot()
+    assert status_payload["capital_snapshot"]["leverage"] == 12.0
+    assert status_payload["capital_snapshot"]["notional_usdt"] == 1200.0
+
+    candidate = Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
+    context = KernelContext(
+        mode="shadow",
+        profile=controller.cfg.profile,
+        symbol="BTCUSDT",
+        tick=1,
+        dry_run=True,
+    )
+    risk = controller.kernel._risk_gate.evaluate(candidate=candidate, context=context)
+    size = controller.kernel._sizer.size(candidate=candidate, risk=risk, context=context)
+    assert size.leverage == 12.0
 
 
 def test_control_api_persists_risk_config_across_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]

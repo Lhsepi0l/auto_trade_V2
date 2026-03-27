@@ -341,8 +341,30 @@ class BracketService:
         if self._mode == "live":
             if self._rest is None:
                 raise ValueError("live mode requires rest_client")
-            tp_resp = await self._rest.place_algo_order(params=tp_payload)
-            sl_resp = await self._rest.place_algo_order(params=sl_payload)
+            placed_algo_ids: list[str] = []
+            symbol_u = str(symbol).upper()
+            try:
+                tp_resp = await self._rest.place_algo_order(params=tp_payload)
+                placed_algo_ids.append(tp_client_algo_id)
+                sl_resp = await self._rest.place_algo_order(params=sl_payload)
+                placed_algo_ids.append(sl_client_algo_id)
+            except Exception:
+                for client_algo_id in placed_algo_ids:
+                    try:
+                        await self._rest.cancel_algo_order(
+                            params={"symbol": symbol_u, "clientAlgoId": client_algo_id}
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                self._persist(
+                    runtime=BracketRuntime(
+                        symbol=symbol_u,
+                        tp_order_client_id=None,
+                        sl_order_client_id=None,
+                        state="CLEANED",
+                    )
+                )
+                raise
         else:
             self._print_shadow_payloads(
                 symbol=str(symbol).upper(),

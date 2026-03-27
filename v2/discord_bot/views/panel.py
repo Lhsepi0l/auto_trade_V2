@@ -1364,14 +1364,6 @@ class SymbolLeverageModal(discord.ui.Modal, title="심볼 레버리지 설정"):
         except (TypeError, ValueError):
             max_leverage = None
 
-        if max_leverage is not None and max_leverage > 0 and lev > max_leverage:
-            await interaction.followup.send(
-                f"입력 제한: {symbol} 개별 레버리지는 max_leverage 이하로만 설정 가능합니다."
-                + f" (현재 max_leverage={max_leverage:g})",
-                ephemeral=True,
-            )
-            return
-
         try:
             _ = await self._api.set_symbol_leverage(symbol=symbol, leverage=lev)
             await self._view.refresh_message(interaction)
