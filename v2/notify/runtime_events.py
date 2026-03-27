@@ -15,8 +15,15 @@ class RuntimeNotificationContext:
     env: str
 
     @property
+    def mode_label(self) -> str:
+        return "실거래" if str(self.mode or "").strip().lower() == "live" else "모의"
+
+    @property
     def identity_line(self) -> str:
-        return f"{self.profile} | {self.mode}/{self.env}"
+        env = str(self.env or "").strip()
+        if env:
+            return f"{self.mode_label} | {env}"
+        return self.mode_label
 
 
 def _join_tags(*values: str) -> tuple[str, ...]:
@@ -34,6 +41,13 @@ def _build_body(*lines: str | None) -> str:
 
 def _dedupe_key(*parts: Any) -> str:
     return ":".join(str(part or "").strip() for part in parts if str(part or "").strip())
+
+
+def _cycle_reason_text(*, reason: str, human_reason: str) -> str:
+    normalized = str(reason or "").strip().lower()
+    if normalized == "position_open":
+        return "기존 포지션 관리 중"
+    return human_reason
 
 
 def _message_from_parts(
@@ -93,7 +107,7 @@ def build_runtime_event_notification(
             sub_text=None,
             context=context,
             priority=3,
-            tags=_join_tags("play"),
+            tags=(),
             event_type=raw_event,
             metadata=dict(fields),
         )
@@ -104,7 +118,7 @@ def build_runtime_event_notification(
             sub_text=None,
             context=context,
             priority=3,
-            tags=_join_tags("pause_button"),
+            tags=(),
             event_type=raw_event,
             metadata=dict(fields),
         )
@@ -139,12 +153,12 @@ def build_runtime_event_notification(
         stale_target = "프라이빗 스트림" if stale_type == "user_ws" else "시장 데이터"
         age_sec = fields.get("age_sec")
         return _message_from_parts(
-            title=f"{stale_target} 상태",
-            main_text="stale 감지",
+            title=f"{stale_target} 지연",
+            main_text="갱신 지연 감지",
             sub_text=None if age_sec is None else f"age={age_sec}초",
             context=context,
-            priority=4,
-            tags=_join_tags("warning"),
+            priority=3,
+            tags=(),
             event_type=raw_event,
             dedupe_key=_dedupe_key("stale", stale_type),
             suppress_window_sec=180.0,
@@ -163,12 +177,12 @@ def build_runtime_event_notification(
         if bool(fields.get("market_data_stale")):
             blockers.append("시장 데이터 stale")
         return _message_from_parts(
-            title="운영 준비도 전환",
+            title="운영 준비 대기",
             main_text="운영 준비 미완료",
             sub_text=", ".join(blockers) if blockers else "준비도 조건 재확인 필요",
             context=context,
-            priority=4,
-            tags=_join_tags("warning"),
+            priority=3,
+            tags=(),
             event_type=raw_event,
             dedupe_key="ready_transition:not_ready",
             suppress_window_sec=180.0,
@@ -178,12 +192,12 @@ def build_runtime_event_notification(
         if not bool(fields.get("recovery_required")):
             return None
         return _message_from_parts(
-            title="복구 필요",
+            title="복구 확인 필요",
             main_text=humanize_reason_token(str(fields.get("reason") or "recovery_required")),
             sub_text=None,
             context=context,
-            priority=4,
-            tags=_join_tags("warning", "tools"),
+            priority=3,
+            tags=_join_tags("tools"),
             event_type=raw_event,
             dedupe_key=_dedupe_key("recovery_required", fields.get("reason")),
             suppress_window_sec=300.0,
@@ -193,12 +207,12 @@ def build_runtime_event_notification(
         if not bool(fields.get("state_uncertain")):
             return None
         return _message_from_parts(
-            title="상태 불확실",
-            main_text="상태 불확실 플래그 변경",
-            sub_text=f"state_uncertain={'예' if bool(fields.get('state_uncertain')) else '아니오'}",
+            title="상태 확인 필요",
+            main_text=humanize_reason_token(str(fields.get("reason") or "state_uncertain")),
+            sub_text=None,
             context=context,
-            priority=4,
-            tags=_join_tags("warning"),
+            priority=3,
+            tags=(),
             event_type=raw_event,
             dedupe_key=_dedupe_key("state_uncertain", fields.get("reason")),
             suppress_window_sec=300.0,
@@ -250,7 +264,7 @@ def build_cycle_result_notification(
             title=title,
             body=body,
             priority=4 if trigger_source == "manual_tick" else 3,
-            tags=_join_tags("chart_with_upwards_trend"),
+            tags=(),
             event_type="cycle_result",
             dedupe_key=None,
             suppress_window_sec=None,
@@ -262,8 +276,8 @@ def build_cycle_result_notification(
         return NotificationMessage(
             title=f"{title_prefix} 대기",
             body=body,
-            priority=3,
-            tags=_join_tags("eyes"),
+            priority=2,
+            tags=(),
             event_type="cycle_result",
             dedupe_key=None,
             suppress_window_sec=None,
@@ -271,12 +285,19 @@ def build_cycle_result_notification(
         )
 
     if action in {"blocked", "risk_rejected"}:
-        body = _build_body(symbol_line, human_reason, context.identity_line)
+        if reason == "position_open" and trigger_source == "scheduler":
+            return None
+        title = "포지션 관리중" if reason == "position_open" else f"{title_prefix} 보류"
+        body = _build_body(
+            symbol_line,
+            _cycle_reason_text(reason=reason, human_reason=human_reason),
+            context.identity_line,
+        )
         return NotificationMessage(
-            title=f"{title_prefix} 차단",
+            title=title,
             body=body,
-            priority=4,
-            tags=_join_tags("warning"),
+            priority=2 if reason == "position_open" else 3,
+            tags=(),
             event_type="cycle_result",
             dedupe_key=None,
             suppress_window_sec=None,
@@ -288,7 +309,7 @@ def build_cycle_result_notification(
         return NotificationMessage(
             title=f"{title_prefix} 실패",
             body=body,
-            priority=5,
+            priority=4,
             tags=_join_tags("warning"),
             event_type="cycle_result",
             dedupe_key=None,
