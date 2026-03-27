@@ -14,6 +14,8 @@
   - 이번 수정에서 실제로 돌린 검증 명령과 남은 주의점
 - [04_server_apply_checklist.md](./04_server_apply_checklist.md)
   - 서버 반영 후 운영자가 바로 확인할 체크리스트와 명령
+- [05_market_data_stale_and_ntfy_cleanup.md](./05_market_data_stale_and_ntfy_cleanup.md)
+  - 기존 포지션 보유 중 stale 출렁임 원인과 ntfy 알림 정리 내용
 
 ## 오늘 핵심 요약
 - TP/SL 브래킷은 이제 한쪽 leg가 조회에서 잠깐 사라졌다고 바로 청산 처리하지 않는다.
@@ -22,9 +24,12 @@
 - 심볼 레버리지 설정은 이제 운영자 의도를 기준으로 처리한다.
 - 심볼 레버리지가 현재 `max_leverage` 보다 크면 runtime이 `max_leverage` 도 같이 올려서 실제 주문이 요청한 값으로 들어가게 했다.
 - Discord 패널도 같은 경로를 막지 않도록 맞췄다.
+- 기존 포지션 보유 중에는 신규 진입은 막히더라도 market data heartbeat는 계속 갱신되도록 보정해 `market_data_stale -> ready 미완료 -> 정상 복귀` 출렁임 원인을 줄였다.
+- ntfy 알림은 긴 프로필명 노출과 과한 경고성 표현을 줄여, 정상 보유 상태가 실패처럼 보이지 않도록 정리했다.
 
 ## 권장 읽기 순서
 1. 운영 증상과 TP/SL 문제를 먼저 확인하려면 `01_tpsl_bracket_recovery_fix.md`
 2. 레버리지 입력과 실제 주문 불일치 문제를 보려면 `02_leverage_intent_fix.md`
 3. 오늘 검증 범위와 남은 리스크를 확인하려면 `03_validation_and_risks.md`
 4. 서버에 반영하고 바로 운영 체크까지 이어가려면 `04_server_apply_checklist.md`
+5. stale 출렁임 원인과 ntfy 알림 톤 정리를 보려면 `05_market_data_stale_and_ntfy_cleanup.md`

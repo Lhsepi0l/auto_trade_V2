@@ -8,7 +8,11 @@ python -m pytest -q v2/tests/test_tpsl_brackets.py
 python -m pytest -q v2/tests/test_control_api.py -k 'position_management or bracket or trailing'
 python -m pytest -q v2/tests/test_control_api.py -k 'control_api_contract or persists_risk_config_across_restart or restores_kernel_runtime_overrides_after_restart or symbol_leverage_lifts_runtime_max'
 python -m pytest -q v2/tests/test_discord_panel.py -k 'symbol_leverage_modal'
+python -m pytest -q v2/tests/test_control_api.py -k 'market_data_stale or position_open_cycle_refreshes_market_data_before_stale_trip'
+python -m pytest -q v2/tests/test_control_api.py -k 'ntfy or position_open_block_does_not_spam'
+python -m pytest -q v2/tests/test_v2_env_and_notify.py
 python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/panel.py v2/tests/test_control_api.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py
+python -m ruff check v2/control/cycle.py v2/notify/runtime_events.py v2/tests/test_control_api.py v2/tests/test_v2_env_and_notify.py
 ```
 
 ## 2. 이번에 추가/보강한 회귀 포인트
@@ -23,6 +27,12 @@ python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/
 - runtime 재시작 후에도 leverage override 가 유지되는지
 - Discord modal 이 backend authoritative path 를 막지 않는지
 
+### 2.3 stale / 알림 관련
+- `position_open` 경로에서도 market data probe/freshness가 갱신되는지
+- 기존 포지션 보유 중 stale 출렁임이 구조적으로 줄어드는지
+- ntfy에서 `position_open` 스케줄러 알림이 스팸처럼 쏟아지지 않는지
+- ntfy 본문에서 긴 프로필명 대신 짧은 mode/env 식별만 남는지
+
 ## 3. 오늘 기준 남아 있는 리스크
 
 ### 3.1 TP/SL 복구 범위
@@ -34,9 +44,24 @@ python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/
 - 의도적으로 강한 입력을 넣으면 실제 주문에도 그대로 반영된다.
 - 즉, 이번 수정은 "운영자 의도를 존중"하는 대신 "입력 실수도 더 직접 반영"하는 방향이다.
 
+### 3.3 외부 변수 한계
+- 이번 stale 수정은 코드상 heartbeat gap을 잡은 것이다.
+- 하지만 실제 운영 서버에서는
+  - 네트워크 지연
+  - 거래소 공개 API 응답 지연
+  - 호스트 리소스 압박
+같은 외부 요인으로 stale 자체가 완전히 0회가 된다고 단정할 수는 없다.
+- 따라서 운영에서는 여전히
+  - stale 빈도
+  - ready 출렁임 반복 여부
+  - source error 동반 여부
+를 같이 봐야 한다.
+
 ## 4. 오늘 변경의 실질적 의미
 - TP/SL 쪽은 "과잉 cleanup"을 막고 "repair"로 바꿨다.
 - 레버리지 쪽은 "조용한 cap"을 없애고 "입력값 기준 적용"으로 바꿨다.
+- stale 쪽은 "포지션 보유중이라 freshness가 늙어버리는 구조"를 막았다.
+- ntfy 쪽은 "정상 상태가 실패처럼 보이던 표현"을 정리했다.
 
 둘 다 공통적으로:
 - 운영자가 기대한 결과와

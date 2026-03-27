@@ -1,7 +1,7 @@
 interface:
   display_name: "Alpha Expansion Research"
-  short_description: "Tune the alpha expansion sweep path."
-  default_prompt: "Use $alpha-expansion-research to run a bounded `ra_2026_alpha_v2_expansion` sweep and summarize the strongest candidate."
+  short_description: "Run a bounded alpha-expansion sweep and summarize the best candidate in Korean."
+  default_prompt: "Use $alpha-expansion-research to run a bounded 1y-first `ra_2026_alpha_v2_expansion` sweep, keep the allowed alpha knobs only, and summarize the strongest candidate plus the next verification command in concise Korean."
 
 policy:
   allow_implicit_invocation: true
