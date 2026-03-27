@@ -5684,6 +5684,73 @@ def test_live_market_data_stale_blocks_new_entries_and_unblocks_when_fresh(tmp_p
     assert kernel.calls == 1
 
 
+def test_live_position_open_cycle_refreshes_market_data_before_stale_trip(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _OpenPositionREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _KernelNoCandidate:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    now = datetime.now(timezone.utc)
+    recent_iso = (now - timedelta(seconds=4)).isoformat()
+    market_data_state = {
+        "last_market_data_at": recent_iso,
+        "last_market_symbol_count": 1,
+        "last_market_data_source_ok_at": recent_iso,
+        "last_market_data_source_fail_at": None,
+        "last_market_data_source_error": None,
+    }
+    kernel = _KernelNoCandidate()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_OpenPositionREST(),
+        kernel=kernel,
+        market_data_state=market_data_state,
+    )
+    now_iso = now.isoformat()
+    controller._running = True
+    controller._user_stream_started = True
+    controller._user_stream_started_at = now_iso
+    controller._last_private_stream_ok_at = now_iso
+    controller._risk["market_data_stale_sec"] = 5.0
+    controller._risk["user_ws_stale_sec"] = 60.0
+
+    probe_calls: list[int] = []
+
+    def _prime_market_data() -> None:
+        probe_calls.append(1)
+        refreshed = datetime.now(timezone.utc).isoformat()
+        controller._market_data_state["last_market_data_at"] = refreshed
+        controller._market_data_state["last_market_data_source_ok_at"] = refreshed
+        controller._market_data_state["last_market_symbol_count"] = 1
+        controller._market_data_state["last_market_data_source_fail_at"] = None
+        controller._market_data_state["last_market_data_source_error"] = None
+
+    controller._maybe_probe_market_data = _prime_market_data  # type: ignore[method-assign]
+
+    out = controller.tick_scheduler_now()
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_decision_reason"] == "position_open"
+    assert len(probe_calls) == 1
+    assert controller._freshness_snapshot()["market_data_stale"] is False
+    assert kernel.calls == 0
+
+
 def test_live_user_stream_stale_blocks_new_entries_and_private_ok_unblocks(tmp_path) -> None:  # type: ignore[no-untyped-def]
     class _HealthyREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:

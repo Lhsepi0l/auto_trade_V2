@@ -149,11 +149,21 @@ def run_cycle_once_locked(
                     candidate=None,
                 )
             elif reentry_blocked:
-                cycle = KernelCycleResult(
-                    state="blocked",
-                    reason="position_open",
-                    candidate=None,
-                )
+                controller._maybe_probe_market_data()
+                controller._update_stale_transitions()
+                freshness = controller._freshness_snapshot()
+                if bool(freshness["market_data_stale"]):
+                    cycle = KernelCycleResult(
+                        state="blocked",
+                        reason="market_data_stale",
+                        candidate=None,
+                    )
+                else:
+                    cycle = KernelCycleResult(
+                        state="blocked",
+                        reason="position_open",
+                        candidate=None,
+                    )
             else:
                 cycle = controller.kernel.run_once()
         portfolio_cycle = None
