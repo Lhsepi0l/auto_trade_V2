@@ -1568,8 +1568,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             alpha_expansion_quality_score_min=float(
                 args.backtest_alpha_expansion_quality_score_min
             ),
-            alpha_expansion_quality_score_v2_min=float(
-                args.backtest_alpha_expansion_quality_score_v2_min
+            alpha_expansion_quality_score_v2_min=(
+                None
+                if args.backtest_alpha_expansion_quality_score_v2_min is None
+                else float(args.backtest_alpha_expansion_quality_score_v2_min)
             ),
             alpha_min_volume_ratio=float(args.backtest_alpha_min_volume_ratio),
             alpha_take_profit_r=float(args.backtest_alpha_take_profit_r),

@@ -236,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backtest-alpha-expansion-quality-score-v2-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum penalty-based breakout quality score v2 for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(

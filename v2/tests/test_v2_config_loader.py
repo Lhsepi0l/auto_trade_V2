@@ -14,6 +14,7 @@ def test_alpha_base_profile_loads() -> None:
     )
     assert cfg.behavior.scheduler.tick_seconds == 30
     assert cfg.behavior.exchange.default_symbol == "BTCUSDT"
+    assert cfg.behavior.exchange.market_intervals == ["15m", "1h", "4h"]
     assert cfg.behavior.risk.max_leverage == 8.0
     assert [entry.name for entry in cfg.behavior.strategies if entry.enabled] == ["ra_2026_alpha_v2"]
     enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
@@ -78,6 +79,8 @@ def test_alpha_live_candidate_profile_loads() -> None:
     enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
     assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
     assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
+    assert cfg.behavior.exchange.market_intervals == ["15m", "1h", "4h"]
+    assert enabled[0].params["expansion_quality_score_v2_min"] == 0.62
     assert cfg.behavior.risk.max_leverage == 5.0
     assert cfg.behavior.risk.max_exposure_pct == 0.10
     assert cfg.behavior.risk.daily_loss_limit_pct == -0.015

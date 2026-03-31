@@ -69,7 +69,7 @@ def _local_backtest_strategy_runtime_params(
     alpha_expansion_breakout_stability_score_min: float,
     alpha_expansion_breakout_stability_edge_score_min: float,
     alpha_expansion_quality_score_min: float,
-    alpha_expansion_quality_score_v2_min: float,
+    alpha_expansion_quality_score_v2_min: float | None,
     alpha_min_volume_ratio: float,
     alpha_take_profit_r: float,
     alpha_time_stop_bars: int,
@@ -100,7 +100,7 @@ def _local_backtest_strategy_runtime_params(
     pfd_take_profit_r: float,
 ) -> dict[str, Any]:
     if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
-        return {
+        params = {
             "squeeze_percentile_threshold": min(
                 max(float(alpha_squeeze_percentile_max), 0.05),
                 0.95,
@@ -139,10 +139,6 @@ def _local_backtest_strategy_runtime_params(
                 max(float(alpha_expansion_quality_score_min), 0.0),
                 1.0,
             ),
-            "expansion_quality_score_v2_min": min(
-                max(float(alpha_expansion_quality_score_v2_min), 0.0),
-                1.0,
-            ),
             "min_volume_ratio_15m": max(float(alpha_min_volume_ratio), 0.0),
             "take_profit_r": max(float(alpha_take_profit_r), 0.5),
             "time_stop_bars": max(int(alpha_time_stop_bars), 1),
@@ -155,6 +151,12 @@ def _local_backtest_strategy_runtime_params(
             ),
             "expected_move_cost_mult": max(float(alpha_expected_move_cost_mult), 0.1),
         }
+        if alpha_expansion_quality_score_v2_min is not None:
+            params["expansion_quality_score_v2_min"] = min(
+                max(float(alpha_expansion_quality_score_v2_min), 0.0),
+                1.0,
+            )
+        return params
     return {}
 
 
@@ -233,6 +235,7 @@ def _local_backtest_profile_alpha_overrides(profile_name: str) -> dict[str, Any]
             "time_stop_bars": 18,
             "trend_adx_min_4h": 14.0,
             "expected_move_cost_mult": 1.6,
+            "expansion_quality_score_v2_min": 0.62,
         },
     }
     return dict(mapping.get(normalized, {}))
@@ -247,7 +250,7 @@ def _merge_local_backtest_profile_alpha_overrides(
     merged = {}
     if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
         merged.update(_local_backtest_profile_alpha_overrides(profile_name))
-    merged.update(strategy_runtime_params)
+    merged.update({key: value for key, value in strategy_runtime_params.items() if value is not None})
     return merged
 
 
@@ -297,7 +300,7 @@ def _run_local_backtest_symbol_replay_worker(
     alpha_expansion_breakout_stability_score_min: float,
     alpha_expansion_breakout_stability_edge_score_min: float,
     alpha_expansion_quality_score_min: float,
-    alpha_expansion_quality_score_v2_min: float,
+    alpha_expansion_quality_score_v2_min: float | None,
     alpha_min_volume_ratio: float,
     alpha_take_profit_r: float,
     alpha_time_stop_bars: int,
@@ -455,7 +458,11 @@ def _run_local_backtest_symbol_replay_worker(
             alpha_expansion_breakout_stability_edge_score_min
         ),
         alpha_expansion_quality_score_min=float(alpha_expansion_quality_score_min),
-        alpha_expansion_quality_score_v2_min=float(alpha_expansion_quality_score_v2_min),
+        alpha_expansion_quality_score_v2_min=(
+            None
+            if alpha_expansion_quality_score_v2_min is None
+            else float(alpha_expansion_quality_score_v2_min)
+        ),
         alpha_min_volume_ratio=float(alpha_min_volume_ratio),
         alpha_take_profit_r=float(alpha_take_profit_r),
         alpha_time_stop_bars=int(alpha_time_stop_bars),
@@ -804,7 +811,7 @@ def _run_local_backtest(
     alpha_expansion_breakout_stability_score_min: float,
     alpha_expansion_breakout_stability_edge_score_min: float,
     alpha_expansion_quality_score_min: float,
-    alpha_expansion_quality_score_v2_min: float,
+    alpha_expansion_quality_score_v2_min: float | None,
     alpha_min_volume_ratio: float,
     alpha_take_profit_r: float,
     alpha_time_stop_bars: int,
@@ -914,10 +921,11 @@ def _run_local_backtest(
         max(float(alpha_expansion_quality_score_min), 0.0),
         1.0,
     )
-    alpha_expansion_quality_score_v2_min = min(
-        max(float(alpha_expansion_quality_score_v2_min), 0.0),
-        1.0,
-    )
+    if alpha_expansion_quality_score_v2_min is not None:
+        alpha_expansion_quality_score_v2_min = min(
+            max(float(alpha_expansion_quality_score_v2_min), 0.0),
+            1.0,
+        )
     alpha_min_volume_ratio = max(float(alpha_min_volume_ratio), 0.0)
     alpha_take_profit_r = max(float(alpha_take_profit_r), 0.5)
     alpha_time_stop_bars = max(int(alpha_time_stop_bars), 1)
@@ -970,7 +978,11 @@ def _run_local_backtest(
             alpha_expansion_breakout_stability_edge_score_min
         ),
         alpha_expansion_quality_score_min=float(alpha_expansion_quality_score_min),
-        alpha_expansion_quality_score_v2_min=float(alpha_expansion_quality_score_v2_min),
+        alpha_expansion_quality_score_v2_min=(
+            None
+            if alpha_expansion_quality_score_v2_min is None
+            else float(alpha_expansion_quality_score_v2_min)
+        ),
         alpha_min_volume_ratio=float(alpha_min_volume_ratio),
         alpha_take_profit_r=float(alpha_take_profit_r),
         alpha_time_stop_bars=int(alpha_time_stop_bars),
@@ -1004,6 +1016,9 @@ def _run_local_backtest(
         profile_name=cfg.profile,
         active_strategy_name=active_strategy_name,
         strategy_runtime_params=strategy_runtime_params,
+    )
+    effective_alpha_expansion_quality_score_v2_min = float(
+        _to_float(strategy_runtime_params.get("expansion_quality_score_v2_min")) or 0.0
     )
 
     if years <= 0:
@@ -1607,7 +1622,7 @@ def _run_local_backtest(
                 "alpha_expansion_breakout_stability_score_min": alpha_expansion_breakout_stability_score_min,
                 "alpha_expansion_breakout_stability_edge_score_min": alpha_expansion_breakout_stability_edge_score_min,
                 "alpha_expansion_quality_score_min": alpha_expansion_quality_score_min,
-                "alpha_expansion_quality_score_v2_min": alpha_expansion_quality_score_v2_min,
+                "alpha_expansion_quality_score_v2_min": effective_alpha_expansion_quality_score_v2_min,
                 "alpha_min_volume_ratio": alpha_min_volume_ratio,
                 "alpha_take_profit_r": alpha_take_profit_r,
                 "alpha_time_stop_bars": alpha_time_stop_bars,
@@ -1916,7 +1931,7 @@ def _run_local_backtest(
                     6,
                 ),
                 "alpha_expansion_quality_score_v2_min": round(
-                    float(alpha_expansion_quality_score_v2_min),
+                    float(effective_alpha_expansion_quality_score_v2_min),
                     6,
                 ),
                 "alpha_min_volume_ratio": round(float(alpha_min_volume_ratio), 6),

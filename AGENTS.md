@@ -172,6 +172,8 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 ## Session Memory (2026-03)
 
 ### Recent Technical Outcomes
+- Re-evaluated 30m/2h reinforcement on 2026-03-28 and did **not** promote it into the live default path after fixed-window 1Y verification showed worse `net/PF/DD` than baseline. Current preferred direction is still the 3-TF core (`15m/1h/4h`) with a smarter trigger-aware `expansion_quality_score_v2` and `ra_2026_alpha_v2_expansion_live_candidate` now pinning `expansion_quality_score_v2_min=0.60`, which preserved baseline-level 1Y performance on the checked window.
+- Added 30m/2h soft reinforcement for `ra_2026_alpha_v2` on 2026-03-28: runtime/backtest market interval supply now guarantees `15m/30m/1h/2h/4h`, and strategy scoring now uses 30m mid-bias plus 2h mid-structure as soft score reinforcement only (not hard gates) so candidate quality can improve without sharply choking trade frequency.
 - Fixed intermittent market-data stale on 2026-03-28 by closing a heartbeat gap in the `position_open` branch: when live reentry is blocked by an existing position, runtime now still refreshes market-data probe/freshness before returning `position_open`, preventing stale/ready flapping caused by skipped `kernel.run_once()` heartbeats.
 - Cleaned up ntfy alert UX on 2026-03-28: `v2/notify/runtime_events.py` now removes long profile names from the shared identity line, shortens runtime identity to concise mode/env text, downgrades non-error ntfy priority/tags, and suppresses scheduler `position_open` push noise so normal “existing position” states do not look like failures.
 - Fixed operator leverage intent drift on 2026-03-28: `v2/control/api.py` now treats explicit `set_symbol_leverage` input as authoritative and auto-lifts runtime `max_leverage` when needed so requested symbol leverage is not silently capped by an older lower max; Discord symbol-leverage modal blocking was aligned with the backend, and regression coverage was added in `v2/tests/test_control_api.py` and `v2/tests/test_discord_panel.py`.
@@ -2711,3 +2713,46 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - 2026-03-27 문서 정합성 보정:
   - `v2/docs/20260327_live_operator_upgrade/03_position_management_loop.md`의 `## 8. 아직 남은 것`이 구현 완료된 항목(2단계 weakness reduce, alpha/regime별 reduce 비율, volatility runner lock)을 TODO처럼 남기고 있어 오해를 만들었다.
   - 현재 기준 문서에서는 위 3개를 구현 완료 항목으로 명확히 구분하고, 남은 것은 수치 튜닝과 실운용 검증 단계라고 정정했다.
+- 2026-03-29 alpha_expansion quality gate 재검증:
+  - 30m/2h 직접 보강은 live 기본 경로에 채택하지 않고, `15m/1h/4h` 3-TF core를 유지한 채 `expansion_quality_score_v2_min`만 bounded sweep으로 다시 검증했다.
+  - 1Y fixed window `2025-03-28 ~ 2026-03-28`에서 `qv2_min=0.62`가 baseline(`net=6.14`, `PF=2.707`, `DD=5.62%`, `trades=318`) 대비 `net=6.73`, `PF=3.127`, `DD=4.48%`, `trades=281`로 가장 균형 좋게 개선됐다.
+  - 추가 6개월 창 검증 결과:
+    - `2025-03-28 ~ 2025-09-27`: `net=0.57 -> 0.64`, `PF=2.140 -> 2.204`, `DD=3.54% -> 3.34%`
+    - `2025-09-28 ~ 2026-03-28`: `qv2_min=0.60`와 `0.62`가 사실상 동일 성능으로 중립
+  - 현재 채택값은 `ra_2026_alpha_v2_expansion_live_candidate`의 `expansion_quality_score_v2_min=0.62`이며, local backtest profile override도 동일 값으로 정렬했다.
+  - 동시에 local backtest precedence 버그를 수정했다: `--backtest-alpha-expansion-quality-score-v2-min`을 명시하지 않으면 parser 기본값이 profile override를 덮어쓰던 문제를 없애고, 이제는 `옵션 미지정 -> profile default 유지`, `옵션 명시 -> CLI override 적용`으로 동작한다.
+  - 같은 날 `trigger_missing` / `volume_missing` 구조적 rescue 시도도 검증했지만 채택하지 않았다. 좁은 buffer-rescue와 quality-based volume rescue를 넣었을 때 1Y/6M fixed-window 성능이 모두 소폭 후퇴해서, live 기본 경로에는 반영하지 않고 q62 상태로 되돌렸다.
+  - 감 기반 수정 반복을 막기 위해 `python -m v2.backtest.block_samples --profile ra_2026_alpha_v2_expansion_live_candidate --symbol BTCUSDT --start-utc 2025-03-28T00:00:00Z --end-utc 2026-03-28T23:59:59Z --sample-limit 20` 표본 추출 도구를 추가했다.
+  - 첫 1Y 표본 리포트:
+    - JSON: `local_backtest/reports/alpha_expansion_block_samples_20260328_175214_498686.json`
+    - Markdown: `local_backtest/reports/alpha_expansion_block_samples_20260328_175214_498686.md`
+  - 핵심 관찰:
+    - `volume_missing`는 `15169`건으로 많지만 평균 `vol_ratio≈0.551`이라 대부분 진짜 저볼륨이다. 문턱 근처(`>=0.84`)는 `953`건 수준이라 단순 rescue 가치가 제한적이다.
+    - `trigger_missing`는 `8708`건이며, `body_ready 7229`, `width_ready 4221`, `squeeze_ready 3102`였다.
+    - buffer 바로 아래 near-break는 완전 소수는 아니고 의미 있는 덩어리가 있다: `long_gap_lt_8bps=432`, `short_gap_lt_8bps=386`, 그리고 `body+close+width`까지 갖춘 near-break는 `long=261`, `short=255`.
+  - 따라서 다음 트리거 연구는 `volume` 완화보다 `buffer 바로 아래 + body/close/width 정합` 표본에 한정된 설계가 우선이다.
+  - 같은 날 위 near-miss 후보 중 가장 유망한 규칙(`buffer 8bps 안쪽 + body/close/width/squeeze 정합`)을 실제 전략에 임시 반영해 1Y/6M bounded replay를 돌려봤지만 채택하지 않았다.
+    - 1Y: `net=6.73 -> 6.67`, `PF=3.127 -> 3.107`, `DD=4.48 동일`, `trades=281 -> 282`
+    - 6M(`2025-03-28 ~ 2025-09-27`): 사실상 동일
+    - 6M(`2025-09-28 ~ 2026-03-28`): `net=4.81 -> 4.75`, `PF=3.449 -> 3.411`, `DD=4.48 동일`, `trades=159 -> 160`
+  - 결론: 가장 가능성 높던 near-buffer same-candle trigger도 기대수익 관점에선 미세하게 후퇴라서 원복했다. 다음 연구는 같은 봉 rescue보다 setup/confirm 또는 비용 모델 재설계 쪽이어야 한다.
+  - 이어서 `cost_missing` 세분화도 추가했다. `alpha_expansion_cost_candidates_20260328_183542_560238.csv` 기준 `cost_missing=354` 중 `353`이 `edge_shortfall`이었고, `edge_ratio>=0.95` near-pass는 `36`, `>=0.90`는 `80`, `>=0.85`는 `106`이었다.
+  - 이 근거로 `edge_ratio >= 0.95 + high quality(qv2 high) + 정상 spread/stop` cost near-pass 규칙을 `alpha_expansion`에 좁게 적용해 재검증했고, 성과는 유지되면서 `cost_missing`만 감소해 채택했다.
+    - 1Y: `net=6.73`, `PF=3.127`, `DD=4.48`, `trades=281` 유지, `cost_missing: 467 -> 437`
+    - 6M(`2025-03-28 ~ 2025-09-27`): `net=0.64`, `PF=2.204`, `DD=3.34`, `trades=89` 유지, `cost_missing: 308 -> 288`
+    - 6M(`2025-09-28 ~ 2026-03-28`): `net=4.81`, `PF=3.449`, `DD=4.48`, `trades=159` 유지, `cost_missing: 109 -> 101`
+  - near-buffer 후보 `203`개를 다시 setup bucket으로 자동 분류하는 기능도 `v2.backtest.block_samples`에 추가했다.
+    - 새 리포트: `local_backtest/reports/alpha_expansion_block_samples_20260331_183214_038101.{json,md}`
+    - 새 CSV: `local_backtest/reports/alpha_expansion_setup_candidates_20260331_183214_038101.csv`
+    - top rule 3개:
+      - `broad_quality`: `gap<=8bps`, `body>=0.35`, `favored>=0.60`, `width>=0.05`, `range_atr>=0.85`, `count=106`
+      - `balanced_range`: `gap<=5bps`, `body>=0.40`, `favored>=0.65`, `width>=0.05`, `range_atr>=0.90`, `count=57`
+      - `balanced_core`: `gap<=3.5bps`, `body>=0.45`, `favored>=0.68`, `width>=0.08`, `range_atr>=0.95`, `count=27`
+    - 다음 `setup/confirm` 실험 1순위는 support/quality 균형상 `balanced_range`로 본다.
+  - 검증:
+    - `python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_local_backtest.py` 통과
+    - `python -m ruff check v2/backtest/local_runner.py v2/tests/test_v2_config_loader.py v2/tests/test_v2_local_backtest.py` 통과
+    - bounded fixed-window replays:
+      - `qv2=0.60/0.62/0.64/0.66/0.68/0.70` on `2025-03-28 ~ 2026-03-28`
+      - `qv2=0.60/0.62` on `2025-03-28 ~ 2025-09-27`
+      - `qv2=0.60/0.62` on `2025-09-28 ~ 2026-03-28`

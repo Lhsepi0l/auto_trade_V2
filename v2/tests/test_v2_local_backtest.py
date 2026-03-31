@@ -222,6 +222,7 @@ def test_local_backtest_profile_alpha_overrides_maps_expansion_profiles() -> Non
         "time_stop_bars": 18,
         "trend_adx_min_4h": 14.0,
         "expected_move_cost_mult": 1.6,
+        "expansion_quality_score_v2_min": 0.62,
     }
     assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2") == {}
 
@@ -247,6 +248,20 @@ def test_local_backtest_cli_alpha_overrides_win_over_profile_defaults() -> None:
     assert merged["expansion_close_location_min"] == 0.55
     assert merged["expansion_width_expansion_min"] == 0.03
     assert merged["min_volume_ratio_15m"] == 0.90
+
+
+def test_local_backtest_profile_default_survives_when_cli_override_is_omitted() -> None:
+    merged = _merge_local_backtest_profile_alpha_overrides(
+        profile_name="ra_2026_alpha_v2_expansion_live_candidate",
+        active_strategy_name="ra_2026_alpha_v2",
+        strategy_runtime_params={
+            "expansion_quality_score_v2_min": None,
+            "expansion_buffer_bps": 2.0,
+        },
+    )
+
+    assert merged["expansion_quality_score_v2_min"] == 0.62
+    assert merged["expansion_buffer_bps"] == 2.0
 
 
 def test_calc_max_drawdown_pct() -> None:

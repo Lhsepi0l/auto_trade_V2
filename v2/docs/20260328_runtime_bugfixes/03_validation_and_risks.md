@@ -11,8 +11,11 @@ python -m pytest -q v2/tests/test_discord_panel.py -k 'symbol_leverage_modal'
 python -m pytest -q v2/tests/test_control_api.py -k 'market_data_stale or position_open_cycle_refreshes_market_data_before_stale_trip'
 python -m pytest -q v2/tests/test_control_api.py -k 'ntfy or position_open_block_does_not_spam'
 python -m pytest -q v2/tests/test_v2_env_and_notify.py
+python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_market_intervals_config.py
+python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides_maps_expansion_profiles or historical_snapshot_provider or alpha_v2'
 python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/panel.py v2/tests/test_control_api.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py
 python -m ruff check v2/control/cycle.py v2/notify/runtime_events.py v2/tests/test_control_api.py v2/tests/test_v2_env_and_notify.py
+python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/clean_room/kernel.py v2/backtest/policy.py v2/backtest/local_runner.py v2/control/status_payloads.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_market_intervals_config.py v2/tests/test_v2_local_backtest.py
 ```
 
 ## 2. 이번에 추가/보강한 회귀 포인트
@@ -32,6 +35,13 @@ python -m ruff check v2/control/cycle.py v2/notify/runtime_events.py v2/tests/te
 - 기존 포지션 보유 중 stale 출렁임이 구조적으로 줄어드는지
 - ntfy에서 `position_open` 스케줄러 알림이 스팸처럼 쏟아지지 않는지
 - ntfy 본문에서 긴 프로필명 대신 짧은 mode/env 식별만 남는지
+
+### 2.4 전략 구조 관련
+- `alpha_expansion`의 trigger/quality 경로가 유닛 기준으로 깨지지 않는지
+- `15m/1h/4h` 3-TF core가 유지되는지
+- `30m/2h` 보강 실험을 live 기본 경로로 채택하지 않아도 관련 실험 훅이 회귀 없이 남아 있는지
+- `ra_2026_alpha_v2_expansion_live_candidate`의 `expansion_quality_score_v2_min=0.62` 기본값이 설정/백테스트 경로에 일관되게 반영되는지
+- local backtest에서 CLI 미지정 시 generic default가 profile override를 덮어쓰지 않고, profile 기본값 `0.62`가 실제 replay까지 전달되는지
 
 ## 3. 오늘 기준 남아 있는 리스크
 
@@ -57,11 +67,40 @@ python -m ruff check v2/control/cycle.py v2/notify/runtime_events.py v2/tests/te
   - source error 동반 여부
 를 같이 봐야 한다.
 
+### 3.4 전략 수익성 한계
+- 운영 안정성과 전략 수익성은 구분해서 봐야 한다.
+- 2026-03-28 기준으로
+  - TP/SL
+  - leverage
+  - stale
+  - ntfy
+는 분명히 좋아졌지만,
+  전략 자체가 월 `3000 USD` 급 우상향 시스템으로 증명된 것은 아니다.
+- fixed-window 1Y 비교에서 `30m/2h`를 live 기본 경로에 직접 녹인 버전은 baseline보다 `net/PF/DD`가 나빠 채택하지 않았다.
+- 현재 전략 쪽에서 채택한 현실적인 개선안은
+  - `15m/1h/4h` 유지
+  - `expansion_quality_score_v2_min=0.62`
+  - `edge_ratio >= 0.95 + high quality + 정상 spread/stop`인 `cost near-pass` 허용
+로 expansion 품질을 더 보수적으로 거르면서도 과보수적인 cost 차단 일부를 풀어주는 것이다.
+- 2026-03-29 재검증 기준:
+  - fixed-window 1Y `2025-03-28 ~ 2026-03-28`:
+    - baseline `net=6.14`, `PF=2.707`, `DD=5.62%`, `trades=318`
+    - `qv2_min=0.62` `net=6.73`, `PF=3.127`, `DD=4.48%`, `trades=281`
+    - `qv2_min=0.62 + cost near-pass`도 `net=6.73`, `PF=3.127`, `DD=4.48%`, `trades=281`로 동일 성과를 유지했고 `cost_missing`만 `467 -> 437`로 감소했다
+  - 추가 6개월 창 `2025-03-28 ~ 2025-09-27`:
+    - baseline `net=0.57`, `PF=2.140`, `DD=3.54%`, `trades=91`
+    - `qv2_min=0.62` `net=0.64`, `PF=2.204`, `DD=3.34%`, `trades=89`
+    - `qv2_min=0.62 + cost near-pass`도 `net=0.64`, `PF=2.204`, `DD=3.34%`, `trades=89`로 동일했고 `cost_missing`은 `308 -> 288`로 감소했다
+  - 추가 6개월 창 `2025-09-28 ~ 2026-03-28`:
+    - baseline `net=4.81`, `PF=3.449`, `DD=4.48%`, `trades=159`
+    - `qv2_min=0.62 + cost near-pass`도 `net=4.81`, `PF=3.449`, `DD=4.48%`, `trades=159`로 동일했고 `cost_missing`은 `109 -> 101` 수준으로 감소했다.
+
 ## 4. 오늘 변경의 실질적 의미
 - TP/SL 쪽은 "과잉 cleanup"을 막고 "repair"로 바꿨다.
 - 레버리지 쪽은 "조용한 cap"을 없애고 "입력값 기준 적용"으로 바꿨다.
 - stale 쪽은 "포지션 보유중이라 freshness가 늙어버리는 구조"를 막았다.
 - ntfy 쪽은 "정상 상태가 실패처럼 보이던 표현"을 정리했다.
+- 전략 쪽은 “더 많이 들어가게 만들기”보다 “애매한 확장을 더 잘 거르기” 쪽으로 방향을 재정렬했다.
 
 둘 다 공통적으로:
 - 운영자가 기대한 결과와
