@@ -5476,6 +5476,64 @@ def test_start_live_services_primes_market_data_before_first_tick(tmp_path) -> N
         asyncio.run(controller.stop_live_services())
 
 
+def test_live_user_stream_private_ok_clears_disconnect_uncertainty(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_HealthyREST(),
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = datetime.now(timezone.utc).isoformat()
+    controller._risk["user_ws_stale_sec"] = 60.0
+
+    asyncio.run(controller._handle_user_stream_disconnect("socket_closed"))
+    status = controller._status_snapshot()
+    assert status["state_uncertain"] is True
+    assert status["state_uncertain_reason"] == "socket_closed"
+    assert controller._user_stream_last_error == "socket_closed"
+
+    asyncio.run(controller._handle_user_stream_private_ok("keepalive"))
+    status = controller._status_snapshot()
+    assert status["state_uncertain"] is False
+    assert status["state_uncertain_reason"] is None
+    assert controller._user_stream_last_error is None
+
+
+def test_live_user_stream_private_ok_does_not_clear_non_stream_uncertainty(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=_HealthyREST(),
+    )
+    controller._user_stream_started = True
+    controller._user_stream_started_at = datetime.now(timezone.utc).isoformat()
+    controller._risk["user_ws_stale_sec"] = 60.0
+    controller._set_state_uncertain(reason="live_positions_fetch_failed", engage_safe_mode=False)
+
+    asyncio.run(controller._handle_user_stream_private_ok("keepalive"))
+    status = controller._status_snapshot()
+    assert status["state_uncertain"] is True
+    assert status["state_uncertain_reason"] == "live_positions_fetch_failed"
+
+
 def test_live_user_stream_resync_failure_sets_uncertainty(tmp_path) -> None:  # type: ignore[no-untyped-def]
     class _ReconREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:

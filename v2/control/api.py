@@ -420,6 +420,20 @@ class RuntimeController:
             self._log_event("uncertainty_transition", state_uncertain=False)
             self._maybe_log_ready_transition()
 
+    def _should_clear_uncertainty_on_private_ok(self) -> bool:
+        if not self._state_uncertain:
+            return False
+        reason = str(self._state_uncertain_reason or "").strip()
+        last_error = str(self._user_stream_last_error or "").strip()
+        if not reason or not last_error or reason != last_error:
+            return False
+        return (
+            reason == "user_stream_disconnected"
+            or reason == "listen_key_expired"
+            or reason.startswith("user_stream_error:")
+            or reason.startswith("socket_")
+        )
+
     def _set_recovery_required(self, *, reason: str) -> None:
         next_reason = str(reason or "recovery_required")
         changed = (not self._recovery_required) or self._recovery_reason != next_reason
@@ -3155,6 +3169,10 @@ class RuntimeController:
     async def _handle_user_stream_private_ok(self, source: str) -> None:
         self._last_private_stream_ok_at = _utcnow_iso()
         self._update_stale_transitions()
+        freshness = self._freshness_snapshot()
+        if self._should_clear_uncertainty_on_private_ok() and not bool(freshness["user_ws_stale"]):
+            self._user_stream_last_error = None
+            self._clear_state_uncertain()
         if str(source or "") != "ws_alive":
             self._log_event("user_stream_private_ok", source=source)
 
