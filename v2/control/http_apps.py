@@ -133,7 +133,7 @@ def create_control_http_app(
     register_readonly_control_routes(app=app, controller=controller)
     register_mutating_control_routes(app=app, controller=controller)
     if enable_operator_web:
-        from v2.web_panel import register_operator_web_routes
+        from v2.operator_web import register_operator_web_routes
 
         register_operator_web_routes(app=app, controller=controller)
     return app

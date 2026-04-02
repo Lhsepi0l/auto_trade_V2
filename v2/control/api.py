@@ -2989,7 +2989,7 @@ class RuntimeController:
 
     def _status_positions_source(self) -> list[tuple[str, float, float, float]]:
         live_positions, live_rows, live_ok, _live_error = self._fetch_live_positions()
-        if live_ok and live_rows:
+        if live_ok:
             out_live: list[tuple[str, float, float, float]] = []
             for symbol, row in sorted(live_rows.items()):
                 if not isinstance(row, dict):
@@ -3011,6 +3011,7 @@ class RuntimeController:
                     for symbol, amount in sorted(live_positions.items())
                     if abs(_to_float(amount, default=0.0)) > 0.0
                 ]
+            return []
 
         state = self.state_store.get()
         out_state: list[tuple[str, float, float, float]] = []
@@ -3463,11 +3464,19 @@ class RuntimeController:
 
     async def close_all(self, *, notify_reason: str = "forced_close") -> dict[str, Any]:
         self._log_event("flatten_requested", action="close_all")
-        symbols = set(
-            self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]
-        )
-        for sym in self.state_store.get().current_position.keys():
-            symbols.add(sym)
+        symbols: set[str] = set()
+        live_positions, _live_rows, live_ok, _live_error = self._fetch_live_positions()
+        if live_ok:
+            for sym, position_amt in live_positions.items():
+                if abs(_to_float(position_amt, default=0.0)) <= 0.0:
+                    continue
+                symbols.add(str(sym).strip().upper())
+        else:
+            symbols = set(
+                self._risk.get("universe_symbols") or [self.cfg.behavior.exchange.default_symbol]
+            )
+            for sym in self.state_store.get().current_position.keys():
+                symbols.add(sym)
         details: list[dict[str, Any]] = []
         for symbol in sorted({str(s).upper() for s in symbols if str(s).strip()}):
             details.append(await self.close_position(symbol=symbol, notify_reason=notify_reason))

@@ -4742,6 +4742,134 @@ def test_control_api_status_prefers_live_positions_for_snapshot(tmp_path) -> Non
     assert row["unrealized_pnl"] == 2.2
 
 
+def test_control_api_status_does_not_fallback_to_stale_positions_when_live_positions_are_flat(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(
+        tmp_path / "control_status_live_positions_flat.sqlite3"
+    )
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    state_store.apply_reconciliation(
+        open_orders=[],
+        positions=[{"symbol": "BTCUSDT", "positionAmt": "0.01", "entryPrice": "100000"}],
+        balances=[],
+        reason="seed_stale_position",
+    )
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=False,
+        rest_client=None,
+    )
+
+    class _LiveRESTFlat:
+        async def get_balances(self):  # type: ignore[no-untyped-def]
+            return [{"asset": "USDT", "availableBalance": "50", "walletBalance": "50"}]
+
+        async def get_positions(self):  # type: ignore[no-untyped-def]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0", "entryPrice": "0"}]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_LiveRESTFlat(),
+    )
+    app = create_control_http_app(controller=controller)
+    client = TestClient(app)
+
+    status = client.get("/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["binance"]["positions"] == {}
+
+
+def test_control_api_close_all_uses_live_positions_when_available(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _FlattenExchange:
+        def __init__(self) -> None:
+            self.cancelled_symbols: list[str] = []
+            self.flattened_symbols: set[str] = set()
+
+        async def cancel_all_open_orders(self, *, symbol: str) -> dict[str, Any]:
+            self.cancelled_symbols.append(symbol)
+            return {}
+
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, Any]]:
+            _ = symbol
+            return []
+
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            _ = params
+            return {}
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            if "ETHUSDT" in self.flattened_symbols:
+                return [{"symbol": "ETHUSDT", "positionAmt": "0"}]
+            return [{"symbol": "ETHUSDT", "positionAmt": "0.02"}]
+
+        async def place_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: str,
+            quantity: float,
+            position_side: str = "BOTH",
+        ) -> dict[str, Any]:
+            _ = side
+            _ = quantity
+            _ = position_side
+            self.flattened_symbols.add(symbol)
+            return {"symbol": symbol}
+
+    controller, state_store, _ops = _build_live_controller(tmp_path, rest_client=_HealthyREST())
+    state_store.apply_reconciliation(
+        open_orders=[],
+        positions=[{"symbol": "BTCUSDT", "positionAmt": "0.01", "entryPrice": "100000"}],
+        balances=[],
+        reason="seed_stale_position",
+    )
+    exchange = _FlattenExchange()
+    controller.ops.exchange = exchange
+    controller.rest_client = exchange  # type: ignore[assignment]
+
+    out = asyncio.run(controller.close_all())
+
+    assert out["detail"]["results"][0]["symbol"] == "ETHUSDT"
+    assert exchange.cancelled_symbols == ["ETHUSDT"]
+
+
 def test_control_api_status_marks_balance_source_as_fallback_when_live_fetch_unavailable(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
