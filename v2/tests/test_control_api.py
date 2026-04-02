@@ -1011,6 +1011,131 @@ def test_control_api_runtime_cycle_emits_scheduler_no_candidate_notification_for
     assert "거래량 조건 미충족" in notification.body
 
 
+def test_control_api_runtime_cycle_emits_entry_opened_notification_for_executed_result(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_entry_open.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecuted:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=1.0,
+                    entry_price=100000.0,
+                ),
+                size=SizePlan(
+                    symbol="BTCUSDT",
+                    qty=0.01,
+                    leverage=3.0,
+                    notional=1000.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(ok=True, order_id="oid-1", reason="live_order_submitted"),
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecuted(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "executed"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "BTCUSDT LONG 진입"
+    assert "주문 실행 완료" in notification.body
+    assert "qty=0.010000" in notification.body
+    assert "lev=3.0" in notification.body
+
+
+def test_control_api_runtime_cycle_emits_clear_order_failure_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_order_failure.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelExecutionFailed:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="execution_failed",
+                reason="live_order_failed:BinanceRESTError:-2019",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=1.0,
+                    entry_price=100000.0,
+                ),
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelExecutionFailed(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "execution_failed"
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "실시간 진입 실패"
+    assert "진입 시도: BTCUSDT | LONG" in notification.body
+    assert "가용 마진 부족" in notification.body
+
+
 def test_scheduler_cycle_notification_respects_notify_interval_window(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]

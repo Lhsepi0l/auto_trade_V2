@@ -43,6 +43,15 @@ def _dedupe_key(*parts: Any) -> str:
     return ":".join(str(part or "").strip() for part in parts if str(part or "").strip())
 
 
+def _position_side_label(side: Any) -> str:
+    normalized = str(side or "").strip().upper()
+    if normalized == "BUY":
+        return "LONG"
+    if normalized == "SELL":
+        return "SHORT"
+    return normalized
+
+
 def _cycle_reason_text(*, reason: str, human_reason: str) -> str:
     normalized = str(reason or "").strip().lower()
     if normalized == "position_open":
@@ -94,11 +103,31 @@ def _message_from_parts(
 
 def _symbol_side_line(*, symbol: Any, side: Any) -> str | None:
     symbol_text = str(symbol or "").strip().upper()
-    side_text = str(side or "").strip().upper()
+    side_text = _position_side_label(side)
     parts = [part for part in (symbol_text, side_text) if part]
     if not parts:
         return None
     return " | ".join(parts)
+
+
+def _entry_detail_line(*, fields: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    qty = fields.get("qty")
+    if qty is not None:
+        if isinstance(qty, (int, float)):
+            parts.append(f"qty={qty:.6f}")
+        else:
+            parts.append(f"qty={qty}")
+    leverage = fields.get("leverage")
+    if leverage is not None:
+        parts.append(f"lev={leverage}")
+    notional = fields.get("notional")
+    if notional is not None:
+        parts.append(f"notional={notional}")
+    entry_price = fields.get("entry_price")
+    if entry_price is not None:
+        parts.append(f"entry={entry_price}")
+    return " / ".join(parts) if parts else None
 
 
 def build_runtime_event_notification(
@@ -242,6 +271,24 @@ def build_runtime_event_notification(
             suppress_window_sec=180.0,
             metadata=dict(fields),
         )
+    if raw_event == "position_entry_opened":
+        symbol_text = str(fields.get("symbol") or "").strip().upper()
+        side_text = _position_side_label(fields.get("side"))
+        action_state = str(fields.get("action") or "").strip().lower()
+        title_suffix = "모의 진입" if action_state == "dry_run" else "진입"
+        title = f"{symbol_text} {side_text} {title_suffix}".strip()
+        if not symbol_text and not side_text:
+            title = "모의 진입" if action_state == "dry_run" else "진입 오픈"
+        return _message_from_parts(
+            title=title,
+            main_text="모의 주문 실행 완료" if action_state == "dry_run" else "주문 실행 완료",
+            sub_text=_entry_detail_line(fields=fields),
+            context=context,
+            priority=4 if action_state != "dry_run" else 3,
+            tags=(),
+            event_type=raw_event,
+            metadata=dict(fields),
+        )
     if raw_event == "cycle_result":
         return build_cycle_result_notification(fields=fields, context=context)
     return None
@@ -263,6 +310,8 @@ def build_cycle_result_notification(
     title_prefix = "즉시 판단" if trigger_source == "manual_tick" else "실시간 판단"
 
     if action in {"executed", "dry_run"}:
+        if symbol_line is not None:
+            return None
         title = f"{title_prefix} 진입" if trigger_source == "manual_tick" else "진입 오픈"
         if action == "dry_run":
             title = f"{title_prefix} 모의실행" if trigger_source == "manual_tick" else "모의 진입"
@@ -331,9 +380,16 @@ def build_cycle_result_notification(
         )
 
     if action in {"execution_failed", "error"}:
-        body = _build_body(symbol_line, human_reason, context.identity_line)
+        title = f"{title_prefix} 실패"
+        if action == "execution_failed":
+            title = "즉시 진입 실패" if trigger_source == "manual_tick" else "실시간 진입 실패"
+        body = _build_body(
+            None if symbol_line is None else f"진입 시도: {symbol_line}",
+            human_reason,
+            context.identity_line,
+        )
         return NotificationMessage(
-            title=f"{title_prefix} 실패",
+            title=title,
             body=body,
             priority=4,
             tags=_join_tags("warning"),

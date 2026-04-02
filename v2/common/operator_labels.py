@@ -101,6 +101,22 @@ NO_ENTRY_DETAIL_LABELS_KO: dict[str, str] = {
 }
 
 
+def _humanize_live_order_failed_detail(detail: str) -> str:
+    normalized = str(detail or "").strip()
+    if not normalized:
+        return REASON_LABELS_KO["live_order_failed"]
+    if normalized.startswith("BinanceRESTError:"):
+        code = normalized.split(":")[-1].strip()
+        if code == "-2019":
+            return "실주문 제출 실패: 가용 마진 부족"
+        if code == "-1111":
+            return "실주문 제출 실패: 수량/가격 정밀도 오류"
+        return f"실주문 제출 실패: 바이낸스 오류 ({code})"
+    if normalized.startswith("insufficient_available_margin:"):
+        return "실주문 제출 실패: 가용 마진 부족"
+    return f"실주문 제출 실패: {normalized}"
+
+
 def humanize_action_token(raw: str | None) -> str:
     value = str(raw or "").strip()
     if not value or value == "-":
@@ -112,6 +128,8 @@ def humanize_reason_token(raw: str | None) -> str:
     value = str(raw or "").strip()
     if not value or value == "-":
         return "-"
+    if value.startswith("live_order_failed:"):
+        return _humanize_live_order_failed_detail(value.split(":", 1)[1])
     direct = REASON_LABELS_KO.get(value)
     if direct is not None:
         return direct
