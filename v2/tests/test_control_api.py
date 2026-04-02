@@ -10,20 +10,20 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from v2.clean_room import build_default_kernel
-from v2.clean_room.contracts import (
-    Candidate,
-    ExecutionResult,
-    KernelContext,
-    KernelCycleResult,
-    SizePlan,
-)
 from v2.config.loader import load_effective_config
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
 from v2.exchange import BinanceRESTError
 from v2.exchange.types import ResyncSnapshot
+from v2.kernel import build_default_kernel
+from v2.kernel.contracts import (
+    Candidate,
+    ExecutionResult,
+    KernelContext,
+    KernelCycleResult,
+    SizePlan,
+)
 from v2.notify import NotificationMessage, Notifier
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
@@ -409,9 +409,10 @@ def test_strategy_runtime_profile_change_resets_to_current_profile_defaults(tmp_
         rest_client=None,
     )
 
+    expected_quality_floor = cfg.behavior.strategies[0].params["expansion_quality_score_v2_min"]
     risk = controller.get_risk()
     assert risk["squeeze_percentile_threshold"] == 0.3
-    assert risk["expansion_quality_score_v2_min"] == 0.0
+    assert risk["expansion_quality_score_v2_min"] == expected_quality_floor
     assert risk["min_volume_ratio_15m"] == 0.9
 
     persisted = state_store.load_runtime_risk_config()
@@ -1087,7 +1088,7 @@ def test_control_api_stale_transition_emits_ntfy_attention_notification(
     assert "갱신 지연 감지" in notification.body
 
 
-def test_control_api_scheduler_position_open_block_does_not_spam_ntfy(
+def test_control_api_scheduler_position_open_block_emits_deduped_ntfy_heartbeat(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -1132,7 +1133,71 @@ def test_control_api_scheduler_position_open_block_does_not_spam_ntfy(
 
     assert out["ok"] is True
     assert out["snapshot"]["last_action"] == "blocked"
-    assert notifier.send_notification.call_count == 0
+    assert notifier.send_notification.call_count == 1
+    notification = notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "포지션 관리중"
+    assert "기존 포지션 관리 중" in notification.body
+    assert notification.dedupe_key == "cycle_result:scheduler:position_open"
+    assert notification.suppress_window_sec == 900.0
+
+
+def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_window(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_position_open_dedupe.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelBlocked:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="blocked",
+                reason="position_open",
+                candidate=None,
+            )
+
+    now = {"value": 1000.0}
+    monkeypatch.setattr("v2.control.api.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier._send_ntfy = MagicMock()  # type: ignore[method-assign]
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelBlocked(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    controller._risk["notify_interval_sec"] = 1
+    notifier._send_ntfy.reset_mock()
+
+    first = controller._run_cycle_once_locked(trigger_source="scheduler")
+    now["value"] = 1002.0
+    second = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert notifier._send_ntfy.call_count == 1
+    snapshot = controller._status_snapshot()["notification"]
+    assert snapshot["last_status"] == "suppressed"
+    assert snapshot["last_title"] == "포지션 관리중"
+    assert snapshot["last_dedupe_key"] == "cycle_result:scheduler:position_open"
 
 
 def test_control_api_stale_transition_suppresses_duplicate_ntfy_alert(
@@ -2321,6 +2386,297 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
         and message.title == "손절 완료!"
         and "BTCUSDT" in message.body
         and "-1.7500 USDT" in message.body
+        for message in messages
+    )
+
+
+def test_control_api_bracket_poller_recovers_take_profit_alert_when_both_legs_are_missing(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_tp_missing_both.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-1",
+        sl_order_client_id="sl-1",
+        state="ACTIVE",
+    )
+    _ = storage.insert_fill(
+        fill_id="fill-tp-both-missing-1",
+        client_id="tp-1",
+        exchange_id="tp-both-missing-1",
+        symbol="BTCUSDT",
+        side="SELL",
+        qty=0.01,
+        price=101.0,
+        realized_pnl=4.2,
+        fill_time_ms=int(time.time() * 1000),
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTBothMissing:
+        def __init__(self) -> None:
+            self.open_algo_calls = 0
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            self.open_algo_calls += 1
+            if self.open_algo_calls == 1:
+                return [
+                    {"symbol": "BTCUSDT", "clientAlgoId": "tp-1"},
+                    {"symbol": "BTCUSDT", "clientAlgoId": "sl-1"},
+                ]
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    rest = _AlgoRESTBothMissing()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=rest,
+    )
+    notifier.send_notification.reset_mock()
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
+    assert any(
+        isinstance(message, NotificationMessage)
+        and message.title == "익절 완료!"
+        and "BTCUSDT" in message.body
+        and "+4.2000 USDT" in message.body
+        for message in messages
+    )
+
+
+def test_control_api_bracket_poller_recovers_take_profit_alert_from_income_when_fill_not_yet_persisted(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_income_fallback.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="ETHUSDT",
+        tp_order_client_id="tp-2",
+        sl_order_client_id="sl-2",
+        state="ACTIVE",
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTIncomeFallback:
+        def __init__(self) -> None:
+            self.open_algo_calls = 0
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            self.open_algo_calls += 1
+            if self.open_algo_calls == 1:
+                return [
+                    {"symbol": "ETHUSDT", "clientAlgoId": "tp-2"},
+                    {"symbol": "ETHUSDT", "clientAlgoId": "sl-2"},
+                ]
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "ETHUSDT", "positionAmt": "0"}]
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
+
+        async def signed_request(
+            self,
+            method: str,
+            path: str,
+            *,
+            params: dict[str, Any],
+        ) -> list[dict[str, Any]]:
+            _ = method
+            _ = path
+            _ = params
+            return [
+                {
+                    "symbol": "ETHUSDT",
+                    "income": "2.75",
+                    "time": int(time.time() * 1000),
+                }
+            ]
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    rest = _AlgoRESTIncomeFallback()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=rest,
+    )
+    notifier.send_notification.reset_mock()
+
+    controller._poll_brackets_once()
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
+    assert any(
+        isinstance(message, NotificationMessage)
+        and message.title == "익절 완료!"
+        and "ETHUSDT" in message.body
+        and "+2.7500 USDT" in message.body
+        for message in messages
+    )
+
+
+def test_control_api_boot_bracket_recovery_emits_take_profit_alert_when_exit_already_happened(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_boot_tp_alert.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-boot-1",
+        sl_order_client_id="sl-boot-1",
+        state="ACTIVE",
+    )
+    _ = storage.insert_fill(
+        fill_id="fill-boot-tp-1",
+        client_id="tp-boot-1",
+        exchange_id="boot-ex-1",
+        symbol="BTCUSDT",
+        side="SELL",
+        qty=0.01,
+        price=101.0,
+        realized_pnl=3.75,
+        fill_time_ms=int(time.time() * 1000),
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTBootRecover:
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            _ = params
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return []
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    _ = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=_AlgoRESTBootRecover(),
+    )
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    messages = [call.args[0] for call in notifier.send_notification.call_args_list]
+    assert any(
+        isinstance(message, NotificationMessage)
+        and message.title == "익절 완료!"
+        and "BTCUSDT" in message.body
+        and "+3.7500 USDT" in message.body
         for message in messages
     )
 
@@ -4576,7 +4932,7 @@ def test_control_api_syncs_kernel_runtime_overrides(tmp_path) -> None:  # type: 
             self.max_notional = max_notional
 
         def run_once(self):  # type: ignore[no-untyped-def]
-            from v2.clean_room.contracts import KernelCycleResult
+            from v2.kernel.contracts import KernelCycleResult
 
             return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
 
@@ -4745,7 +5101,7 @@ def test_control_api_restores_kernel_runtime_overrides_after_restart(
             self.max_notional = max_notional
 
         def run_once(self):  # type: ignore[no-untyped-def]
-            from v2.clean_room.contracts import KernelCycleResult
+            from v2.kernel.contracts import KernelCycleResult
 
             return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
 

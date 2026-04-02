@@ -125,11 +125,35 @@ def recover_brackets_on_boot(controller: Any, *, reason: str = "startup_reconcil
     if controller.cfg.mode != "live" or controller.rest_client is None:
         return
     controller._log_event("bracket_recovery_start", reason=reason)
+    tracked_before = {
+        str(row.get("symbol") or "").strip().upper(): dict(row)
+        for row in controller._list_tracked_brackets()
+        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+    }
     try:
         result = _run_async_blocking(
             lambda: controller._bracket_service.recover(),
             timeout_sec=10.0,
         )
+        if isinstance(result, list):
+            for runtime in result:
+                symbol = str(getattr(runtime, "symbol", "") or "").strip().upper()
+                if not symbol:
+                    continue
+                previous = tracked_before.get(symbol)
+                if previous is None:
+                    continue
+                if str(getattr(runtime, "state", "") or "").strip().upper() != "CLEANED":
+                    continue
+                inferred_exit = controller._infer_flat_bracket_exit(
+                    symbol=symbol,
+                    tp_id=str(previous.get("tp_order_client_id") or "").strip(),
+                    sl_id=str(previous.get("sl_order_client_id") or "").strip(),
+                )
+                if inferred_exit is None:
+                    continue
+                outcome, _filled_id = inferred_exit
+                controller._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
         controller._boot_recovery["bracket_recovery"] = {
             "reason": reason,
             "ok": True,

@@ -50,6 +50,17 @@ def _cycle_reason_text(*, reason: str, human_reason: str) -> str:
     return human_reason
 
 
+def _position_open_heartbeat_window_sec(*, notify_interval_sec: Any) -> float:
+    try:
+        base_interval = float(notify_interval_sec)
+    except (TypeError, ValueError):
+        base_interval = 30.0
+    base_interval = max(base_interval, 1.0)
+    # Keep position-management heartbeats infrequent enough for mobile push,
+    # while preventing multi-hour silent gaps during long holds.
+    return min(max(base_interval * 30.0, 900.0), 3600.0)
+
+
 def _message_from_parts(
     *,
     title: str | None,
@@ -286,7 +297,22 @@ def build_cycle_result_notification(
 
     if action in {"blocked", "risk_rejected"}:
         if reason == "position_open" and trigger_source == "scheduler":
-            return None
+            return NotificationMessage(
+                title="포지션 관리중",
+                body=_build_body(
+                    symbol_line,
+                    _cycle_reason_text(reason=reason, human_reason=human_reason),
+                    context.identity_line,
+                ),
+                priority=2,
+                tags=(),
+                event_type="cycle_result",
+                dedupe_key=_dedupe_key("cycle_result", "scheduler", "position_open"),
+                suppress_window_sec=_position_open_heartbeat_window_sec(
+                    notify_interval_sec=fields.get("notify_interval_sec")
+                ),
+                metadata=dict(fields),
+            )
         title = "포지션 관리중" if reason == "position_open" else f"{title_prefix} 보류"
         body = _build_body(
             symbol_line,

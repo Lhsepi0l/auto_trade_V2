@@ -9,7 +9,6 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
-from v2.clean_room.contracts import KernelCycleResult
 from v2.common.async_bridge import run_async_blocking
 from v2.config.loader import EffectiveConfig
 from v2.control.http_apps import create_control_http_app as _create_control_http_app
@@ -64,6 +63,7 @@ from v2.control.status_payloads import (
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.exchange.types import ResyncSnapshot
+from v2.kernel.contracts import KernelCycleResult
 from v2.notify import Notifier
 from v2.notify.runtime_events import (
     RuntimeNotificationContext,
@@ -2529,6 +2529,58 @@ class RuntimeController:
             return True
         return False
 
+    def _latest_recent_fill_for_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+        lookback_sec: float = 900.0,
+    ) -> dict[str, Any] | None:
+        symbol_u = symbol.upper()
+        client_id_s = str(client_id or "").strip()
+        if not client_id_s:
+            return None
+        lookback_ms = max(1, int(float(lookback_sec) * 1000.0))
+        now_ms = int(time.time() * 1000)
+        fills = self.state_store.runtime_storage().recent_fills(limit=100)
+        for row in fills:
+            if not isinstance(row, dict):
+                continue
+            row_symbol = str(row.get("symbol") or "").strip().upper()
+            if row_symbol != symbol_u:
+                continue
+            row_client_id = str(row.get("client_id") or "").strip()
+            if row_client_id != client_id_s:
+                continue
+            fill_ms = int(_to_float(row.get("fill_time_ms"), default=0.0))
+            if fill_ms > 0 and now_ms - fill_ms > lookback_ms:
+                continue
+            return dict(row)
+        return None
+
+    def _infer_flat_bracket_exit(
+        self,
+        *,
+        symbol: str,
+        tp_id: str,
+        sl_id: str,
+    ) -> tuple[Literal["TP", "SL"], str | None] | None:
+        tp_fill = self._latest_recent_fill_for_client_id(symbol=symbol, client_id=tp_id)
+        sl_fill = self._latest_recent_fill_for_client_id(symbol=symbol, client_id=sl_id)
+
+        if tp_fill is not None or sl_fill is not None:
+            tp_fill_ms = int(_to_float((tp_fill or {}).get("fill_time_ms"), default=0.0))
+            sl_fill_ms = int(_to_float((sl_fill or {}).get("fill_time_ms"), default=0.0))
+            if tp_fill is not None and (sl_fill is None or tp_fill_ms >= sl_fill_ms):
+                return "TP", tp_id or None
+            if sl_fill is not None:
+                return "SL", sl_id or None
+
+        realized = self._resolve_symbol_realized_pnl(symbol=symbol)
+        if realized is None:
+            return None
+        return ("TP" if realized > 0.0 else "SL"), None
+
     def _repair_position_bracket_from_plan(
         self,
         *,
@@ -2563,6 +2615,19 @@ class RuntimeController:
         symbol_u = symbol.upper()
         lookback_ms = max(1, int(float(lookback_sec) * 1000.0))
         now_ms = int(time.time() * 1000)
+        for row in self.state_store.runtime_storage().recent_fills(limit=100):
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("symbol") or "").strip().upper() != symbol_u:
+                continue
+            realized_pnl = row.get("realized_pnl")
+            if realized_pnl is None:
+                continue
+            fill_ms = int(_to_float(row.get("fill_time_ms"), default=0.0))
+            if fill_ms is not None and now_ms - int(fill_ms) > lookback_ms:
+                continue
+            return _to_float(realized_pnl, default=0.0)
+
         fills = self.state_store.get().last_fills
         for fill in reversed(fills):
             if str(fill.symbol or "").strip().upper() != symbol_u:
@@ -2841,6 +2906,36 @@ class RuntimeController:
             if position_is_flat:
                 next_management_state.pop(symbol, None)
                 if tp_id or sl_id:
+                    inferred_exit = self._infer_flat_bracket_exit(
+                        symbol=symbol,
+                        tp_id=tp_id,
+                        sl_id=sl_id,
+                    )
+                    if inferred_exit is not None:
+                        outcome, filled_id = inferred_exit
+                        try:
+                            if filled_id:
+                                _ = _run_async_blocking(
+                                    lambda s=symbol, cid=filled_id: self._bracket_service.on_leg_filled(
+                                        symbol=s,
+                                        filled_client_algo_id=cid,
+                                    ),
+                                    timeout_sec=8.0,
+                                )
+                            else:
+                                _ = _run_async_blocking(
+                                    lambda s=symbol: self._bracket_service.cleanup_if_flat(
+                                        symbol=s,
+                                        position_amt=0.0,
+                                    ),
+                                    timeout_sec=8.0,
+                                )
+                            self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
+                            if outcome == "SL":
+                                self._maybe_trigger_symbol_sl_flatten(trigger_symbol=symbol)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("flat_bracket_exit_recovery_failed symbol=%s", symbol)
+                        continue
                     try:
                         _ = _run_async_blocking(
                             lambda s=symbol: self._bracket_service.cleanup_if_flat(
