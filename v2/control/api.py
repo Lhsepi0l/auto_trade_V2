@@ -1655,6 +1655,7 @@ class RuntimeController:
                 "trigger_missing",
                 "quality_score_v2_missing",
                 "quality_score_missing",
+                "short_overextension_risk",
                 "breakout_efficiency_missing",
                 "breakout_stability_missing",
                 "breakout_stability_edge_missing",

@@ -101,6 +101,27 @@ def _market_for_weak_expansion_after_relaxation() -> dict[str, list[dict[str, fl
     return market
 
 
+def _market_for_short_expansion() -> dict[str, list[dict[str, float]]]:
+    closes_4h = [400.0 - (idx * 0.7) for idx in range(220)]
+    closes_1h = [250.0 - (idx * 0.10) for idx in range(90)]
+    closes_15m = [300.0 + (((idx % 3) - 1) * 0.08) for idx in range(78)] + [300.0, 299.9, 298.7]
+    market = {
+        "4h": _bars(closes_4h, wick=0.6, body_shift=0.20, volume_base=1600.0, volume_step=2.0),
+        "1h": _bars(closes_1h, wick=0.35, body_shift=0.12, volume_base=1300.0, volume_step=2.0),
+        "15m": _bars(closes_15m, wick=0.35, body_shift=0.06, volume_base=900.0, volume_step=1.0),
+    }
+    market["15m"][-1]["volume"] = 2600.0
+    return market
+
+
+def _market_for_overextended_short_expansion() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_short_expansion()
+    market["15m"][-1]["close"] = 298.2
+    market["15m"][-1]["high"] = 298.95
+    market["15m"][-1]["low"] = 297.95
+    return market
+
+
 def _flat_market() -> dict[str, list[dict[str, float]]]:
     closes_4h = [100.0 + ((idx % 2) * 0.02) for idx in range(220)]
     closes_1h = [200.0 + ((idx % 2) * 0.01) for idx in range(90)]
@@ -279,6 +300,57 @@ def test_alpha_v2_expansion_accepts_borderline_volume_after_q070_tuning() -> Non
 
     assert decision["intent"] == "LONG"
     assert decision["alpha_id"] == "alpha_expansion"
+
+
+def test_alpha_v2_expansion_short_signal_survives_moderate_breakout_distance() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_short_expansion()})
+
+    assert decision["intent"] == "SHORT"
+    assert decision["side"] == "SELL"
+    assert decision["alpha_id"] == "alpha_expansion"
+
+
+def test_alpha_v2_expansion_rejects_overextended_short_chase() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_overextended_short_expansion()}
+    )
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "short_overextension_risk"
 
 
 def test_alpha_v2_expansion_emits_progress_aware_exit_hints() -> None:

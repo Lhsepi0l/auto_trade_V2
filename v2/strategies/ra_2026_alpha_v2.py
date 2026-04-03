@@ -44,6 +44,7 @@ BLOCK_REASON_PRIORITY = {
     "regime_adx_rising_missing": 0,
     "bias_missing": 1,
     "trigger_missing": 2,
+    "short_overextension_risk": 2,
     "quality_score_missing": 2,
     "quality_score_v2_missing": 2,
     "breakout_efficiency_missing": 2,
@@ -118,6 +119,7 @@ class RA2026AlphaV2Params:
     expansion_close_location_min: float = 0.0
     expansion_width_expansion_min: float = 0.0
     expansion_break_distance_atr_min: float = 0.0
+    expansion_short_break_distance_atr_max: float = 0.0
     expansion_breakout_efficiency_min: float = 0.0
     expansion_breakout_stability_score_min: float = 0.0
     expansion_breakout_stability_edge_score_min: float = 0.0
@@ -259,6 +261,13 @@ class RA2026AlphaV2Params:
             ),
             expansion_break_distance_atr_min=max(
                 _f("expansion_break_distance_atr_min", cls.expansion_break_distance_atr_min),
+                0.0,
+            ),
+            expansion_short_break_distance_atr_max=max(
+                _f(
+                    "expansion_short_break_distance_atr_max",
+                    cls.expansion_short_break_distance_atr_max,
+                ),
                 0.0,
             ),
             expansion_breakout_efficiency_min=max(
@@ -1336,6 +1345,23 @@ class RA2026AlphaV2(StrategyPlugin):
             return _AlphaEvaluation(
                 alpha_id="alpha_expansion",
                 reason="breakout_stability_edge_missing",
+            )
+        if (
+            side == "SHORT"
+            and float(cfg.expansion_short_break_distance_atr_max) > 0.0
+            and float(breakout_distance_atr) > float(cfg.expansion_short_break_distance_atr_max)
+        ):
+            return _AlphaEvaluation(
+                alpha_id="alpha_expansion",
+                reason="short_overextension_risk",
+                diagnostics={
+                    "breakout_distance_atr": float(breakout_distance_atr),
+                    "expansion_short_break_distance_atr_max": float(
+                        cfg.expansion_short_break_distance_atr_max
+                    ),
+                    "range_atr": float(range_atr),
+                    "favored_close": float(favored_close),
+                },
             )
         if float(quality_score) < float(cfg.expansion_quality_score_min):
             return _AlphaEvaluation(alpha_id="alpha_expansion", reason="quality_score_missing")

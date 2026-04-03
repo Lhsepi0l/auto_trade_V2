@@ -81,6 +81,7 @@ def test_alpha_live_candidate_profile_loads() -> None:
     assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
     assert cfg.behavior.exchange.market_intervals == ["15m", "1h", "4h"]
     assert enabled[0].params["expansion_quality_score_v2_min"] == 0.62
+    assert enabled[0].params["expansion_short_break_distance_atr_max"] == 1.3
     assert cfg.behavior.risk.max_leverage == 5.0
     assert cfg.behavior.risk.max_exposure_pct == 0.10
     assert cfg.behavior.risk.daily_loss_limit_pct == -0.015

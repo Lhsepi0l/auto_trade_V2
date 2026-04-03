@@ -240,6 +240,7 @@ profiles:
           trend_adx_min_4h: 14.0
           expected_move_cost_mult: 1.6
           expansion_quality_score_v2_min: 0.62
+          expansion_short_break_distance_atr_max: 1.3
     risk:
       max_leverage: 5.0
       max_exposure_pct: 0.10
