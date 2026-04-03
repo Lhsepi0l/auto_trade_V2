@@ -82,11 +82,18 @@ class OperatorService:
         return wrap_operator_action(action="close_all", raw_result=result)
 
     def set_scheduler_interval(self, *, tick_sec: float) -> dict[str, Any]:
-        result = self._controller.set_scheduler_interval(float(tick_sec))
+        sec = max(1, int(float(tick_sec)))
+        scheduler_result = self._controller.set_scheduler_interval(float(sec))
+        result = self._controller.set_value(
+            key="notify_interval_sec",
+            value=self._stringify_value(sec),
+        )
+        result["tick_sec"] = float(scheduler_result.get("tick_sec") or float(sec))
+        result["running"] = bool(scheduler_result.get("running"))
         return wrap_operator_action(
             action="scheduler_interval",
             raw_result=result,
-            context={"tick_sec": float(tick_sec)},
+            context={"tick_sec": float(sec)},
         )
 
     def set_exec_mode(self, *, exec_mode: str) -> dict[str, Any]:

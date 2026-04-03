@@ -301,6 +301,21 @@ def test_operator_service_notify_interval_does_not_change_scheduler_tick(
     assert risk["scheduler_tick_sec"] == before
 
 
+def test_operator_service_scheduler_interval_updates_notify_interval_together(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+
+    out = service.set_scheduler_interval(tick_sec=300)
+    risk = controller.get_risk()
+
+    assert out["action"] == "scheduler_interval"
+    assert out["result"]["tick_sec"] == 300.0
+    assert risk["scheduler_tick_sec"] == 300
+    assert risk["notify_interval_sec"] == 300
+
+
 def test_operator_service_export_debug_bundle_hydrates_control_snapshots(
     tmp_path,
     monkeypatch,

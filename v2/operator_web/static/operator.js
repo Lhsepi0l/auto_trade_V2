@@ -836,8 +836,8 @@ function bindForms() {
     const notify_interval_sec = Number(document.getElementById("notify-interval-input")?.value);
     runConfirmedAction(
       {
-        title: "상태 알림 주기를 변경할까요?",
-        message: `웹 로그와 모바일 알림 주기를 ${fmtMaybe(notify_interval_sec)}초로 적용합니다. 엔진 판단 주기는 바뀌지 않습니다.`,
+        title: "상태 알림 주기만 변경할까요?",
+        message: `웹 로그와 모바일 알림 주기만 ${fmtMaybe(notify_interval_sec)}초로 적용합니다. 엔진 판단 주기는 유지됩니다.`,
       },
       () => postAction("/operator/actions/notify-interval", { notify_interval_sec })
     ).catch((error) => setFeedback(String(error), "failed"));
