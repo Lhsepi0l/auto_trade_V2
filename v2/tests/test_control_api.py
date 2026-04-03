@@ -22,6 +22,7 @@ from v2.kernel.contracts import (
     ExecutionResult,
     KernelContext,
     KernelCycleResult,
+    PortfolioCycleResult,
     SizePlan,
 )
 from v2.notify import NotificationMessage, Notifier
@@ -6416,6 +6417,97 @@ def test_live_position_open_cycle_refreshes_market_data_before_stale_trip(
     assert len(probe_calls) == 1
     assert controller._freshness_snapshot()["market_data_stale"] is False
     assert kernel.calls == 0
+
+
+def test_live_position_open_cycle_does_not_reemit_stale_entry_notification(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _SwitchingPositionREST:
+        def __init__(self) -> None:
+            self.position_amt = "0"
+
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "BTCUSDT", "positionAmt": self.position_amt, "entryPrice": "66547.9"}]
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _StickyExecutedKernel:
+        def __init__(self) -> None:
+            self.calls = 0
+            self._last_portfolio_cycle: PortfolioCycleResult | None = None
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            result = KernelCycleResult(
+                state="executed",
+                reason="executed",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="SELL",
+                    score=1.0,
+                    entry_price=66547.9,
+                ),
+                size=SizePlan(
+                    symbol="BTCUSDT",
+                    qty=0.015553,
+                    leverage=45.0,
+                    notional=1035.0,
+                    reason="size_ok",
+                ),
+                execution=ExecutionResult(ok=True, order_id="oid-short-1", reason="live_order_submitted"),
+            )
+            self._last_portfolio_cycle = PortfolioCycleResult(
+                primary_result=result,
+                selected_candidates=[result.candidate] if result.candidate is not None else [],
+                results=[result],
+                open_position_count=0,
+                max_open_positions=1,
+            )
+            return result
+
+        def last_portfolio_cycle(self) -> PortfolioCycleResult | None:
+            return self._last_portfolio_cycle
+
+    rest = _SwitchingPositionREST()
+    kernel = _StickyExecutedKernel()
+    controller, _state_store, _ops = _build_live_controller(
+        tmp_path,
+        rest_client=rest,
+        kernel=kernel,
+        market_data_state={
+            "last_market_data_at": datetime.now(timezone.utc).isoformat(),
+            "last_market_symbol_count": 1,
+            "last_market_data_source_ok_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    controller._running = True
+    controller._user_stream_started = True
+    controller._user_stream_started_at = datetime.now(timezone.utc).isoformat()
+    controller._last_private_stream_ok_at = controller._user_stream_started_at
+    controller.notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    controller.notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    first = controller.tick_scheduler_now()
+    assert first["snapshot"]["last_action"] == "executed"
+    assert kernel.calls == 1
+
+    controller.notifier.send_notification.reset_mock()  # type: ignore[attr-defined]
+    rest.position_amt = "0.015553"
+
+    second = controller.tick_scheduler_now()
+
+    assert second["snapshot"]["last_decision_reason"] == "position_open"
+    assert kernel.calls == 1
+    assert controller.notifier.send_notification.call_count == 1  # type: ignore[attr-defined]
+    notification = controller.notifier.send_notification.call_args[0][0]  # type: ignore[attr-defined]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "포지션 관리중"
 
 
 def test_live_user_stream_stale_blocks_new_entries_and_private_ok_unblocks(tmp_path) -> None:  # type: ignore[no-untyped-def]

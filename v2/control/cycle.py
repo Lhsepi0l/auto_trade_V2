@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from v2.clean_room.contracts import KernelCycleResult
 from v2.control import api as api_module
+from v2.kernel.contracts import KernelCycleResult
 
 FutureTimeoutError = api_module.FutureTimeoutError
 _run_async_blocking = api_module._run_async_blocking
@@ -102,6 +102,7 @@ def run_cycle_once_locked(
         controller._sync_kernel_runtime_overrides()
         if hasattr(controller.kernel, "set_tick"):
             controller.kernel.set_tick(cycle_seq)
+        kernel_cycle_ran = False
         controller._update_stale_transitions()
         freshness = controller._freshness_snapshot()
         submission_recovery = controller._submission_recovery_snapshot()
@@ -166,13 +167,15 @@ def run_cycle_once_locked(
                     )
             else:
                 cycle = controller.kernel.run_once()
+                kernel_cycle_ran = True
         portfolio_cycle = None
-        portfolio_reader = getattr(controller.kernel, "last_portfolio_cycle", None)
-        if callable(portfolio_reader):
-            try:
-                portfolio_cycle = portfolio_reader()
-            except Exception:  # noqa: BLE001
-                logger.exception("portfolio_cycle_read_failed")
+        if kernel_cycle_ran:
+            portfolio_reader = getattr(controller.kernel, "last_portfolio_cycle", None)
+            if callable(portfolio_reader):
+                try:
+                    portfolio_cycle = portfolio_reader()
+                except Exception:  # noqa: BLE001
+                    logger.exception("portfolio_cycle_read_failed")
         controller.scheduler.run_once()
         portfolio_results = (
             portfolio_cycle.results
