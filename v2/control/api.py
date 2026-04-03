@@ -315,6 +315,8 @@ class RuntimeController:
         self._cycle_seq = 0
         self._cycle_done_seq = 0
         self._last_scheduler_cycle_event_mono: float | None = None
+        self._last_alpha_drift_setup_key: str | None = None
+        self._last_alpha_drift_confirm_key: str | None = None
         self._boot_notification_muted = True
         self._state_uncertain = False
         self._state_uncertain_reason: str | None = None

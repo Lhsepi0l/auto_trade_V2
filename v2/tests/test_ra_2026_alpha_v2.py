@@ -467,6 +467,7 @@ def test_alpha_v2_drift_signal_emits_drift_alpha() -> None:
     assert confirm["entry_family"] == "drift"
     assert confirm["execution"]["reward_risk_reference_r"] == 1.8
     assert confirm["execution"]["time_stop_bars"] == 16
+    assert confirm["execution"]["drift_setup_open_time_ms"] == 1
 
 
 def test_alpha_v2_drift_signal_survives_verified_q070_like_profile_mix() -> None:

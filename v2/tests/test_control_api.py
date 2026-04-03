@@ -4934,16 +4934,23 @@ def test_control_api_status_surfaces_alpha_reject_diagnostics(tmp_path) -> None:
         def get_last_no_candidate_context(self) -> dict[str, Any]:
             return {
                 "BTCUSDT": {
+                    "symbol": "BTCUSDT",
                     "reason": "volume_missing",
                     "alpha_blocks": {
                         "alpha_breakout": "volume_missing",
                         "alpha_expansion": "trigger_missing",
+                        "alpha_drift": "trigger_missing",
                     },
                     "alpha_reject_metrics": {
                         "alpha_breakout": {
                             "vol_ratio_15m": 0.82,
                             "min_volume_ratio_15m": 0.9,
-                        }
+                        },
+                        "alpha_drift": {
+                            "drift_setup_queued": 1.0,
+                            "drift_setup_open_time_ms": 1712188800000,
+                            "drift_setup_expiry_bars": 8,
+                        },
                     },
                 }
             }
@@ -4964,7 +4971,7 @@ def test_control_api_status_surfaces_alpha_reject_diagnostics(tmp_path) -> None:
 
     assert out["snapshot"]["last_decision_reason"] == "volume_missing"
     assert status["config_summary"]["risk_runtime"]["last_alpha_reject_focus"] == (
-        "alpha_breakout:volume_missing, alpha_expansion:trigger_missing"
+        "alpha_breakout:volume_missing, alpha_expansion:trigger_missing, alpha_drift:trigger_missing"
     )
     assert status["config_summary"]["risk_runtime"]["last_alpha_blocks"]["alpha_breakout"] == (
         "volume_missing"
@@ -4975,6 +4982,83 @@ def test_control_api_status_surfaces_alpha_reject_diagnostics(tmp_path) -> None:
         ]
         == 0.9
     )
+
+
+def test_control_api_emits_alpha_drift_setup_and_confirm_events(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_alpha_drift_events.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelDriftLifecycle:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_once(self) -> KernelCycleResult:
+            self.calls += 1
+            if self.calls == 1:
+                return KernelCycleResult(state="no_candidate", reason="trigger_missing", candidate=None)
+            return KernelCycleResult(
+                state="dry_run",
+                reason="entry_signal",
+                candidate=Candidate(
+                    symbol="BTCUSDT",
+                    side="BUY",
+                    score=0.81,
+                    alpha_id="alpha_drift",
+                    entry_family="drift",
+                    reason="entry_signal",
+                    source="ra_2026_alpha_v2",
+                    entry_price=101234.5,
+                    execution_hints={"drift_setup_open_time_ms": 1712188800000},
+                ),
+            )
+
+        def get_last_no_candidate_context(self) -> dict[str, Any]:
+            return {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "reason": "trigger_missing",
+                    "alpha_blocks": {"alpha_drift": "trigger_missing"},
+                    "alpha_reject_metrics": {
+                        "alpha_drift": {
+                            "drift_setup_queued": 1.0,
+                            "drift_setup_open_time_ms": 1712188800000,
+                            "drift_setup_expiry_bars": 8,
+                        }
+                    },
+                }
+            }
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelDriftLifecycle(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=None,
+    )
+
+    first = controller.tick_scheduler_now()
+    second = controller.tick_scheduler_now()
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    events = controller.state_store.runtime_storage().list_operator_events(limit=20)
+    event_types = [row.get("event_type") for row in events]
+    assert "alpha_drift_setup_queued" in event_types
+    assert "alpha_drift_confirmed" in event_types
 
 
 def test_control_api_status_uses_recent_cached_balance_after_fetch_failure(

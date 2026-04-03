@@ -1159,6 +1159,9 @@ def _build_entry_payload(
             cfg.selective_extension_move_stop_to_be_at_r
         ),
     }
+    drift_setup_open_time_ms = _to_float(meta.get("setup_open_time_ms"))
+    if alpha_id == "alpha_drift" and drift_setup_open_time_ms is not None and drift_setup_open_time_ms > 0.0:
+        payload["execution"]["drift_setup_open_time_ms"] = int(drift_setup_open_time_ms)
     return payload
 
 
@@ -1717,6 +1720,7 @@ class RA2026AlphaV2(StrategyPlugin):
                             "entry_price": float(entry_price),
                             "stop_price": float(stop_price),
                             "stop_distance_frac": float(stop_distance_frac),
+                            "setup_open_time_ms": int(setup.open_time_ms),
                             "take_profit_r_override": float(cfg.drift_take_profit_r),
                             "time_stop_bars_override": int(cfg.drift_time_stop_bars),
                         },

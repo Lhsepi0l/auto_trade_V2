@@ -219,6 +219,41 @@ def test_operator_event_payload_humanizes_partial_reduce() -> None:
     assert "remain=0.03" in str(payload["sub_text"])
 
 
+def test_operator_event_payload_humanizes_alpha_drift_lifecycle() -> None:
+    queued = build_operator_event_payload(
+        event="alpha_drift_setup_queued",
+        fields={
+            "symbol": "BTCUSDT",
+            "setup_open_time_ms": 1234567890000,
+            "setup_expiry_bars": 8,
+            "event_time": "2026-04-04T00:00:00+00:00",
+        },
+    )
+    assert queued is not None
+    assert queued["category"] == "decision"
+    assert queued["title"] == "BTCUSDT drift setup 대기"
+    assert queued["main_text"] == "alpha_drift / setup queued"
+    assert "expiry=8" in str(queued["sub_text"])
+
+    confirmed = build_operator_event_payload(
+        event="alpha_drift_confirmed",
+        fields={
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "action": "executed",
+            "score": 0.81,
+            "entry_price": 101234.5,
+            "setup_open_time_ms": 1234567890000,
+            "event_time": "2026-04-04T00:05:00+00:00",
+        },
+    )
+    assert confirmed is not None
+    assert confirmed["category"] == "decision"
+    assert confirmed["title"] == "BTCUSDT drift confirm"
+    assert confirmed["main_text"] == "alpha_drift / LONG confirm"
+    assert "setup_open_time_ms=1234567890000" in str(confirmed["sub_text"])
+
+
 def test_wrap_operator_action_classifies_busy_response() -> None:
     wrapped = wrap_operator_action(
         action="tick_now",
