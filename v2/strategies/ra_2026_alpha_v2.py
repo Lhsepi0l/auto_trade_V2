@@ -4,7 +4,7 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from v2.clean_room.contracts import Candidate, CandidateSelector, KernelContext
+from v2.kernel.contracts import Candidate, CandidateSelector, KernelContext
 from v2.strategies.alpha_shared import (
     _Bar,
     _clamp_score,
@@ -23,7 +23,7 @@ from v2.strategies.alpha_shared import (
 )
 from v2.strategies.base import DesiredPosition, StrategyPlugin
 
-AlphaId = Literal["alpha_breakout", "alpha_pullback", "alpha_expansion"]
+AlphaId = Literal["alpha_breakout", "alpha_pullback", "alpha_expansion", "alpha_drift"]
 RegimeName = Literal["TREND_UP", "TREND_DOWN", "UNKNOWN"]
 AllowedSideName = Literal["LONG", "SHORT", "NONE"]
 
@@ -33,10 +33,12 @@ DEFAULT_ALPHA_IDS: tuple[AlphaId, ...] = (
     "alpha_pullback",
     "alpha_expansion",
 )
+ALL_ALPHA_IDS: tuple[AlphaId, ...] = DEFAULT_ALPHA_IDS + ("alpha_drift",)
 ALPHA_ENTRY_FAMILY: dict[AlphaId, str] = {
     "alpha_breakout": "breakout",
     "alpha_pullback": "pullback",
     "alpha_expansion": "expansion",
+    "alpha_drift": "drift",
 }
 BLOCK_REASON_PRIORITY = {
     "regime_missing": 0,
@@ -54,6 +56,10 @@ BLOCK_REASON_PRIORITY = {
     "cost_missing": 4,
 }
 
+EXPANSION_COST_NEAR_PASS_MIN_EDGE_RATIO = 0.95
+EXPANSION_COST_NEAR_PASS_MIN_QV2 = 0.70
+FIFTEEN_MIN_MS = 15 * 60 * 1000
+
 
 @dataclass(frozen=True)
 class _AlphaEvaluation:
@@ -62,6 +68,18 @@ class _AlphaEvaluation:
     score: float = 0.0
     payload: dict[str, Any] | None = None
     diagnostics: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _DriftSetupState:
+    open_time_ms: int
+    setup_close: float
+    setup_low: float
+    range_atr: float
+    body_ratio: float
+    favored_close_long: float
+    width_expansion_frac: float
+    edge_ratio: float
 
 
 @dataclass(frozen=True)
@@ -130,6 +148,18 @@ class RA2026AlphaV2Params:
     expansion_range_atr_min: float = 1.1
     squeeze_percentile_threshold: float = 0.35
     squeeze_lookback_15m: int = 48
+    drift_range_atr_min: float = 1.2
+    drift_body_ratio_min: float = 0.5
+    drift_close_location_max: float = 0.6
+    drift_long_width_expansion_min: float = 0.10
+    drift_long_edge_ratio_min: float = 1.10
+    drift_short_width_expansion_max: float = 0.05
+    drift_bias_rsi_long_min: float = 40.0
+    drift_bias_rsi_short_max: float = 55.0
+    drift_side_mode: str = "BOTH"
+    drift_setup_expiry_bars: int = 8
+    drift_take_profit_r: float = 1.8
+    drift_time_stop_bars: int = 16
 
     taker_fee: float = 0.0006
     slippage_bps: float = 2.0
@@ -211,7 +241,7 @@ class RA2026AlphaV2Params:
                 tokens = [str(token).strip().lower() for token in raw_alphas if str(token).strip()]
             else:
                 tokens = []
-            allowed = set(DEFAULT_ALPHA_IDS)
+            allowed = set(ALL_ALPHA_IDS)
             deduped: list[AlphaId] = []
             for token in tokens:
                 if token in allowed and token not in deduped:
@@ -313,6 +343,37 @@ class RA2026AlphaV2Params:
                 0.95,
             ),
             squeeze_lookback_15m=_i("squeeze_lookback_15m", cls.squeeze_lookback_15m),
+            drift_range_atr_min=max(_f("drift_range_atr_min", cls.drift_range_atr_min), 0.0),
+            drift_body_ratio_min=min(
+                max(_f("drift_body_ratio_min", cls.drift_body_ratio_min), 0.0),
+                1.0,
+            ),
+            drift_close_location_max=min(
+                max(_f("drift_close_location_max", cls.drift_close_location_max), 0.0),
+                1.0,
+            ),
+            drift_long_width_expansion_min=max(
+                _f("drift_long_width_expansion_min", cls.drift_long_width_expansion_min),
+                0.0,
+            ),
+            drift_long_edge_ratio_min=max(
+                _f("drift_long_edge_ratio_min", cls.drift_long_edge_ratio_min),
+                0.0,
+            ),
+            drift_short_width_expansion_max=max(
+                _f("drift_short_width_expansion_max", cls.drift_short_width_expansion_max),
+                0.0,
+            ),
+            drift_bias_rsi_long_min=max(_f("drift_bias_rsi_long_min", cls.drift_bias_rsi_long_min), 0.0),
+            drift_bias_rsi_short_max=max(_f("drift_bias_rsi_short_max", cls.drift_bias_rsi_short_max), 0.0),
+            drift_side_mode=(
+                str(source.get("drift_side_mode", cls.drift_side_mode)).strip().upper()
+                if str(source.get("drift_side_mode", cls.drift_side_mode)).strip().upper() in {"BOTH", "LONG", "SHORT"}
+                else str(cls.drift_side_mode)
+            ),
+            drift_setup_expiry_bars=_i("drift_setup_expiry_bars", cls.drift_setup_expiry_bars),
+            drift_take_profit_r=max(_f("drift_take_profit_r", cls.drift_take_profit_r), 0.5),
+            drift_time_stop_bars=_i("drift_time_stop_bars", cls.drift_time_stop_bars),
             taker_fee=max(_f("taker_fee", cls.taker_fee), 0.0),
             slippage_bps=max(_f("slippage_bps", cls.slippage_bps), 0.0),
             max_spread_bps=max(_f("max_spread_bps", cls.max_spread_bps), 0.0),
@@ -473,6 +534,13 @@ def _aggregate_block_reason(reasons: list[str]) -> str:
         key=lambda item: (BLOCK_REASON_PRIORITY.get(str(item), 99), str(item)),
     )
     return str(ordered[0])
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _deficit_penalty(value: float, target: float) -> float:
@@ -645,6 +713,38 @@ def _bias_from_1h(
         )
         return "SHORT", strength, indicators
     return "NONE", 0.0, indicators
+
+
+def _drift_bias_side(*, ctx: _SharedContext, cfg: RA2026AlphaV2Params) -> tuple[AllowedSideName, dict[str, float]]:
+    closes = [float(bar.close) for bar in ctx.candles_1h]
+    ema_now = ema(closes, cfg.ema_bias_period_1h)
+    ema_prev = ema(closes[:-1], cfg.ema_bias_period_1h) if len(closes) > cfg.ema_bias_period_1h else None
+    rsi_now = rsi(closes, cfg.rsi_period_1h)
+    close_now = float(closes[-1] if closes else 0.0)
+    metrics = {
+        "drift_close_1h": float(close_now),
+        "drift_ema_1h": float(ema_now or 0.0),
+        "drift_ema_prev_1h": float(ema_prev or 0.0),
+        "drift_rsi_1h": float(rsi_now or 0.0),
+        "drift_bias_rsi_long_min": float(cfg.drift_bias_rsi_long_min),
+        "drift_bias_rsi_short_max": float(cfg.drift_bias_rsi_short_max),
+    }
+    if ema_now is None or ema_prev is None or rsi_now is None or not closes:
+        return "NONE", metrics
+    long_ok = (
+        float(close_now) >= (float(ema_now) * 0.998)
+        and float(rsi_now) >= float(cfg.drift_bias_rsi_long_min)
+    )
+    short_ok = (
+        float(close_now) <= float(ema_now)
+        and float(ema_now) <= float(ema_prev)
+        and float(rsi_now) <= float(cfg.drift_bias_rsi_short_max)
+    )
+    if long_ok:
+        return "LONG", metrics
+    if short_ok:
+        return "SHORT", metrics
+    return "NONE", metrics
 
 
 def _regime_from_4h(
@@ -841,6 +941,104 @@ def _common_cost_reason(
     return None
 
 
+def _common_cost_subreason(
+    *,
+    stop_distance_frac: float,
+    ctx: _SharedContext,
+    cfg: RA2026AlphaV2Params,
+) -> str | None:
+    if float(ctx.spread_estimate_bps) > float(cfg.max_spread_bps):
+        return "spread_cap"
+    if float(stop_distance_frac) < float(cfg.min_stop_distance_frac):
+        return "stop_distance_too_small"
+    if float(ctx.expected_move_frac) <= 0.0 or float(ctx.required_move_frac) <= 0.0:
+        return "edge_unavailable"
+    if float(ctx.expected_move_frac) < float(ctx.required_move_frac):
+        return "edge_shortfall"
+    return None
+
+
+def _expansion_cost_near_pass_allowed(
+    *,
+    stop_distance_frac: float,
+    ctx: _SharedContext,
+    cfg: RA2026AlphaV2Params,
+    quality_score_v2: float,
+) -> bool:
+    if (
+        _common_cost_subreason(
+            stop_distance_frac=float(stop_distance_frac),
+            ctx=ctx,
+            cfg=cfg,
+        )
+        != "edge_shortfall"
+    ):
+        return False
+    edge_ratio = float(ctx.expected_move_frac) / max(float(ctx.required_move_frac), 1e-9)
+    min_quality = max(float(cfg.expansion_quality_score_v2_min), EXPANSION_COST_NEAR_PASS_MIN_QV2)
+    return (
+        float(edge_ratio) >= float(EXPANSION_COST_NEAR_PASS_MIN_EDGE_RATIO)
+        and float(quality_score_v2) >= float(min_quality)
+    )
+
+
+def _drift_cost_near_pass_allowed(
+    *,
+    stop_distance_frac: float,
+    ctx: _SharedContext,
+    cfg: RA2026AlphaV2Params,
+    setup: _DriftSetupState,
+) -> bool:
+    return (
+        _common_cost_subreason(
+            stop_distance_frac=float(stop_distance_frac),
+            ctx=ctx,
+            cfg=cfg,
+        )
+        == "edge_shortfall"
+        and float(setup.edge_ratio) >= float(cfg.drift_long_edge_ratio_min)
+    )
+
+
+def _drift_setup_qualifies(
+    *,
+    ctx: _SharedContext,
+    cfg: RA2026AlphaV2Params,
+) -> tuple[bool, dict[str, float]]:
+    closes = [float(bar.close) for bar in ctx.candles_15m]
+    widths: list[float] = []
+    for idx in range(int(cfg.bb_period_15m), len(closes) + 1):
+        value = bollinger_bandwidth(closes[:idx], cfg.bb_period_15m, cfg.bb_std_15m)
+        if value is not None:
+            widths.append(float(value))
+    if len(widths) < 2:
+        return False, {}
+    true_range = max(float(ctx.current_bar.high) - float(ctx.current_bar.low), 1e-9)
+    range_atr = float(true_range) / max(float(ctx.atr_15m), 1e-9)
+    body_ratio = abs(float(ctx.current_bar.close) - float(ctx.current_bar.open)) / float(true_range)
+    favored_close_long = (float(ctx.current_bar.close) - float(ctx.current_bar.low)) / float(true_range)
+    width_expansion_frac = max(
+        (float(widths[-1]) - float(widths[-2])) / max(float(widths[-2]), 1e-9),
+        0.0,
+    )
+    edge_ratio = float(ctx.expected_move_frac) / max(float(ctx.required_move_frac), 1e-9)
+    metrics = {
+        "range_atr": float(range_atr),
+        "body_ratio": float(body_ratio),
+        "favored_close_long": float(favored_close_long),
+        "width_expansion_frac": float(width_expansion_frac),
+        "edge_ratio": float(edge_ratio),
+    }
+    ok = (
+        float(range_atr) >= float(cfg.drift_range_atr_min)
+        and float(body_ratio) >= float(cfg.drift_body_ratio_min)
+        and float(favored_close_long) < float(cfg.drift_close_location_max)
+        and float(width_expansion_frac) >= float(cfg.drift_long_width_expansion_min)
+        and float(edge_ratio) >= float(cfg.drift_long_edge_ratio_min)
+    )
+    return bool(ok), metrics
+
+
 def _build_entry_payload(
     *,
     alpha_id: AlphaId,
@@ -856,8 +1054,14 @@ def _build_entry_payload(
 ) -> dict[str, Any]:
     meta = entry_meta or {}
     quality_score_v2 = max(float(_to_float(meta.get("quality_score_v2")) or 0.0), 0.0)
-    effective_take_profit_r = float(cfg.take_profit_r)
-    effective_time_stop_bars = int(cfg.time_stop_bars)
+    effective_take_profit_r = max(
+        float(_to_float(meta.get("take_profit_r_override")) or float(cfg.take_profit_r)),
+        0.5,
+    )
+    effective_time_stop_bars = max(
+        int(_to_float(meta.get("time_stop_bars_override")) or int(cfg.time_stop_bars)),
+        1,
+    )
     quality_exit_applied = False
     if (
         float(cfg.quality_exit_score_threshold) > 0.0
@@ -964,6 +1168,7 @@ class RA2026AlphaV2(StrategyPlugin):
     def __init__(self, *, params: dict[str, Any] | None = None, logger: Any | None = None) -> None:
         self._cfg = RA2026AlphaV2Params.from_params(params)
         self._logger = logger
+        self._drift_setups: dict[str, _DriftSetupState] = {}
 
     def set_runtime_params(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
         merged = self._cfg.__dict__.copy()
@@ -1381,7 +1586,12 @@ class RA2026AlphaV2(StrategyPlugin):
             ctx=ctx,
             cfg=cfg,
         )
-        if cost_reason is not None:
+        if cost_reason is not None and not _expansion_cost_near_pass_allowed(
+            stop_distance_frac=stop_distance_frac,
+            ctx=ctx,
+            cfg=cfg,
+            quality_score_v2=float(quality_score_v2),
+        ):
             return _AlphaEvaluation(alpha_id="alpha_expansion", reason=cost_reason)
 
         score = _clamp_score(
@@ -1424,6 +1634,131 @@ class RA2026AlphaV2(StrategyPlugin):
             },
         )
 
+    def _alpha_drift(
+        self,
+        *,
+        ctx: _SharedContext,
+        open_time_ms: int | None,
+    ) -> _AlphaEvaluation:
+        cfg = self._cfg
+        drift_bias_side, drift_bias_metrics = _drift_bias_side(ctx=ctx, cfg=cfg)
+        if str(cfg.drift_side_mode) == "SHORT":
+            return _AlphaEvaluation(
+                alpha_id="alpha_drift",
+                reason="bias_missing",
+                diagnostics={**drift_bias_metrics, "drift_side_mode": str(cfg.drift_side_mode)},
+            )
+        if drift_bias_side != "LONG":
+            return _AlphaEvaluation(
+                alpha_id="alpha_drift",
+                reason="bias_missing",
+                diagnostics=drift_bias_metrics,
+            )
+        if str(cfg.drift_side_mode) != "BOTH" and str(drift_bias_side) != str(cfg.drift_side_mode):
+            return _AlphaEvaluation(
+                alpha_id="alpha_drift",
+                reason="bias_missing",
+                diagnostics={
+                    **drift_bias_metrics,
+                    "drift_side_mode": str(cfg.drift_side_mode),
+                    "drift_bias_side": str(drift_bias_side),
+                },
+            )
+        if ctx.vol_ratio_15m < float(cfg.min_volume_ratio_15m):
+            return _AlphaEvaluation(
+                alpha_id="alpha_drift",
+                reason="volume_missing",
+                diagnostics={
+                    "vol_ratio_15m": float(ctx.vol_ratio_15m),
+                    "min_volume_ratio_15m": float(cfg.min_volume_ratio_15m),
+                },
+            )
+        setup_ok, setup_metrics = _drift_setup_qualifies(ctx=ctx, cfg=cfg)
+        current_open_time = _to_int(open_time_ms)
+        setup = self._drift_setups.get(ctx.symbol)
+        if setup is not None and current_open_time is not None:
+            bars_since_setup = max(int((current_open_time - int(setup.open_time_ms)) // FIFTEEN_MIN_MS), 0)
+            if float(ctx.current_bar.low) < float(setup.setup_low) or bars_since_setup > int(cfg.drift_setup_expiry_bars):
+                self._drift_setups.pop(ctx.symbol, None)
+                setup = None
+            elif bars_since_setup >= 1 and float(ctx.current_bar.close) > max(float(setup.setup_close), float(ctx.ema_15m)):
+                entry_price = float(ctx.current_bar.close)
+                stop_price = min(float(setup.setup_low), float(ctx.current_bar.low), float(entry_price))
+                stop_distance_frac = max(float(entry_price) - float(stop_price), 0.0) / max(float(entry_price), 1e-9)
+                if float(stop_distance_frac) <= 0.0:
+                    return _AlphaEvaluation(alpha_id="alpha_drift", reason="cost_missing")
+                cost_reason = _common_cost_reason(
+                    stop_distance_frac=float(stop_distance_frac),
+                    ctx=ctx,
+                    cfg=cfg,
+                )
+                if cost_reason is None or _drift_cost_near_pass_allowed(
+                    stop_distance_frac=float(stop_distance_frac),
+                    ctx=ctx,
+                    cfg=cfg,
+                    setup=setup,
+                ):
+                    self._drift_setups.pop(ctx.symbol, None)
+                    score = _clamp_score(
+                        0.50
+                        + (float(ctx.bias_strength) * 0.16)
+                        + min(max((float(setup.range_atr) - float(cfg.drift_range_atr_min)) / 2.0, 0.0), 1.0) * 0.14
+                        + min(max((float(setup.body_ratio) - float(cfg.drift_body_ratio_min)) / 0.4, 0.0), 1.0) * 0.12
+                        + min(max((float(cfg.drift_close_location_max) - float(setup.favored_close_long)) / max(float(cfg.drift_close_location_max), 1e-9), 0.0), 1.0) * 0.10
+                        + min(max(float(setup.width_expansion_frac) / 0.5, 0.0), 1.0) * 0.08
+                        + min(max((float(setup.edge_ratio) - float(cfg.drift_long_edge_ratio_min)) / 1.5, 0.0), 1.0) * 0.08
+                    )
+                    return _AlphaEvaluation(
+                        alpha_id="alpha_drift",
+                        reason="entry_signal",
+                        score=float(score),
+                        payload={
+                            "side": "LONG",
+                            "entry_price": float(entry_price),
+                            "stop_price": float(stop_price),
+                            "stop_distance_frac": float(stop_distance_frac),
+                            "take_profit_r_override": float(cfg.drift_take_profit_r),
+                            "time_stop_bars_override": int(cfg.drift_time_stop_bars),
+                        },
+                        diagnostics={
+                            **setup_metrics,
+                            "setup_open_time_ms": int(setup.open_time_ms),
+                            "bars_since_setup": int(bars_since_setup),
+                        },
+                    )
+
+        if not setup_ok:
+            return _AlphaEvaluation(
+                alpha_id="alpha_drift",
+                reason="trigger_missing",
+                diagnostics={
+                    **drift_bias_metrics,
+                    **setup_metrics,
+                    "drift_bias_side": drift_bias_side,
+                },
+            )
+        if current_open_time is not None:
+            self._drift_setups[ctx.symbol] = _DriftSetupState(
+                open_time_ms=int(current_open_time),
+                setup_close=float(ctx.current_bar.close),
+                setup_low=float(ctx.current_bar.low),
+                range_atr=float(setup_metrics["range_atr"]),
+                body_ratio=float(setup_metrics["body_ratio"]),
+                favored_close_long=float(setup_metrics["favored_close_long"]),
+                width_expansion_frac=float(setup_metrics["width_expansion_frac"]),
+                edge_ratio=float(setup_metrics["edge_ratio"]),
+            )
+        return _AlphaEvaluation(
+            alpha_id="alpha_drift",
+            reason="trigger_missing",
+            diagnostics={
+                **drift_bias_metrics,
+                **setup_metrics,
+                "drift_setup_queued": 1.0,
+                "drift_setup_open_time_ms": float(current_open_time or 0),
+            },
+        )
+
     def decide(self, market_snapshot: dict[str, Any]) -> dict[str, Any]:
         symbol = str(market_snapshot.get("symbol") or "").strip().upper()
         if symbol not in self._cfg.supported_symbols:
@@ -1463,6 +1798,13 @@ class RA2026AlphaV2(StrategyPlugin):
                 evaluations.append(self._alpha_pullback(ctx=ctx))
             elif alpha_id == "alpha_expansion":
                 evaluations.append(self._alpha_expansion(ctx=ctx))
+            elif alpha_id == "alpha_drift":
+                evaluations.append(
+                    self._alpha_drift(
+                        ctx=ctx,
+                        open_time_ms=_to_int(market_snapshot.get("open_time")),
+                    )
+                )
 
         alpha_diagnostics = {
             item.alpha_id: {

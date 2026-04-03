@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from v2.clean_room.contracts import KernelContext
-from v2.strategies.ra_2026_alpha_v2 import RA2026AlphaV2, RA2026AlphaV2CandidateSelector
+from v2.kernel.contracts import KernelContext
+from v2.strategies.alpha_shared import _Bar
+from v2.strategies.ra_2026_alpha_v2 import (
+    RA2026AlphaV2,
+    RA2026AlphaV2CandidateSelector,
+    RA2026AlphaV2Params,
+    _common_cost_reason,
+    _expansion_cost_near_pass_allowed,
+    _SharedContext,
+)
 
 
 def _bars(
@@ -122,6 +130,54 @@ def _market_for_overextended_short_expansion() -> dict[str, list[dict[str, float
     return market
 
 
+def _market_for_drift() -> dict[str, list[dict[str, float]]]:
+    closes_4h = [100.0 + (idx * 1.0) for idx in range(220)]
+    closes_1h = [220.0 + (idx * 0.20) for idx in range(90)]
+    closes_15m = [300.0 + ((idx % 2) * 0.01) for idx in range(79)] + [299.95]
+    market = {
+        "4h": _bars(closes_4h, wick=0.8, body_shift=0.30, volume_base=1700.0, volume_step=2.0),
+        "1h": _bars(closes_1h, wick=0.55, body_shift=0.16, volume_base=1350.0, volume_step=2.0),
+        "15m": _bars(closes_15m, wick=0.05, body_shift=0.02, volume_base=950.0, volume_step=4.0),
+    }
+    market["15m"][-1]["open"] = 297.90
+    market["15m"][-1]["close"] = 299.45
+    market["15m"][-1]["high"] = 300.65
+    market["15m"][-1]["low"] = 297.75
+    market["15m"][-1]["volume"] = 2400.0
+    return market
+
+
+def _market_for_failed_drift() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_drift()
+    market["15m"][-1]["open"] = 298.80
+    market["15m"][-1]["close"] = 300.25
+    market["15m"][-1]["high"] = 300.70
+    market["15m"][-1]["low"] = 298.60
+    return market
+
+
+def _market_for_drift_confirm() -> dict[str, list[dict[str, float]]]:
+    closes_4h = [100.0 + (idx * 1.0) for idx in range(220)]
+    closes_1h = [220.0 + (idx * 0.20) for idx in range(90)]
+    closes_15m = [300.0 + ((idx % 2) * 0.01) for idx in range(79)] + [299.45, 300.20]
+    market = {
+        "4h": _bars(closes_4h, wick=0.8, body_shift=0.30, volume_base=1700.0, volume_step=2.0),
+        "1h": _bars(closes_1h, wick=0.55, body_shift=0.16, volume_base=1350.0, volume_step=2.0),
+        "15m": _bars(closes_15m, wick=0.05, body_shift=0.02, volume_base=950.0, volume_step=4.0),
+    }
+    market["15m"][-2]["open"] = 297.90
+    market["15m"][-2]["close"] = 299.45
+    market["15m"][-2]["high"] = 300.65
+    market["15m"][-2]["low"] = 297.75
+    market["15m"][-2]["volume"] = 2400.0
+    market["15m"][-1]["open"] = 299.55
+    market["15m"][-1]["close"] = 300.35
+    market["15m"][-1]["high"] = 300.50
+    market["15m"][-1]["low"] = 299.50
+    market["15m"][-1]["volume"] = 2400.0
+    return market
+
+
 def _flat_market() -> dict[str, list[dict[str, float]]]:
     closes_4h = [100.0 + ((idx % 2) * 0.02) for idx in range(220)]
     closes_1h = [200.0 + ((idx % 2) * 0.01) for idx in range(90)]
@@ -131,6 +187,31 @@ def _flat_market() -> dict[str, list[dict[str, float]]]:
         "1h": _bars(closes_1h, wick=0.05, body_shift=0.01, volume_base=750.0, volume_step=0.0),
         "15m": _bars(closes_15m, wick=0.04, body_shift=0.01, volume_base=700.0, volume_step=0.0),
     }
+
+
+def _sample_shared_context(*, expected_move_frac: float, required_move_frac: float, spread_bps: float) -> _SharedContext:
+    bar = _Bar(open=100.0, high=101.0, low=99.0, close=100.5, volume=1500.0)
+    return _SharedContext(
+        symbol="BTCUSDT",
+        candles_4h=[bar],
+        candles_1h=[bar],
+        candles_15m=[bar, bar],
+        regime="TREND_UP",
+        regime_side="LONG",
+        regime_block_reason="",
+        regime_strength=0.8,
+        bias_side="LONG",
+        bias_strength=0.7,
+        atr_15m=1.0,
+        ema_15m=100.0,
+        vol_ratio_15m=1.2,
+        current_bar=bar,
+        prev_bar=bar,
+        spread_estimate_bps=float(spread_bps),
+        expected_move_frac=float(expected_move_frac),
+        required_move_frac=float(required_move_frac),
+        indicators={},
+    )
 
 
 def test_alpha_v2_breakout_signal_emits_breakout_alpha() -> None:
@@ -353,6 +434,129 @@ def test_alpha_v2_expansion_rejects_overextended_short_chase() -> None:
     assert decision["alpha_blocks"]["alpha_expansion"] == "short_overextension_risk"
 
 
+def test_alpha_v2_drift_signal_emits_drift_alpha() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_drift"],
+            "min_volume_ratio_15m": 0.9,
+            "drift_range_atr_min": 1.2,
+            "drift_body_ratio_min": 0.5,
+            "drift_close_location_max": 0.6,
+            "drift_long_width_expansion_min": 0.1,
+            "drift_long_edge_ratio_min": 1.1,
+            "drift_bias_rsi_long_min": 45.0,
+            "drift_bias_rsi_short_max": 55.0,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.6,
+        }
+    )
+
+    setup = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_drift(), "open_time": 1})
+    confirm = strategy.decide(
+        {
+            "symbol": "BTCUSDT",
+            "market": _market_for_drift_confirm(),
+            "open_time": 1 + (15 * 60 * 1000),
+        }
+    )
+
+    assert setup["intent"] == "NONE"
+    assert setup["alpha_blocks"]["alpha_drift"] == "trigger_missing"
+    assert confirm["intent"] == "LONG"
+    assert confirm["alpha_id"] == "alpha_drift"
+    assert confirm["entry_family"] == "drift"
+    assert confirm["execution"]["reward_risk_reference_r"] == 1.8
+    assert confirm["execution"]["time_stop_bars"] == 16
+
+
+def test_alpha_v2_drift_signal_survives_verified_q070_like_profile_mix() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion", "alpha_drift"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_buffer_bps": 1.5,
+            "expansion_range_atr_min": 0.7,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "expansion_quality_score_v2_min": 0.70,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "min_volume_ratio_15m": 0.8,
+            "expected_move_cost_mult": 1.6,
+            "drift_side_mode": "LONG",
+            "drift_range_atr_min": 1.2,
+            "drift_body_ratio_min": 0.5,
+            "drift_close_location_max": 0.6,
+            "drift_long_width_expansion_min": 0.1,
+            "drift_long_edge_ratio_min": 1.1,
+            "drift_bias_rsi_long_min": 45.0,
+            "drift_setup_expiry_bars": 8,
+            "drift_take_profit_r": 1.8,
+            "drift_time_stop_bars": 16,
+            "min_stop_distance_frac": 0.0005,
+        }
+    )
+
+    setup = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_drift(), "open_time": 1})
+    confirm = strategy.decide(
+        {
+            "symbol": "BTCUSDT",
+            "market": _market_for_drift_confirm(),
+            "open_time": 1 + (15 * 60 * 1000),
+        }
+    )
+
+    assert setup["intent"] == "NONE"
+    assert confirm["intent"] == "LONG"
+    assert confirm["alpha_id"] == "alpha_drift"
+
+
+def test_alpha_v2_drift_rejects_wrong_close_location() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_drift"],
+            "min_volume_ratio_15m": 0.9,
+            "drift_range_atr_min": 1.2,
+            "drift_body_ratio_min": 0.5,
+            "drift_close_location_max": 0.6,
+            "drift_long_width_expansion_min": 0.1,
+            "drift_long_edge_ratio_min": 1.1,
+            "drift_bias_rsi_long_min": 45.0,
+            "drift_bias_rsi_short_max": 55.0,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 0.5,
+            "min_expected_move_floor": 0.0001,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_failed_drift()})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_drift"] == "trigger_missing"
+
+
+def test_alpha_v2_drift_queue_expires_without_confirm() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_drift"],
+            "drift_side_mode": "LONG",
+            "drift_setup_expiry_bars": 2,
+        }
+    )
+
+    _ = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_drift(), "open_time": 1})
+    expired = strategy.decide(
+        {
+            "symbol": "BTCUSDT",
+            "market": _market_for_drift_confirm(),
+            "open_time": 1 + (3 * 15 * 60 * 1000),
+        }
+    )
+
+    assert expired["intent"] == "NONE"
+    assert expired["alpha_blocks"]["alpha_drift"] == "trigger_missing"
+
+
 def test_alpha_v2_expansion_emits_progress_aware_exit_hints() -> None:
     strategy = RA2026AlphaV2(
         params={
@@ -550,6 +754,58 @@ def test_alpha_v2_expansion_rejects_low_quality_score_v2() -> None:
 
     assert decision["intent"] == "NONE"
     assert decision["alpha_blocks"]["alpha_expansion"] == "quality_score_v2_missing"
+
+
+def test_expansion_cost_near_pass_allows_high_quality_edge_shortfall() -> None:
+    cfg = RA2026AlphaV2Params.from_params(
+        {
+            "expansion_quality_score_v2_min": 0.62,
+            "min_stop_distance_frac": 0.0005,
+            "max_spread_bps": 12.0,
+        }
+    )
+    ctx = _sample_shared_context(
+        expected_move_frac=0.0097,
+        required_move_frac=0.01,
+        spread_bps=4.0,
+    )
+    stop_distance_frac = 0.002
+
+    assert _common_cost_reason(stop_distance_frac=stop_distance_frac, ctx=ctx, cfg=cfg) == "cost_missing"
+    assert (
+        _expansion_cost_near_pass_allowed(
+            stop_distance_frac=stop_distance_frac,
+            ctx=ctx,
+            cfg=cfg,
+            quality_score_v2=0.74,
+        )
+        is True
+    )
+
+
+def test_expansion_cost_near_pass_rejects_low_quality_edge_shortfall() -> None:
+    cfg = RA2026AlphaV2Params.from_params(
+        {
+            "expansion_quality_score_v2_min": 0.62,
+            "min_stop_distance_frac": 0.0005,
+            "max_spread_bps": 12.0,
+        }
+    )
+    ctx = _sample_shared_context(
+        expected_move_frac=0.0097,
+        required_move_frac=0.01,
+        spread_bps=4.0,
+    )
+
+    assert (
+        _expansion_cost_near_pass_allowed(
+            stop_distance_frac=0.002,
+            ctx=ctx,
+            cfg=cfg,
+            quality_score_v2=0.65,
+        )
+        is False
+    )
 
 
 def test_alpha_v2_breakout_accepts_breakout_on_neutral_candle_body() -> None:
