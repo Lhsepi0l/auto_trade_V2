@@ -305,3 +305,60 @@ def test_notifier_suppresses_duplicate_dedupe_key_within_window(monkeypatch) -> 
     assert final_snapshot["last_status"] == "sent"
     assert final_snapshot["last_suppressed_count"] == 1
     assert len(calls) == 2
+
+
+def test_notifier_ntfy_http_error_snapshot_includes_response_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    request = httpx.Request("POST", "https://ntfy.sh/ops-alerts")
+    response = httpx.Response(
+        429,
+        request=request,
+        json={
+            "code": 42908,
+            "http": 429,
+            "error": "limit reached: daily message quota reached",
+        },
+    )
+
+    class _QuotaClient:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            _ = args
+            _ = kwargs
+
+        def __enter__(self) -> "_QuotaClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+        def post(self, url: str, content: bytes, headers: dict[str, str], params: dict[str, str]):  # type: ignore[no-untyped-def]
+            _ = url
+            _ = content
+            _ = headers
+            _ = params
+            return response
+
+    monkeypatch.setattr(httpx, "Client", _QuotaClient)
+    notifier = Notifier(
+        enabled=True,
+        provider="ntfy",
+        ntfy_base_url="https://ntfy.sh",
+        ntfy_topic="ops-alerts",
+    )
+
+    result = notifier.send_notification(
+        NotificationMessage(
+            title="실시간 판단 대기",
+            body="거래량 조건 미충족",
+        )
+    )
+
+    assert result.sent is False
+    assert result.status == "failed"
+    assert result.error is not None
+    assert "status=429" in result.error
+    assert "daily message quota reached" in result.error
+    snapshot = notifier.delivery_snapshot()
+    assert snapshot["last_status"] == "failed"
+    assert "daily message quota reached" in str(snapshot["last_error"])

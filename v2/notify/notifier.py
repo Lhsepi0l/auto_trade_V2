@@ -109,7 +109,7 @@ class Notifier:
                     suppress_window_sec=suppress_window_sec,
                 )
             except httpx.HTTPError as exc:
-                error = f"{type(exc).__name__}: {exc}"
+                error = self._http_error_text(exc)
                 print(f"[notify] discord_send_failed: {notification.as_text()}")
                 self._record_delivery(
                     status="failed",
@@ -147,7 +147,7 @@ class Notifier:
                     suppress_window_sec=suppress_window_sec,
                 )
             except httpx.HTTPError as exc:
-                error = f"{type(exc).__name__}: {exc}"
+                error = self._http_error_text(exc)
                 print(f"[notify] ntfy_send_failed: {notification.as_text()}")
                 self._record_delivery(
                     status="failed",
@@ -243,6 +243,25 @@ class Notifier:
                 params=params,
             )
             response.raise_for_status()
+
+    @staticmethod
+    def _http_error_text(exc: httpx.HTTPError) -> str:
+        parts = [type(exc).__name__]
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status_code = getattr(response, "status_code", None)
+            if status_code is not None:
+                parts.append(f"status={status_code}")
+            try:
+                body = str(response.text or "").strip()
+            except Exception:  # noqa: BLE001
+                body = ""
+            if body:
+                parts.append(Notifier._preview(body, limit=240))
+        message = str(exc).strip()
+        if message:
+            parts.append(message)
+        return ": ".join(parts)
 
     @staticmethod
     def _utcnow_iso() -> str:

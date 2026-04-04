@@ -960,7 +960,7 @@ def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
     assert "거래량 조건 미충족" in notification.body
 
 
-def test_control_api_runtime_cycle_emits_scheduler_no_candidate_notification_for_ntfy(
+def test_control_api_runtime_cycle_skips_scheduler_no_candidate_notification_for_ntfy(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -1005,11 +1005,7 @@ def test_control_api_runtime_cycle_emits_scheduler_no_candidate_notification_for
 
     assert out["ok"] is True
     assert out["snapshot"]["last_action"] == "no_candidate"
-    assert notifier.send_notification.call_count == 1
-    notification = notifier.send_notification.call_args[0][0]
-    assert isinstance(notification, NotificationMessage)
-    assert notification.title == "실시간 판단 대기"
-    assert "거래량 조건 미충족" in notification.body
+    assert notifier.send_notification.call_count == 0
 
 
 def test_control_api_runtime_cycle_emits_entry_opened_notification_for_executed_result(
@@ -1183,10 +1179,58 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
 
     assert first["ok"] is True
     assert second["ok"] is True
-    assert notifier.send_notification.call_count == 1
+    assert notifier.send_notification.call_count == 0
     events = controller.state_store.runtime_storage().list_operator_events(limit=20)
     cycle_events = [row for row in events if row.get("event_type") == "cycle_result"]
     assert len(cycle_events) == 1
+
+
+def test_control_api_scheduler_blocked_notification_is_suppressed_for_ntfy(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_blocked.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelBlocked:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(
+                state="blocked",
+                reason="confidence_below_threshold",
+                candidate=None,
+            )
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelBlocked(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+    )
+    notifier.send_notification.reset_mock()
+
+    out = controller._run_cycle_once_locked(trigger_source="scheduler")
+
+    assert out["ok"] is True
+    assert out["snapshot"]["last_action"] == "blocked"
+    assert notifier.send_notification.call_count == 0
 
 
 def test_control_api_stale_transition_emits_ntfy_attention_notification(

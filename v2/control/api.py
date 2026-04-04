@@ -490,6 +490,7 @@ class RuntimeController:
             event=event,
             fields=fields,
             context=self._notification_context(),
+            provider=self.notifier.resolved_provider(),
         )
         if notification is not None and notify and not self._boot_notification_muted:
             _ = self.notifier.send_notification(notification)
