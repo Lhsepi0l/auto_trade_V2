@@ -31,6 +31,7 @@ let logsState = {
 let activeConfirmResolver = null;
 let lastConsolePayload = null;
 let pushRegistration = null;
+let lastPushDiagnostic = null;
 const INPUT_DIRTY_WINDOW_MS = 8000;
 
 function fmtNumber(value, digits = 4) {
@@ -130,6 +131,59 @@ function buildDefaultDeviceLabel() {
   return isStandaloneMode() ? "운영앱" : "브라우저 기기";
 }
 
+function pushDiagnosticMessage(reason) {
+  return {
+    server_unavailable: "서버 Web Push 준비가 아직 완료되지 않았습니다. 잠시 후 새로고침해 주세요.",
+    secure_context_missing: "HTTPS 보안 컨텍스트가 아닙니다. 인증서 신뢰를 켠 뒤 https 주소의 홈 화면 앱으로 다시 열어 주세요.",
+    notification_api_missing: "이 브라우저는 Notification API를 지원하지 않습니다.",
+    service_worker_missing: "이 브라우저는 Service Worker를 지원하지 않습니다.",
+    push_manager_missing: "이 iPhone/iOS 조합에서는 Web Push를 지원하지 않을 수 있습니다. iOS 16.4 이상인지 확인해 주세요.",
+    ios_home_screen_required: "iPhone에서는 Safari 탭이 아니라 '홈 화면에 추가'한 앱에서만 푸시 연결이 됩니다.",
+    notification_permission_denied: "알림 권한이 차단되어 있습니다. 설정에서 Safari/웹앱 알림 권한을 다시 허용해 주세요.",
+    sw_registration_failed: "서비스 워커 등록에 실패했습니다. 홈 화면 앱을 닫았다가 다시 열고 재시도해 주세요.",
+    push_subscription_failed: "브라우저 푸시 구독 생성에 실패했습니다. 홈 화면 앱에서 다시 시도해 주세요.",
+  }[reason] || reason || "원인을 확인하지 못했습니다.";
+}
+
+function computePushDiagnostic(push) {
+  const serverReady = Boolean(push?.available);
+  const secureContext = Boolean(window.isSecureContext);
+  const notificationSupported = typeof window.Notification !== "undefined";
+  const serviceWorkerSupported = "serviceWorker" in navigator;
+  const pushManagerSupported = "PushManager" in window;
+  const standalone = isStandaloneMode();
+  const permission = notificationSupported ? Notification.permission : "unsupported";
+
+  let reason = null;
+  if (!serverReady) {
+    reason = "server_unavailable";
+  } else if (!secureContext) {
+    reason = "secure_context_missing";
+  } else if (!notificationSupported) {
+    reason = "notification_api_missing";
+  } else if (!serviceWorkerSupported) {
+    reason = "service_worker_missing";
+  } else if (!pushManagerSupported) {
+    reason = "push_manager_missing";
+  } else if (isIosDevice() && !standalone) {
+    reason = "ios_home_screen_required";
+  } else if (permission === "denied") {
+    reason = "notification_permission_denied";
+  }
+
+  return {
+    canSubscribe: reason === null,
+    reason,
+    secureContext,
+    notificationSupported,
+    serviceWorkerSupported,
+    pushManagerSupported,
+    standalone,
+    permission,
+    message: pushDiagnosticMessage(reason),
+  };
+}
+
 function pushPermissionLabel(permission) {
   if (!isPushSupported()) {
     return "이 브라우저에서는 미지원";
@@ -203,26 +257,35 @@ function renderPushDevices(items) {
 
 async function renderPushState(push) {
   const serverReady = Boolean(push?.available);
-  const permission = isPushSupported() ? Notification.permission : "unsupported";
-  const standalone = isStandaloneMode();
-  const subscription = await currentPushSubscription().catch(() => null);
-  const hasSubscription = Boolean(subscription);
-  const runtimeProvider = String(push?.runtime_provider || "none");
-  const runtimeEnabled = Boolean(push?.runtime_provider_enabled);
+  const diagnostic = computePushDiagnostic(push);
+  lastPushDiagnostic = diagnostic;
 
   setText("push-availability", serverReady ? "Web Push 준비됨" : "Web Push 준비 필요");
   setText(
     "push-runtime-provider",
-    runtimeEnabled ? `${runtimeProvider} 운영 채널` : `${runtimeProvider} 운영 채널 아님`
+    push?.runtime_provider_enabled
+      ? `${String(push?.runtime_provider || "none")} 운영 채널`
+      : `${String(push?.runtime_provider || "none")} 운영 채널 아님`
   );
-  setText("push-install-state", standalone ? "홈 화면 앱" : "브라우저 탭");
+  setText("push-install-state", diagnostic.standalone ? "홈 화면 앱" : "브라우저 탭");
   setText("push-server-status", serverReady ? "준비됨" : push?.last_error || "미준비");
-  setText("push-provider-state", runtimeEnabled ? "실운영 알림 사용중" : "테스트/대기 상태");
-  setText("push-permission-state", pushPermissionLabel(permission));
-  setText("push-subscription-state", hasSubscription ? "현재 기기 연결됨" : "현재 기기 미연결");
+  setText(
+    "push-provider-state",
+    push?.runtime_provider_enabled ? "실운영 알림 사용중" : "테스트/대기 상태"
+  );
+  setText("push-permission-state", pushPermissionLabel(diagnostic.permission));
+  setText("push-subscription-state", diagnostic.message);
   setText("push-subscription-count", push?.subscription_count);
   setText("push-last-error", push?.last_error);
   renderPushDevices(push?.devices || []);
+
+  const subscription = diagnostic.canSubscribe
+    ? await currentPushSubscription().catch(() => null)
+    : null;
+  const hasSubscription = Boolean(subscription);
+  const runtimeProvider = String(push?.runtime_provider || "none");
+  const runtimeEnabled = Boolean(push?.runtime_provider_enabled);
+  setText("push-subscription-state", hasSubscription ? "현재 기기 연결됨" : "현재 기기 미연결");
 
   const labelInput = document.getElementById("push-device-label");
   if (labelInput && !labelInput.value) {
@@ -231,26 +294,24 @@ async function renderPushState(push) {
   const installHint = document.getElementById("push-install-hint");
   const deviceHint = document.getElementById("push-device-hint");
   if (installHint) {
-    if (isIosDevice() && !standalone) {
-      installHint.textContent =
-        "iPhone에서는 Safari 하단 공유 버튼에서 '홈 화면에 추가'를 한 뒤, 홈 화면 앱으로 다시 열어야 푸시 권한을 받을 수 있습니다.";
-    } else if (!isPushSupported()) {
-      installHint.textContent = "현재 브라우저/보안 상태에서는 Web Push를 사용할 수 없습니다. HTTPS와 최신 브라우저가 필요합니다.";
+    if (diagnostic.reason) {
+      installHint.textContent = diagnostic.message;
     } else {
       installHint.textContent =
         "푸시 연결을 누르면 현재 기기를 운영용 수신 기기로 등록합니다. 연결 뒤에는 테스트 발송으로 바로 확인할 수 있습니다.";
     }
   }
   if (deviceHint) {
-    deviceHint.textContent = `현재 기기 ID: ${getPushDeviceId()} / 라벨 추천: ${buildDefaultDeviceLabel()}`;
+    deviceHint.textContent =
+      `현재 기기 ID: ${getPushDeviceId()} / 라벨 추천: ${buildDefaultDeviceLabel()} / secure=${diagnostic.secureContext ? "yes" : "no"} / standalone=${diagnostic.standalone ? "yes" : "no"} / pushAPI=${diagnostic.pushManagerSupported ? "yes" : "no"}`;
   }
 
   const subscribeBtn = document.getElementById("push-subscribe-btn");
   const unsubscribeBtn = document.getElementById("push-unsubscribe-btn");
   const testBtn = document.getElementById("push-test-btn");
-  const canSubscribe = serverReady && isPushSupported() && (!isIosDevice() || standalone);
   if (subscribeBtn) {
-    subscribeBtn.disabled = !canSubscribe || permission === "denied";
+    subscribeBtn.disabled = !serverReady;
+    subscribeBtn.title = diagnostic.reason ? diagnostic.message : "현재 기기를 Web Push 수신 기기로 연결합니다.";
   }
   if (unsubscribeBtn) {
     unsubscribeBtn.disabled = !hasSubscription;
@@ -915,22 +976,23 @@ function bindActionButtons() {
   document.getElementById("push-subscribe-btn")?.addEventListener("click", async () => {
     try {
       const push = lastConsolePayload?.push || {};
+      const diagnostic = computePushDiagnostic(push);
       if (!push.public_key) {
         throw new Error(push?.last_error || "webpush_public_key_missing");
       }
-      if (isIosDevice() && !isStandaloneMode()) {
-        throw new Error("iphone_home_screen_required");
+      if (diagnostic.reason) {
+        throw new Error(diagnostic.message);
       }
       const registration = await ensurePushRegistration();
       if (!registration) {
-        throw new Error("webpush_unsupported");
+        throw new Error(pushDiagnosticMessage("sw_registration_failed"));
       }
       let permission = Notification.permission;
       if (permission !== "granted") {
         permission = await Notification.requestPermission();
       }
       if (permission !== "granted") {
-        throw new Error(`notification_permission_${permission}`);
+        throw new Error(pushPermissionLabel(permission));
       }
       let subscription = await registration.pushManager.getSubscription();
       if (!subscription) {
@@ -938,6 +1000,9 @@ function bindActionButtons() {
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(String(push.public_key)),
         });
+      }
+      if (!subscription) {
+        throw new Error(pushDiagnosticMessage("push_subscription_failed"));
       }
       const deviceLabel = document.getElementById("push-device-label")?.value?.trim() || buildDefaultDeviceLabel();
       await postAction("/operator/api/push/subscribe", {
