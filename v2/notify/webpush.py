@@ -269,14 +269,16 @@ class WebPushService:
         vapid_private_key: str,
     ) -> None:
         try:
+            from py_vapid import Vapid01
             from pywebpush import webpush
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"webpush_package_missing: {type(exc).__name__}") from exc
 
+        vapid = Vapid01.from_pem(vapid_private_key.encode("utf-8"))
         _ = webpush(
             subscription_info=subscription,
             data=payload,
-            vapid_private_key=vapid_private_key,
+            vapid_private_key=vapid,
             vapid_claims={"sub": self.subject},
             ttl=60,
         )

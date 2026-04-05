@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from v2.notify import NotificationMessage
 from v2.notify.webpush import WebPushService
 from v2.storage import RuntimeStorage
@@ -83,3 +85,28 @@ def test_webpush_service_records_successful_send(tmp_path, monkeypatch) -> None:
     assert result.sent is True
     assert result.status == "sent"
     assert rows[0]["last_success_at"] is not None
+
+
+def test_webpush_dispatch_uses_vapid_instance_for_pywebpush(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    vapid_mod = pytest.importorskip("py_vapid")
+    Vapid01 = vapid_mod.Vapid01
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage)
+    marker = storage.load_runtime_marker(marker_key="webpush_vapid_keys")
+    assert marker is not None
+    captured: dict[str, object] = {}
+
+    def _fake_webpush(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("pywebpush.webpush", _fake_webpush)
+
+    service._dispatch(  # noqa: SLF001
+        subscription={"endpoint": "https://example.com/push/1", "keys": {"p256dh": "abc", "auth": "def"}},
+        payload='{"title":"테스트"}',
+        vapid_private_key=str(marker["private_key_pem"]),
+    )
+
+    assert isinstance(captured["vapid_private_key"], Vapid01)
