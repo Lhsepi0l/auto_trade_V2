@@ -1010,6 +1010,12 @@ function bindActionButtons() {
     try {
       const push = lastConsolePayload?.push || {};
       const diagnostic = computePushDiagnostic(push);
+      await postClientLog({
+        title: "push_subscribe_click",
+        mainText: diagnostic.reason || "click_received",
+        subText: diagnostic.message,
+        context: diagnostic,
+      });
       if (!push.public_key) {
         throw new Error(push?.last_error || "webpush_public_key_missing");
       }

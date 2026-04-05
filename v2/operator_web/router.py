@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -137,13 +138,21 @@ def _read_template(name: str) -> str:
 
 def _asset_url(filename: str) -> str:
     path = _STATIC_DIR / filename
-    version = int(path.stat().st_mtime_ns) if path.exists() else 0
+    version = (
+        hashlib.sha1(path.read_bytes()).hexdigest()[:12]  # noqa: S324
+        if path.exists()
+        else "0"
+    )
     return f"/operator/static/{filename}?v={version}"
 
 
 def _route_asset_url(route_path: str, source_filename: str) -> str:
     path = _STATIC_DIR / source_filename
-    version = int(path.stat().st_mtime_ns) if path.exists() else 0
+    version = (
+        hashlib.sha1(path.read_bytes()).hexdigest()[:12]  # noqa: S324
+        if path.exists()
+        else "0"
+    )
     return f"{route_path}?v={version}"
 
 
