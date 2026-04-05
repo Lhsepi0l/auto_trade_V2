@@ -241,8 +241,38 @@ async function ensurePushRegistration() {
   if (pushRegistration) {
     return pushRegistration;
   }
+  await postClientLog({
+    title: "push_sw_register_start",
+    mainText: "service_worker_register_start",
+    subText: operatorSwUrl,
+    context: { scope: operatorScope },
+  });
   const registration = await navigator.serviceWorker.register(operatorSwUrl, { scope: operatorScope });
-  pushRegistration = await navigator.serviceWorker.ready;
+  await postClientLog({
+    title: "push_sw_register_ok",
+    mainText: "service_worker_register_ok",
+    subText: registration.scope,
+    context: {
+      active: Boolean(registration.active),
+      waiting: Boolean(registration.waiting),
+      installing: Boolean(registration.installing),
+    },
+  });
+  const readyRegistration = await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((_, reject) =>
+      window.setTimeout(() => reject(new Error("sw_ready_timeout")), 8000)
+    ),
+  ]);
+  pushRegistration = readyRegistration;
+  await postClientLog({
+    title: "push_sw_ready_ok",
+    mainText: "service_worker_ready",
+    subText: readyRegistration?.scope || operatorScope,
+    context: {
+      controller: Boolean(navigator.serviceWorker.controller),
+    },
+  });
   return pushRegistration || registration;
 }
 
