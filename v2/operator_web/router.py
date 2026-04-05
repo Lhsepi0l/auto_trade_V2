@@ -123,6 +123,14 @@ class OperatorPushTestRequest(BaseModel):
     device_label: str | None = None
 
 
+class OperatorClientLogRequest(BaseModel):
+    category: str = "action"
+    title: str
+    main_text: str
+    sub_text: str | None = None
+    context: dict[str, Any] = {}
+
+
 def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
@@ -237,6 +245,16 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.post("/operator/api/push/unsubscribe")
     async def operator_push_unsubscribe(payload: OperatorPushUnsubscribeRequest) -> dict[str, Any]:
         return service.unregister_push_subscription(endpoint=payload.endpoint)
+
+    @router.post("/operator/api/client-log")
+    async def operator_client_log(payload: OperatorClientLogRequest) -> dict[str, Any]:
+        return service.record_client_log(
+            category=payload.category,
+            title=payload.title,
+            main_text=payload.main_text,
+            sub_text=payload.sub_text,
+            context=dict(payload.context or {}),
+        )
 
     @router.get("/operator/api/events")
     async def operator_events(limit: int = 200) -> list[dict[str, Any]]:

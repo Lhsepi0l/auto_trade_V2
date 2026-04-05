@@ -32,6 +32,7 @@ let activeConfirmResolver = null;
 let lastConsolePayload = null;
 let pushRegistration = null;
 let lastPushDiagnostic = null;
+let lastClientLogKey = null;
 const INPUT_DIRTY_WINDOW_MS = 8000;
 
 function fmtNumber(value, digits = 4) {
@@ -143,6 +144,37 @@ function pushDiagnosticMessage(reason) {
     sw_registration_failed: "서비스 워커 등록에 실패했습니다. 홈 화면 앱을 닫았다가 다시 열고 재시도해 주세요.",
     push_subscription_failed: "브라우저 푸시 구독 생성에 실패했습니다. 홈 화면 앱에서 다시 시도해 주세요.",
   }[reason] || reason || "원인을 확인하지 못했습니다.";
+}
+
+async function postClientLog({ title, mainText, subText = null, category = "action", context = {} }) {
+  const payload = {
+    category,
+    title,
+    main_text: mainText,
+    sub_text: subText,
+    context: {
+      ...context,
+      event_time: new Date().toISOString(),
+      page: pageId,
+      href: window.location.href,
+      userAgent: navigator.userAgent,
+    },
+  };
+  const dedupeKey = JSON.stringify([payload.title, payload.main_text, payload.sub_text, payload.context?.error || ""]);
+  if (dedupeKey === lastClientLogKey) {
+    return;
+  }
+  lastClientLogKey = dedupeKey;
+  try {
+    await fetch("/operator/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+  } catch (_error) {
+    // Best effort only.
+  }
 }
 
 function computePushDiagnostic(push) {
@@ -283,9 +315,10 @@ async function renderPushState(push) {
     ? await currentPushSubscription().catch(() => null)
     : null;
   const hasSubscription = Boolean(subscription);
-  const runtimeProvider = String(push?.runtime_provider || "none");
-  const runtimeEnabled = Boolean(push?.runtime_provider_enabled);
-  setText("push-subscription-state", hasSubscription ? "현재 기기 연결됨" : "현재 기기 미연결");
+  setText(
+    "push-subscription-state",
+    hasSubscription ? "현재 기기 연결됨" : diagnostic.reason ? diagnostic.message : "현재 기기 미연결"
+  );
 
   const labelInput = document.getElementById("push-device-label");
   if (labelInput && !labelInput.value) {
@@ -713,6 +746,8 @@ async function loadConsole() {
   const payload = await resp.json();
   lastConsolePayload = payload;
 
+  await renderPushState(payload.push || {});
+
   setText("runtime-mode", `${fmtMaybe(payload.runtime?.mode)} / ${fmtMaybe(payload.runtime?.env)}`);
   setText("runtime-profile", payload.runtime?.profile);
 
@@ -861,8 +896,6 @@ async function loadConsole() {
   if (inlineTickBtn) {
     inlineTickBtn.disabled = !payload.scheduler?.can_tick;
   }
-
-  await renderPushState(payload.push || {});
 }
 
 async function postAction(path, body) {
@@ -981,10 +1014,22 @@ function bindActionButtons() {
         throw new Error(push?.last_error || "webpush_public_key_missing");
       }
       if (diagnostic.reason) {
+        await postClientLog({
+          title: "push_subscribe_blocked",
+          mainText: diagnostic.reason,
+          subText: diagnostic.message,
+          context: diagnostic,
+        });
         throw new Error(diagnostic.message);
       }
       const registration = await ensurePushRegistration();
       if (!registration) {
+        await postClientLog({
+          title: "push_subscribe_registration_missing",
+          mainText: "sw_registration_failed",
+          subText: pushDiagnosticMessage("sw_registration_failed"),
+          context: diagnostic,
+        });
         throw new Error(pushDiagnosticMessage("sw_registration_failed"));
       }
       let permission = Notification.permission;
@@ -1014,6 +1059,15 @@ function bindActionButtons() {
         standalone: isStandaloneMode(),
       });
     } catch (error) {
+      await postClientLog({
+        title: "push_subscribe_error",
+        mainText: String(error?.name || "push_subscribe_error"),
+        subText: String(error),
+        context: {
+          diagnostic: lastPushDiagnostic,
+          error: String(error?.stack || error || ""),
+        },
+      });
       setFeedback(String(error), "failed");
     }
   });
@@ -1045,6 +1099,31 @@ function bindActionButtons() {
     ).catch((error) => setFeedback(String(error), "failed"));
   });
 }
+
+window.addEventListener("error", (event) => {
+  postClientLog({
+    title: "operator_js_error",
+    mainText: String(event.message || "window_error"),
+    subText: `${event.filename || "-"}:${event.lineno || 0}:${event.colno || 0}`,
+    category: "action",
+    context: {
+      error: String(event.error?.stack || event.error || event.message || ""),
+    },
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  postClientLog({
+    title: "operator_js_rejection",
+    mainText: String(reason?.message || reason || "unhandledrejection"),
+    subText: String(reason?.stack || reason || ""),
+    category: "action",
+    context: {
+      error: String(reason?.stack || reason || ""),
+    },
+  });
+});
 
 function bindForms() {
   document

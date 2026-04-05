@@ -119,6 +119,31 @@ class OperatorService:
             context={"device_label": str(device_label or "").strip() or None},
         )
 
+    def record_client_log(
+        self,
+        *,
+        category: str,
+        title: str,
+        main_text: str,
+        sub_text: str | None,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        event_time = context.get("event_time")
+        if not isinstance(event_time, str) or not event_time.strip():
+            from datetime import datetime, timezone
+
+            event_time = datetime.now(timezone.utc).isoformat()
+        self._controller.state_store.runtime_storage().append_operator_event(
+            event_type="client_log",
+            category=category,
+            title=title,
+            main_text=main_text,
+            sub_text=sub_text,
+            event_time=event_time,
+            context=context,
+        )
+        return {"ok": True}
+
     def start_or_resume(self) -> dict[str, Any]:
         return wrap_operator_action(action="start_resume", raw_result=self._controller.start())
 
