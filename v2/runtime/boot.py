@@ -161,7 +161,7 @@ def run_runtime_preflight(cfg: EffectiveConfig, *, host: str, port: int) -> int:
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
             webpush_service = WebPushService(
                 storage=storage,
-                subject=str(cfg.secrets.webpush_subject or "mailto:autotrader@local.invalid"),
+                subject=cfg.secrets.webpush_subject,
             )
             notifier = build_notifier_from_config(
                 cfg,
@@ -311,7 +311,7 @@ def boot_runtime(cfg: EffectiveConfig, *, loop_enabled: bool = False, max_cycles
 
             webpush_service = WebPushService(
                 storage=storage,
-                subject=str(cfg.secrets.webpush_subject or "mailto:autotrader@local.invalid"),
+                subject=cfg.secrets.webpush_subject,
             )
             notifier = build_notifier_from_config(
                 cfg,

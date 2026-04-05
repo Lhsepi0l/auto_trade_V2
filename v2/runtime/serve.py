@@ -74,7 +74,7 @@ def serve_control_http(
 
                 webpush_service = WebPushService(
                     storage=storage,
-                    subject=str(cfg.secrets.webpush_subject or "mailto:autotrader@local.invalid"),
+                    subject=cfg.secrets.webpush_subject,
                 )
                 notifier = build_notifier_from_config(
                     cfg,

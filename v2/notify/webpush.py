@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -31,10 +32,13 @@ def _mask_endpoint(endpoint: str) -> str:
 @dataclass
 class WebPushService:
     storage: RuntimeStorage
-    subject: str = "mailto:autotrader@local.invalid"
+    subject: str | None = None
     target_path: str = "/operator"
     icon_url: str = "/operator/static/operator-icon.svg"
     badge_url: str = "/operator/static/operator-badge.svg"
+
+    def __post_init__(self) -> None:
+        self.subject = self._normalized_subject(self.subject)
 
     def availability_snapshot(self) -> dict[str, Any]:
         public_key, error = self._public_key_snapshot()
@@ -66,6 +70,28 @@ class WebPushService:
                 }
             )
         return out
+
+    @staticmethod
+    def _detect_non_loopback_ip() -> str | None:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("8.8.8.8", 80))
+                ip = str(sock.getsockname()[0] or "").strip()
+                if ip and not ip.startswith("127."):
+                    return ip
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    @classmethod
+    def _normalized_subject(cls, raw: str | None) -> str:
+        value = str(raw or "").strip()
+        if value and "local.invalid" not in value:
+            return value
+        detected_ip = cls._detect_non_loopback_ip()
+        if detected_ip:
+            return f"https://{detected_ip}"
+        return "mailto:autotrader@example.com"
 
     def register_subscription(
         self,

@@ -93,6 +93,7 @@ def test_webpush_dispatch_uses_vapid_instance_for_pywebpush(monkeypatch, tmp_pat
     storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
     storage.ensure_schema()
     service = WebPushService(storage=storage)
+    _ = service.availability_snapshot()
     marker = storage.load_runtime_marker(marker_key="webpush_vapid_keys")
     assert marker is not None
     captured: dict[str, object] = {}
@@ -110,3 +111,12 @@ def test_webpush_dispatch_uses_vapid_instance_for_pywebpush(monkeypatch, tmp_pat
     )
 
     assert isinstance(captured["vapid_private_key"], Vapid01)
+
+
+def test_webpush_service_uses_detected_https_subject_for_placeholder_subject(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(WebPushService, "_detect_non_loopback_ip", classmethod(lambda cls: "192.168.50.29"))
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage, subject="mailto:autotrader@local.invalid")
+
+    assert service.subject == "https://192.168.50.29"
