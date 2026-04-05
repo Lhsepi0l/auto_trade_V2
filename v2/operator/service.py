@@ -36,9 +36,87 @@ class OperatorService:
         return self._controller.get_risk()
 
     def console_payload(self) -> dict[str, Any]:
-        return build_operator_console_payload(
+        payload = build_operator_console_payload(
             self._controller._status_snapshot(),
             guidance=build_operator_guidance(),
+        )
+        payload["push"] = self.push_state()
+        return payload
+
+    def push_state(self) -> dict[str, Any]:
+        service = getattr(self._controller, "webpush_service", None)
+        runtime_provider = self._controller.notifier.resolved_provider()
+        if service is None:
+            return {
+                "available": False,
+                "runtime_provider": runtime_provider,
+                "runtime_provider_enabled": runtime_provider == "webpush" and bool(self._controller.notifier.enabled),
+                "public_key": None,
+                "subscription_count": 0,
+                "last_error": "webpush_service_unavailable",
+                "devices": [],
+            }
+        availability = service.availability_snapshot()
+        availability["runtime_provider"] = runtime_provider
+        availability["runtime_provider_enabled"] = runtime_provider == "webpush" and bool(self._controller.notifier.enabled)
+        availability["devices"] = service.list_subscriptions()
+        availability["app_scope"] = "/operator"
+        availability["service_worker_url"] = "/operator/sw.js"
+        availability["manifest_url"] = "/operator/manifest.webmanifest"
+        return availability
+
+    def register_push_subscription(
+        self,
+        *,
+        subscription: dict[str, Any],
+        device_id: str | None,
+        device_label: str | None,
+        user_agent: str | None,
+        platform: str | None,
+        standalone: bool,
+    ) -> dict[str, Any]:
+        service = getattr(self._controller, "webpush_service", None)
+        if service is None:
+            raise ValueError("webpush_service_unavailable")
+        result = service.register_subscription(
+            subscription=subscription,
+            device_id=device_id,
+            device_label=device_label,
+            user_agent=user_agent,
+            platform=platform,
+            standalone=standalone,
+        )
+        result["push"] = self.push_state()
+        return wrap_operator_action(
+            action="push_subscribe",
+            raw_result=result,
+            context={"device_label": str(device_label or "").strip() or None},
+        )
+
+    def unregister_push_subscription(self, *, endpoint: str) -> dict[str, Any]:
+        service = getattr(self._controller, "webpush_service", None)
+        if service is None:
+            raise ValueError("webpush_service_unavailable")
+        result = service.unregister_subscription(endpoint=endpoint)
+        result["push"] = self.push_state()
+        return wrap_operator_action(action="push_unsubscribe", raw_result=result)
+
+    def send_push_test(self, *, device_label: str | None = None) -> dict[str, Any]:
+        service = getattr(self._controller, "webpush_service", None)
+        if service is None:
+            raise ValueError("webpush_service_unavailable")
+        dispatch = service.send_test_notification(device_label=device_label)
+        result = {
+            "ok": bool(dispatch.sent),
+            "notifier_sent": bool(dispatch.sent),
+            "notifier_error": dispatch.error,
+            "status": dispatch.status,
+            "push": self.push_state(),
+        }
+        return wrap_operator_action(
+            action="push_test",
+            raw_result=result,
+            context={"device_label": str(device_label or "").strip() or None},
         )
 
     def start_or_resume(self) -> dict[str, Any]:

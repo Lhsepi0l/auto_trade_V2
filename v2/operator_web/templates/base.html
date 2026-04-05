@@ -4,9 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ TITLE }}</title>
+    <meta name="theme-color" content="#0f766e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="AT Ops">
+    <link rel="manifest" href="{{ OPERATOR_MANIFEST_URL }}">
+    <link rel="icon" href="{{ OPERATOR_ICON_URL }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ OPERATOR_APPLE_ICON_URL }}">
     <link rel="stylesheet" href="{{ OPERATOR_CSS_URL }}">
   </head>
-  <body data-operator-page="{{ PAGE_ID }}">
+  <body
+    data-operator-page="{{ PAGE_ID }}"
+    data-operator-sw-url="{{ OPERATOR_SW_URL }}"
+    data-operator-scope="/operator/"
+  >
     <header class="operator-topbar">
       <div class="operator-topbar-inner">
         <a class="operator-brand" href="/operator">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from v2.control.operator_events import build_operator_event_payload
+from v2.notify import WebPushDispatchResult
 from v2.operator import OperatorService
 from v2.operator.actions import wrap_operator_action
 from v2.operator.read_models import build_operator_console_payload
@@ -463,6 +464,49 @@ def test_operator_service_lists_persisted_operator_events(tmp_path) -> None:  # 
 
     assert events
     assert events[0]["event_type"] == "runtime_start"
+
+
+def test_operator_service_exposes_push_state_and_test_action(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+
+    class _FakeWebPushService:
+        def availability_snapshot(self) -> dict[str, object]:
+            return {
+                "available": True,
+                "public_key": "PUBLIC_KEY",
+                "subscription_count": 1,
+                "last_error": None,
+            }
+
+        def list_subscriptions(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "device_label": "민수 iPhone 운영앱",
+                    "platform": "iPhone",
+                    "active": True,
+                    "standalone": True,
+                    "endpoint_hint": "https://example...",
+                    "last_success_at": "2026-04-05T00:00:00+00:00",
+                    "last_failure_at": None,
+                    "last_error": None,
+                }
+            ]
+
+        def send_test_notification(self, *, device_label: str | None = None) -> WebPushDispatchResult:
+            _ = device_label
+            return WebPushDispatchResult(sent=True, error=None, status="sent")
+
+    controller.webpush_service = _FakeWebPushService()
+    service = OperatorService(controller=controller)
+
+    state = service.push_state()
+    out = service.send_push_test(device_label="민수 iPhone 운영앱")
+
+    assert state["available"] is True
+    assert state["subscription_count"] == 1
+    assert state["devices"][0]["device_label"] == "민수 iPhone 운영앱"
+    assert out["action"] == "push_test"
+    assert out["result"]["notifier_sent"] is True
 
 
 def test_operator_event_payload_humanizes_boot_and_readiness_transitions() -> None:

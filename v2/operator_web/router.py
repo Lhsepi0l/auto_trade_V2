@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -106,6 +106,23 @@ class OperatorDebugBundleRequest(BaseModel):
     mode: str = "quick"
 
 
+class OperatorPushSubscriptionRequest(BaseModel):
+    subscription: dict[str, Any]
+    device_id: str | None = None
+    device_label: str | None = None
+    user_agent: str | None = None
+    platform: str | None = None
+    standalone: bool = False
+
+
+class OperatorPushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+class OperatorPushTestRequest(BaseModel):
+    device_label: str | None = None
+
+
 def _read_template(name: str) -> str:
     return (_TEMPLATE_DIR / name).read_text(encoding="utf-8")
 
@@ -114,6 +131,12 @@ def _asset_url(filename: str) -> str:
     path = _STATIC_DIR / filename
     version = int(path.stat().st_mtime_ns) if path.exists() else 0
     return f"/operator/static/{filename}?v={version}"
+
+
+def _route_asset_url(route_path: str, source_filename: str) -> str:
+    path = _STATIC_DIR / source_filename
+    version = int(path.stat().st_mtime_ns) if path.exists() else 0
+    return f"{route_path}?v={version}"
 
 
 def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLResponse:
@@ -127,6 +150,13 @@ def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLRespons
         .replace("{{ NAV_LOGS_ACTIVE }}", "is-active" if page_id == "logs" else "")
         .replace("{{ OPERATOR_CSS_URL }}", _asset_url("operator.css"))
         .replace("{{ OPERATOR_JS_URL }}", _asset_url("operator.js"))
+        .replace("{{ OPERATOR_ICON_URL }}", _asset_url("operator-icon.svg"))
+        .replace("{{ OPERATOR_APPLE_ICON_URL }}", _asset_url("operator-icon.svg"))
+        .replace(
+            "{{ OPERATOR_MANIFEST_URL }}",
+            _route_asset_url("/operator/manifest.webmanifest", "operator-icon.svg"),
+        )
+        .replace("{{ OPERATOR_SW_URL }}", _route_asset_url("/operator/sw.js", "operator-sw.js"))
     )
     return HTMLResponse(content=content)
 
@@ -136,6 +166,38 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     app.mount("/operator/static", StaticFiles(directory=str(_STATIC_DIR)), name="operator-static")
 
     router = APIRouter(tags=["operator-web"])
+
+    @router.get("/operator/manifest.webmanifest")
+    async def operator_manifest(request: Request) -> JSONResponse:
+        icon_url = str(request.url_for("operator-static", path="operator-icon.svg"))
+        return JSONResponse(
+            content={
+                "name": "Auto Trader Operator",
+                "short_name": "AT Ops",
+                "description": "실운영 제어와 즉시 대응을 위한 모바일 운영 앱",
+                "start_url": "/operator",
+                "scope": "/operator/",
+                "display": "standalone",
+                "background_color": "#f3efe5",
+                "theme_color": "#0f766e",
+                "icons": [
+                    {
+                        "src": icon_url,
+                        "sizes": "512x512",
+                        "type": "image/svg+xml",
+                        "purpose": "any maskable",
+                    }
+                ],
+            }
+        )
+
+    @router.get("/operator/sw.js")
+    async def operator_service_worker() -> FileResponse:
+        return FileResponse(
+            path=str(_STATIC_DIR / "operator-sw.js"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @router.get("/operator", response_class=HTMLResponse)
     async def operator_console() -> HTMLResponse:
@@ -156,6 +218,25 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.get("/operator/api/console")
     async def operator_console_payload() -> dict[str, Any]:
         return service.console_payload()
+
+    @router.get("/operator/api/push/state")
+    async def operator_push_state() -> dict[str, Any]:
+        return service.push_state()
+
+    @router.post("/operator/api/push/subscribe")
+    async def operator_push_subscribe(payload: OperatorPushSubscriptionRequest) -> dict[str, Any]:
+        return service.register_push_subscription(
+            subscription=payload.subscription,
+            device_id=payload.device_id,
+            device_label=payload.device_label,
+            user_agent=payload.user_agent,
+            platform=payload.platform,
+            standalone=payload.standalone,
+        )
+
+    @router.post("/operator/api/push/unsubscribe")
+    async def operator_push_unsubscribe(payload: OperatorPushUnsubscribeRequest) -> dict[str, Any]:
+        return service.unregister_push_subscription(endpoint=payload.endpoint)
 
     @router.get("/operator/api/events")
     async def operator_events(limit: int = 200) -> list[dict[str, Any]]:
@@ -312,6 +393,10 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.post("/operator/actions/report")
     async def operator_report() -> dict[str, Any]:
         return service.trigger_report()
+
+    @router.post("/operator/actions/push-test")
+    async def operator_push_test(payload: OperatorPushTestRequest) -> dict[str, Any]:
+        return service.send_push_test(device_label=payload.device_label)
 
     @router.post("/operator/actions/debug-bundle")
     async def operator_debug_bundle(

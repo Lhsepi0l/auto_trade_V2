@@ -21,6 +21,48 @@
 
   <section id="action-feedback" class="feedback" hidden></section>
 
+  <section class="push-hero-card">
+    <div class="push-hero-copy">
+      <p class="eyebrow">MOBILE OPS</p>
+      <h2>아이폰 홈 화면 앱과 자체 푸시</h2>
+      <p class="subtitle">Discord/ntfy 없이, 이 콘솔 자체를 홈 화면 앱으로 설치하고 웹 푸시를 직접 받습니다.</p>
+      <div class="push-pill-row">
+        <span id="push-availability" class="pill">-</span>
+        <span id="push-runtime-provider" class="pill muted">-</span>
+        <span id="push-install-state" class="pill muted">-</span>
+      </div>
+    </div>
+    <div class="push-hero-panels">
+      <article class="push-panel push-panel-setup">
+        <h3>연결 상태</h3>
+        <dl class="kv push-kv">
+          <div><dt>서버</dt><dd id="push-server-status">-</dd></div>
+          <div><dt>provider</dt><dd id="push-provider-state">-</dd></div>
+          <div><dt>권한</dt><dd id="push-permission-state">-</dd></div>
+          <div><dt>구독</dt><dd id="push-subscription-state">-</dd></div>
+          <div><dt>기기 수</dt><dd id="push-subscription-count">-</dd></div>
+          <div><dt>최근 오류</dt><dd id="push-last-error">-</dd></div>
+        </dl>
+      </article>
+      <article class="push-panel push-panel-actions">
+        <h3>현재 기기 연결</h3>
+        <div class="field-row">
+          <label for="push-device-label">기기 라벨</label>
+          <input id="push-device-label" type="text" placeholder="예: 민수 iPhone 운영앱">
+        </div>
+        <div class="push-action-row">
+          <button id="push-subscribe-btn" class="btn primary" type="button">푸시 연결</button>
+          <button id="push-unsubscribe-btn" class="btn ghost" type="button">연결 해제</button>
+          <button id="push-test-btn" class="btn accent" type="button">테스트 발송</button>
+        </div>
+        <div class="push-hint-box">
+          <p id="push-install-hint" class="push-hint-text">-</p>
+          <p id="push-device-hint" class="push-hint-meta">-</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
   <section class="grid">
     <article class="card engine-card">
       <h2>엔진 상태</h2>
@@ -77,6 +119,16 @@
         <div><dt>에러</dt><dd id="report-error">-</dd></div>
       </dl>
       <pre id="report-summary">-</pre>
+    </article>
+
+    <article class="card wide push-devices-card">
+      <div class="card-head">
+        <div>
+          <h2>연결된 기기</h2>
+          <p class="card-subtitle">현재 웹 푸시를 받을 수 있는 기기와 마지막 전달 상태를 확인합니다.</p>
+        </div>
+      </div>
+      <div id="push-device-list" class="push-device-list"></div>
     </article>
 
     <article class="card event-main activity-card">

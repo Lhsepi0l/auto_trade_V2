@@ -6,6 +6,8 @@ const confirmModalMessageEl = document.getElementById("confirm-modal-message");
 const confirmModalOkEl = document.getElementById("confirm-ok");
 const confirmModalCancelEl = document.getElementById("confirm-cancel");
 const confirmModalBackdropEl = document.getElementById("confirm-modal-backdrop");
+const operatorSwUrl = document.body?.dataset.operatorSwUrl || "/operator/sw.js";
+const operatorScope = document.body?.dataset.operatorScope || "/operator/";
 
 const EVENT_CATEGORY_LABELS = {
   status: "상태",
@@ -27,6 +29,8 @@ let logsState = {
   hasNext: false,
 };
 let activeConfirmResolver = null;
+let lastConsolePayload = null;
+let pushRegistration = null;
 const INPUT_DIRTY_WINDOW_MS = 8000;
 
 function fmtNumber(value, digits = 4) {
@@ -83,6 +87,176 @@ function setSelectValue(id, value) {
       el.prepend(option);
     }
     el.value = normalized;
+  }
+}
+
+function isPushSupported() {
+  return (
+    window.isSecureContext &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+}
+
+function isStandaloneMode() {
+  return Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone);
+}
+
+function getPushDeviceId() {
+  try {
+    const key = "auto-trader-push-device-id";
+    const existing = window.localStorage.getItem(key);
+    if (existing) {
+      return existing;
+    }
+    const created =
+      window.crypto?.randomUUID?.() || `device-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(key, created);
+    return created;
+  } catch (_error) {
+    return `device-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function buildDefaultDeviceLabel() {
+  if (isIosDevice()) {
+    return isStandaloneMode() ? "iPhone 운영앱" : "iPhone Safari";
+  }
+  return isStandaloneMode() ? "운영앱" : "브라우저 기기";
+}
+
+function pushPermissionLabel(permission) {
+  if (!isPushSupported()) {
+    return "이 브라우저에서는 미지원";
+  }
+  return {
+    granted: "허용됨",
+    denied: "차단됨",
+    default: "미결정",
+  }[permission || "default"] || String(permission || "-");
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replaceAll("-", "+").replaceAll("_", "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from(rawData, (char) => char.charCodeAt(0));
+}
+
+async function ensurePushRegistration() {
+  if (!isPushSupported()) {
+    return null;
+  }
+  if (pushRegistration) {
+    return pushRegistration;
+  }
+  const registration = await navigator.serviceWorker.register(operatorSwUrl, { scope: operatorScope });
+  pushRegistration = await navigator.serviceWorker.ready;
+  return pushRegistration || registration;
+}
+
+async function currentPushSubscription() {
+  const registration = await ensurePushRegistration();
+  if (!registration) {
+    return null;
+  }
+  return registration.pushManager.getSubscription();
+}
+
+function renderPushDevices(items) {
+  const wrap = document.getElementById("push-device-list");
+  if (!wrap) {
+    return;
+  }
+  wrap.innerHTML = "";
+  if (!Array.isArray(items) || items.length === 0) {
+    wrap.innerHTML = '<div class="event-empty">아직 연결된 기기가 없습니다. 홈 화면 앱에서 푸시 연결을 눌러 주세요.</div>';
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = `push-device-row ${item?.active ? "is-active" : ""}`.trim();
+    row.innerHTML = `
+      <div class="push-device-top">
+        <div class="push-device-name">${escapeHtml(fmtMaybe(item?.device_label || "이름 없는 기기"))}</div>
+        <div class="push-device-meta">
+          <span class="push-chip ${item?.active ? "active" : "offline"}">${item?.active ? "연결중" : "비활성"}</span>
+          <span class="push-chip">${escapeHtml(fmtMaybe(item?.platform || "platform 미상"))}</span>
+          <span class="push-chip">${item?.standalone ? "홈 화면 앱" : "브라우저"}</span>
+        </div>
+      </div>
+      <div class="push-device-meta">
+        <span>최근 성공: ${escapeHtml(fmtMaybe(item?.last_success_at || "-"))}</span>
+        <span>최근 실패: ${escapeHtml(fmtMaybe(item?.last_failure_at || "-"))}</span>
+        <span>엔드포인트: ${escapeHtml(fmtMaybe(item?.endpoint_hint || "-"))}</span>
+      </div>
+      <div class="event-subline">${escapeHtml(fmtMaybe(item?.last_error || "최근 오류 없음"))}</div>
+    `;
+    wrap.appendChild(row);
+  }
+}
+
+async function renderPushState(push) {
+  const serverReady = Boolean(push?.available);
+  const permission = isPushSupported() ? Notification.permission : "unsupported";
+  const standalone = isStandaloneMode();
+  const subscription = await currentPushSubscription().catch(() => null);
+  const hasSubscription = Boolean(subscription);
+  const runtimeProvider = String(push?.runtime_provider || "none");
+  const runtimeEnabled = Boolean(push?.runtime_provider_enabled);
+
+  setText("push-availability", serverReady ? "Web Push 준비됨" : "Web Push 준비 필요");
+  setText(
+    "push-runtime-provider",
+    runtimeEnabled ? `${runtimeProvider} 운영 채널` : `${runtimeProvider} 운영 채널 아님`
+  );
+  setText("push-install-state", standalone ? "홈 화면 앱" : "브라우저 탭");
+  setText("push-server-status", serverReady ? "준비됨" : push?.last_error || "미준비");
+  setText("push-provider-state", runtimeEnabled ? "실운영 알림 사용중" : "테스트/대기 상태");
+  setText("push-permission-state", pushPermissionLabel(permission));
+  setText("push-subscription-state", hasSubscription ? "현재 기기 연결됨" : "현재 기기 미연결");
+  setText("push-subscription-count", push?.subscription_count);
+  setText("push-last-error", push?.last_error);
+  renderPushDevices(push?.devices || []);
+
+  const labelInput = document.getElementById("push-device-label");
+  if (labelInput && !labelInput.value) {
+    labelInput.value = buildDefaultDeviceLabel();
+  }
+  const installHint = document.getElementById("push-install-hint");
+  const deviceHint = document.getElementById("push-device-hint");
+  if (installHint) {
+    if (isIosDevice() && !standalone) {
+      installHint.textContent =
+        "iPhone에서는 Safari 하단 공유 버튼에서 '홈 화면에 추가'를 한 뒤, 홈 화면 앱으로 다시 열어야 푸시 권한을 받을 수 있습니다.";
+    } else if (!isPushSupported()) {
+      installHint.textContent = "현재 브라우저/보안 상태에서는 Web Push를 사용할 수 없습니다. HTTPS와 최신 브라우저가 필요합니다.";
+    } else {
+      installHint.textContent =
+        "푸시 연결을 누르면 현재 기기를 운영용 수신 기기로 등록합니다. 연결 뒤에는 테스트 발송으로 바로 확인할 수 있습니다.";
+    }
+  }
+  if (deviceHint) {
+    deviceHint.textContent = `현재 기기 ID: ${getPushDeviceId()} / 라벨 추천: ${buildDefaultDeviceLabel()}`;
+  }
+
+  const subscribeBtn = document.getElementById("push-subscribe-btn");
+  const unsubscribeBtn = document.getElementById("push-unsubscribe-btn");
+  const testBtn = document.getElementById("push-test-btn");
+  const canSubscribe = serverReady && isPushSupported() && (!isIosDevice() || standalone);
+  if (subscribeBtn) {
+    subscribeBtn.disabled = !canSubscribe || permission === "denied";
+  }
+  if (unsubscribeBtn) {
+    unsubscribeBtn.disabled = !hasSubscription;
+  }
+  if (testBtn) {
+    testBtn.disabled = !serverReady;
   }
 }
 
@@ -476,6 +650,7 @@ async function loadConsole() {
     throw new Error(`console_load_failed:${resp.status}`);
   }
   const payload = await resp.json();
+  lastConsolePayload = payload;
 
   setText("runtime-mode", `${fmtMaybe(payload.runtime?.mode)} / ${fmtMaybe(payload.runtime?.env)}`);
   setText("runtime-profile", payload.runtime?.profile);
@@ -625,6 +800,8 @@ async function loadConsole() {
   if (inlineTickBtn) {
     inlineTickBtn.disabled = !payload.scheduler?.can_tick;
   }
+
+  await renderPushState(payload.push || {});
 }
 
 async function postAction(path, body) {
@@ -733,6 +910,73 @@ function bindActionButtons() {
         message: "현재 운영 상태 기준으로 수동 리포트를 생성하고 전송합니다.",
       },
       () => postAction("/operator/actions/report")
+    ).catch((error) => setFeedback(String(error), "failed"));
+  });
+  document.getElementById("push-subscribe-btn")?.addEventListener("click", async () => {
+    try {
+      const push = lastConsolePayload?.push || {};
+      if (!push.public_key) {
+        throw new Error(push?.last_error || "webpush_public_key_missing");
+      }
+      if (isIosDevice() && !isStandaloneMode()) {
+        throw new Error("iphone_home_screen_required");
+      }
+      const registration = await ensurePushRegistration();
+      if (!registration) {
+        throw new Error("webpush_unsupported");
+      }
+      let permission = Notification.permission;
+      if (permission !== "granted") {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== "granted") {
+        throw new Error(`notification_permission_${permission}`);
+      }
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(String(push.public_key)),
+        });
+      }
+      const deviceLabel = document.getElementById("push-device-label")?.value?.trim() || buildDefaultDeviceLabel();
+      await postAction("/operator/api/push/subscribe", {
+        subscription: subscription.toJSON(),
+        device_id: getPushDeviceId(),
+        device_label: deviceLabel,
+        user_agent: navigator.userAgent,
+        platform: navigator.platform || "web",
+        standalone: isStandaloneMode(),
+      });
+    } catch (error) {
+      setFeedback(String(error), "failed");
+    }
+  });
+  document.getElementById("push-unsubscribe-btn")?.addEventListener("click", async () => {
+    try {
+      const subscription = await currentPushSubscription();
+      if (!subscription) {
+        throw new Error("push_not_subscribed");
+      }
+      const endpoint = subscription.endpoint;
+      try {
+        await subscription.unsubscribe();
+      } catch (_error) {
+        // Keep server state cleanup even if browser-side unsubscribe returns false.
+      }
+      await postAction("/operator/api/push/unsubscribe", { endpoint });
+    } catch (error) {
+      setFeedback(String(error), "failed");
+    }
+  });
+  document.getElementById("push-test-btn")?.addEventListener("click", () => {
+    const deviceLabel = document.getElementById("push-device-label")?.value?.trim() || buildDefaultDeviceLabel();
+    runConfirmedAction(
+      {
+        title: "현재 기기로 테스트 푸시를 보낼까요?",
+        message: `${deviceLabel} 기준으로 웹 푸시 테스트를 발송합니다.`,
+      },
+      () => postAction("/operator/actions/push-test", { device_label: deviceLabel })
     ).catch((error) => setFeedback(String(error), "failed"));
   });
 }

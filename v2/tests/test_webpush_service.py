@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from v2.notify import NotificationMessage
+from v2.notify.webpush import WebPushService
+from v2.storage import RuntimeStorage
+
+
+def test_webpush_service_generates_and_persists_vapid_keys(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage)
+
+    availability = service.availability_snapshot()
+    marker = storage.load_runtime_marker(marker_key="webpush_vapid_keys")
+
+    assert availability["available"] is True
+    assert availability["public_key"]
+    assert marker is not None
+    assert marker["public_key"] == availability["public_key"]
+    assert "BEGIN PRIVATE KEY" in str(marker["private_key_pem"])
+
+
+def test_webpush_service_deactivates_gone_subscription(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage)
+    service.register_subscription(
+        subscription={
+            "endpoint": "https://example.com/push/1",
+            "expirationTime": None,
+            "keys": {"p256dh": "abc", "auth": "def"},
+        },
+        device_id="device-1",
+        device_label="민수 iPhone 운영앱",
+        user_agent="Mozilla/5.0",
+        platform="iPhone",
+        standalone=True,
+    )
+
+    class _GoneError(Exception):
+        def __init__(self) -> None:
+            self.response = type("Response", (), {"status_code": 410, "text": "Gone"})()
+            super().__init__("410 Gone")
+
+    def _raise_gone(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        _ = kwargs
+        raise _GoneError()
+
+    monkeypatch.setattr(service, "_dispatch", _raise_gone)
+
+    result = service.send(
+        NotificationMessage(title="테스트", body="gone subscription cleanup")
+    )
+    rows = storage.list_webpush_subscriptions(active_only=False)
+
+    assert result.sent is False
+    assert rows[0]["active"] == 0
+    assert "Gone" in str(rows[0]["last_error"])
+
+
+def test_webpush_service_records_successful_send(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage)
+    service.register_subscription(
+        subscription={
+            "endpoint": "https://example.com/push/1",
+            "expirationTime": None,
+            "keys": {"p256dh": "abc", "auth": "def"},
+        },
+        device_id="device-1",
+        device_label="민수 iPhone 운영앱",
+        user_agent="Mozilla/5.0",
+        platform="iPhone",
+        standalone=True,
+    )
+
+    monkeypatch.setattr(service, "_dispatch", lambda **kwargs: None)
+
+    result = service.send_test_notification(device_label="민수 iPhone 운영앱")
+    rows = storage.list_webpush_subscriptions(active_only=True)
+
+    assert result.sent is True
+    assert result.status == "sent"
+    assert rows[0]["last_success_at"] is not None

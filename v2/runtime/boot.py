@@ -14,7 +14,7 @@ from v2.control import build_runtime_controller
 from v2.core import Event, EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.exchange import BackoffPolicy, BinanceRESTClient
-from v2.notify import RuntimeNotificationContext, build_notifier_from_config
+from v2.notify import RuntimeNotificationContext, WebPushService, build_notifier_from_config
 from v2.notify.runtime_events import build_runtime_boot_notification
 from v2.risk import KillSwitch, RiskManager
 from v2.storage import RuntimeStorage
@@ -159,7 +159,15 @@ def run_runtime_preflight(cfg: EffectiveConfig, *, host: str, port: int) -> int:
                 state_provider=runtime_state_provider,
             ):
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
-            notifier = build_notifier_from_config(cfg)
+            webpush_service = WebPushService(
+                storage=storage,
+                subject=str(cfg.secrets.webpush_subject or "mailto:autotrader@local.invalid"),
+            )
+            notifier = build_notifier_from_config(
+                cfg,
+                webpush_send=webpush_service.send,
+                webpush_public_key=webpush_service.availability_snapshot().get("public_key"),
+            )
             market_data_state: dict[str, Any] = {
                 "last_market_data_at": None,
                 "last_market_symbol_count": 0,
@@ -301,7 +309,15 @@ def boot_runtime(cfg: EffectiveConfig, *, loop_enabled: bool = False, max_cycles
             )
             _ = brackets.levels(entry_price=100.0)
 
-            notifier = build_notifier_from_config(cfg)
+            webpush_service = WebPushService(
+                storage=storage,
+                subject=str(cfg.secrets.webpush_subject or "mailto:autotrader@local.invalid"),
+            )
+            notifier = build_notifier_from_config(
+                cfg,
+                webpush_send=webpush_service.send,
+                webpush_public_key=webpush_service.availability_snapshot().get("public_key"),
+            )
             _ = notifier.send_notification(
                 build_runtime_boot_notification(
                     context=RuntimeNotificationContext(

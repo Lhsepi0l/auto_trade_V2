@@ -13,7 +13,7 @@ from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 
 
-def _build_operator_app(tmp_path):  # type: ignore[no-untyped-def]
+def _build_operator_app(tmp_path, *, with_webpush: bool = False):  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_verified_q070",
         mode="shadow",
@@ -45,6 +45,49 @@ def _build_operator_app(tmp_path):  # type: ignore[no-untyped-def]
         notifier=Notifier(enabled=False),
         rest_client=None,
     )
+    if with_webpush:
+        class _FakeWebPushService:
+            def __init__(self) -> None:
+                self._subscriptions: list[dict[str, object]] = []
+
+            def availability_snapshot(self) -> dict[str, object]:
+                return {
+                    "available": True,
+                    "public_key": "PUBLIC_KEY",
+                    "subscription_count": len(self._subscriptions),
+                    "last_error": None,
+                }
+
+            def list_subscriptions(self) -> list[dict[str, object]]:
+                return list(self._subscriptions)
+
+            def register_subscription(self, **kwargs) -> dict[str, object]:  # type: ignore[no-untyped-def]
+                self._subscriptions.append(
+                    {
+                        "device_label": kwargs.get("device_label") or "현재 기기",
+                        "platform": kwargs.get("platform") or "web",
+                        "active": True,
+                        "standalone": bool(kwargs.get("standalone")),
+                        "endpoint_hint": "https://example...",
+                        "last_success_at": None,
+                        "last_failure_at": None,
+                        "last_error": None,
+                    }
+                )
+                return {"ok": True, "subscription_count": len(self._subscriptions)}
+
+            def unregister_subscription(self, *, endpoint: str) -> dict[str, object]:
+                _ = endpoint
+                self._subscriptions.clear()
+                return {"ok": True, "subscription_count": 0}
+
+            def send_test_notification(self, *, device_label: str | None = None):  # type: ignore[no-untyped-def]
+                _ = device_label
+                from v2.notify import WebPushDispatchResult
+
+                return WebPushDispatchResult(sent=True, error=None, status="sent")
+
+        controller.webpush_service = _FakeWebPushService()
     return create_control_http_app(controller=controller, enable_operator_web=True)
 
 
@@ -56,6 +99,7 @@ def test_operator_console_route_renders(tmp_path) -> None:  # type: ignore[no-un
     assert response.status_code == 200
     assert "웹 운영 콘솔" in response.text
     assert "/operator/static/operator.js" in response.text
+    assert "/operator/manifest.webmanifest" in response.text
 
 
 def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -69,6 +113,47 @@ def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyp
     assert "전체 추출" in response.text
     assert "/operator/api/logs" not in response.text
     assert 'data-operator-page="logs"' in response.text
+
+
+def test_operator_manifest_and_push_routes_work(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    client = TestClient(_build_operator_app(tmp_path, with_webpush=True))
+
+    manifest = client.get("/operator/manifest.webmanifest")
+    service_worker = client.get("/operator/sw.js")
+    payload = client.get("/operator/api/console")
+    subscribe = client.post(
+        "/operator/api/push/subscribe",
+        json={
+            "subscription": {
+                "endpoint": "https://example.com/push/1",
+                "expirationTime": None,
+                "keys": {"p256dh": "abc", "auth": "def"},
+            },
+            "device_id": "device-1",
+            "device_label": "민수 iPhone 운영앱",
+            "user_agent": "Mozilla/5.0",
+            "platform": "iPhone",
+            "standalone": True,
+        },
+    )
+    test_push = client.post("/operator/actions/push-test", json={"device_label": "민수 iPhone 운영앱"})
+    unsubscribe = client.post(
+        "/operator/api/push/unsubscribe",
+        json={"endpoint": "https://example.com/push/1"},
+    )
+
+    assert manifest.status_code == 200
+    assert manifest.json()["display"] == "standalone"
+    assert service_worker.status_code == 200
+    assert "self.addEventListener(\"push\"" in service_worker.text
+    assert payload.status_code == 200
+    assert payload.json()["push"]["available"] is True
+    assert subscribe.status_code == 200
+    assert subscribe.json()["action"] == "push_subscribe"
+    assert test_push.status_code == 200
+    assert test_push.json()["action"] == "push_test"
+    assert unsubscribe.status_code == 200
+    assert unsubscribe.json()["action"] == "push_unsubscribe"
 
 
 def test_operator_console_payload_and_actions(tmp_path) -> None:  # type: ignore[no-untyped-def]
