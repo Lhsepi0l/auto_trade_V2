@@ -258,6 +258,18 @@ async function ensurePushRegistration() {
       installing: Boolean(registration.installing),
     },
   });
+  if (registration.active) {
+    pushRegistration = registration;
+    await postClientLog({
+      title: "push_sw_active_shortcut",
+      mainText: "service_worker_active_shortcut",
+      subText: registration.scope,
+      context: {
+        controller: Boolean(navigator.serviceWorker.controller),
+      },
+    });
+    return pushRegistration;
+  }
   const readyRegistration = await Promise.race([
     navigator.serviceWorker.ready,
     new Promise((_, reject) =>
