@@ -241,7 +241,6 @@ class RuntimeController:
         scheduler: Scheduler,
         order_manager: OrderManager,
         notifier: Notifier,
-        webpush_service: Any | None = None,
         rest_client: Any | None = None,
         user_stream_manager: Any | None = None,
         market_data_state: dict[str, Any] | None = None,
@@ -255,7 +254,6 @@ class RuntimeController:
         self.scheduler = scheduler
         self.order_manager = order_manager
         self.notifier = notifier
-        self.webpush_service = webpush_service
         self.rest_client = rest_client
         self.user_stream_manager = user_stream_manager
         self._market_data_state = market_data_state if market_data_state is not None else {}
@@ -266,13 +264,6 @@ class RuntimeController:
         if (not self.notifier.enabled) and str(self.notifier.ntfy_topic or "").strip():
             self.notifier.enabled = True
         if (
-            str(self.notifier.provider or "none").strip().lower() == "none"
-            and bool(getattr(self.webpush_service, "availability_snapshot", None))
-            and bool((self.webpush_service.availability_snapshot() or {}).get("available"))
-            and bool(self.cfg.secrets.webpush_enabled)
-        ):
-            self.notifier.provider = "webpush"
-        elif (
             str(self.notifier.provider or "none").strip().lower() == "none"
             and str(self.notifier.ntfy_topic or "").strip()
         ):
@@ -324,8 +315,6 @@ class RuntimeController:
         self._cycle_seq = 0
         self._cycle_done_seq = 0
         self._last_scheduler_cycle_event_mono: float | None = None
-        self._last_alpha_drift_setup_key: str | None = None
-        self._last_alpha_drift_confirm_key: str | None = None
         self._boot_notification_muted = True
         self._state_uncertain = False
         self._state_uncertain_reason: str | None = None
@@ -499,7 +488,6 @@ class RuntimeController:
             event=event,
             fields=fields,
             context=self._notification_context(),
-            provider=self.notifier.resolved_provider(),
         )
         if notification is not None and notify and not self._boot_notification_muted:
             _ = self.notifier.send_notification(notification)
@@ -1667,7 +1655,6 @@ class RuntimeController:
                 "trigger_missing",
                 "quality_score_v2_missing",
                 "quality_score_missing",
-                "short_overextension_risk",
                 "breakout_efficiency_missing",
                 "breakout_stability_missing",
                 "breakout_stability_edge_missing",
@@ -3543,7 +3530,6 @@ def build_runtime_controller(
     scheduler: Scheduler,
     event_bus: EventBus,
     notifier: Notifier,
-    webpush_service: Any | None = None,
     rest_client: Any | None,
     user_stream_manager: Any | None = None,
     market_data_state: dict[str, Any] | None = None,
@@ -3559,7 +3545,6 @@ def build_runtime_controller(
         scheduler=scheduler,
         order_manager=OrderManager(event_bus=event_bus),
         notifier=notifier,
-        webpush_service=webpush_service,
         rest_client=rest_client,
         user_stream_manager=user_stream_manager,
         market_data_state=market_data_state,

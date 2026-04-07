@@ -59,9 +59,6 @@ def _action_label(action: str) -> str:
         "risk_basic": "리스크 기본 설정",
         "risk_advanced": "리스크 고급 설정",
         "notify_interval": "상태 알림 주기 변경",
-        "push_subscribe": "모바일 푸시 연결",
-        "push_unsubscribe": "모바일 푸시 해제",
-        "push_test": "모바일 푸시 테스트",
         "preset": "프리셋 적용",
         "profile_template": "프로파일 템플릿 적용",
         "trailing_config": "트레일링 설정",
@@ -139,19 +136,6 @@ def _action_summary(action: str, raw_result: dict[str, Any], context: dict[str, 
         if error:
             return f"리포트 생성 완료, 전송 실패: {error}"
         return "리포트 생성 완료"
-    if action == "push_subscribe":
-        device_label = str(context.get("device_label") or "").strip() or "현재 기기"
-        return f"{device_label} 푸시 구독 연결 완료"
-    if action == "push_unsubscribe":
-        return "현재 기기 푸시 구독 해제"
-    if action == "push_test":
-        sent = bool(raw_result.get("notifier_sent"))
-        if sent:
-            return "모바일 푸시 테스트 전송 완료"
-        error = str(raw_result.get("notifier_error") or "").strip()
-        if error:
-            return f"모바일 푸시 테스트 실패: {error}"
-        return "모바일 푸시 테스트 처리 완료"
     if action == "debug_bundle":
         mode_label = "전체" if bool(raw_result.get("full_export")) else "빠른"
         download_url = str(raw_result.get("download_url") or "").strip()

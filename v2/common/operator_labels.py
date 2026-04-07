@@ -58,7 +58,6 @@ REASON_LABELS_KO: dict[str, str] = {
     "missing_market": "시장 컨텍스트 데이터 미도착",
     "quality_score_missing": "확장 품질 점수 기준 미충족",
     "quality_score_v2_missing": "확장 품질 점수 V2 기준 미충족",
-    "short_overextension_risk": "급락 과확장 추격 위험",
     "breakout_efficiency_missing": "돌파 효율 기준 미충족",
     "breakout_stability_missing": "돌파 안정성 기준 미충족",
     "breakout_stability_edge_missing": "돌파 안정성 엣지 기준 미충족",

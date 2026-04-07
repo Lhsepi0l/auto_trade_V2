@@ -216,32 +216,6 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
         if fields.get("entry_price") is not None:
             detail_parts.append(f"entry={fields.get('entry_price')}")
         sub_text = " / ".join(detail_parts) if detail_parts else None
-    elif raw_event == "alpha_drift_setup_queued":
-        category = "decision"
-        title = f"{symbol or '-'} drift setup 대기"
-        main_text = "alpha_drift / setup queued"
-        parts = []
-        if fields.get("setup_open_time_ms") is not None:
-            parts.append(f"setup_open_time_ms={fields.get('setup_open_time_ms')}")
-        if fields.get("setup_expiry_bars") is not None:
-            parts.append(f"expiry={fields.get('setup_expiry_bars')}")
-        sub_text = " / ".join(parts) if parts else None
-    elif raw_event == "alpha_drift_confirmed":
-        category = "decision"
-        side = str(fields.get("side") or "").strip().upper()
-        side_label = "LONG" if side == "BUY" else "SHORT" if side == "SELL" else side or "-"
-        title = f"{symbol or '-'} drift confirm"
-        main_text = f"alpha_drift / {side_label} confirm"
-        parts = []
-        if fields.get("action") is not None:
-            parts.append(str(fields.get("action")))
-        if fields.get("score") is not None:
-            parts.append(f"score={fields.get('score')}")
-        if fields.get("entry_price") is not None:
-            parts.append(f"entry={fields.get('entry_price')}")
-        if fields.get("setup_open_time_ms") is not None:
-            parts.append(f"setup_open_time_ms={fields.get('setup_open_time_ms')}")
-        sub_text = " / ".join(parts) if parts else None
     elif raw_event == "position_reduced":
         category = "position"
         title = f"{symbol or '-'} 부분청산"

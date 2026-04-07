@@ -59,7 +59,7 @@ def test_alpha_verified_q070_profile_loads() -> None:
     )
     enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
     assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
-    assert enabled[0].params["enabled_alphas"] == ["alpha_expansion", "alpha_drift"]
+    assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
     assert enabled[0].params["squeeze_percentile_threshold"] == 0.35
     assert enabled[0].params["expansion_buffer_bps"] == 1.5
     assert enabled[0].params["expansion_body_ratio_min"] == 0.18
@@ -67,11 +67,6 @@ def test_alpha_verified_q070_profile_loads() -> None:
     assert enabled[0].params["expansion_width_expansion_min"] == 0.02
     assert enabled[0].params["min_volume_ratio_15m"] == 0.8
     assert enabled[0].params["expansion_quality_score_v2_min"] == 0.70
-    assert enabled[0].params["expansion_short_break_distance_atr_max"] == 1.3
-    assert enabled[0].params["drift_side_mode"] == "LONG"
-    assert enabled[0].params["drift_setup_expiry_bars"] == 8
-    assert enabled[0].params["drift_take_profit_r"] == 1.8
-    assert enabled[0].params["drift_time_stop_bars"] == 16
 
 
 def test_alpha_live_candidate_profile_loads() -> None:
@@ -83,33 +78,13 @@ def test_alpha_live_candidate_profile_loads() -> None:
     )
     enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
     assert [entry.name for entry in enabled] == ["ra_2026_alpha_v2"]
-    assert enabled[0].params["enabled_alphas"] == ["alpha_expansion", "alpha_drift"]
+    assert enabled[0].params["enabled_alphas"] == ["alpha_expansion"]
     assert cfg.behavior.exchange.market_intervals == ["15m", "1h", "4h"]
     assert enabled[0].params["expansion_quality_score_v2_min"] == 0.62
-    assert enabled[0].params["expansion_short_break_distance_atr_max"] == 1.3
-    assert enabled[0].params["drift_side_mode"] == "LONG"
-    assert enabled[0].params["drift_setup_expiry_bars"] == 8
-    assert enabled[0].params["drift_take_profit_r"] == 1.8
-    assert enabled[0].params["drift_time_stop_bars"] == 16
     assert cfg.behavior.risk.max_leverage == 5.0
     assert cfg.behavior.risk.max_exposure_pct == 0.10
     assert cfg.behavior.risk.daily_loss_limit_pct == -0.015
     assert cfg.behavior.risk.dd_limit_pct == -0.12
-
-
-def test_ebc_research_profile_loads() -> None:
-    cfg = load_effective_config(
-        profile="ebc_v1_continuation_research",
-        mode="shadow",
-        env="testnet",
-        env_map={},
-    )
-    enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
-    assert [entry.name for entry in enabled] == ["ebc_v1_continuation"]
-    assert cfg.behavior.exchange.market_intervals == ["5m", "30m", "2h", "12h"]
-    assert enabled[0].params["cci_pullback_floor"] == 0.0
-    assert enabled[0].params["cci_trigger_level"] == 50.0
-    assert enabled[0].params["squeeze_width_frac_max"] == 0.020
 
 
 def test_shadow_mode_does_not_require_keys() -> None:

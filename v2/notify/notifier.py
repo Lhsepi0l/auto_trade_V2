@@ -4,11 +4,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 
 import httpx
 
-from .models import NotificationMessage, WebPushDispatchResult
+from .models import NotificationMessage
 
 
 @dataclass
@@ -21,11 +21,6 @@ class Notifier:
     ntfy_token: str | None = None
     ntfy_tags: tuple[str, ...] | list[str] | str | None = None
     ntfy_priority: str | int | None = None
-    webpush_send: Callable[[NotificationMessage], WebPushDispatchResult] | None = field(
-        default=None,
-        repr=False,
-    )
-    webpush_public_key: str | None = None
     timeout_sec: float = 5.0
     _delivery_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _last_sent_mono_by_key: dict[str, float] = field(default_factory=dict, init=False, repr=False)
@@ -65,7 +60,7 @@ class Notifier:
         return provider
 
     def supports_periodic_status(self) -> bool:
-        return self.resolved_provider() not in {"ntfy", "webpush"}
+        return self.resolved_provider() != "ntfy"
 
     def delivery_snapshot(self) -> dict[str, Any]:
         with self._delivery_lock:
@@ -114,7 +109,7 @@ class Notifier:
                     suppress_window_sec=suppress_window_sec,
                 )
             except httpx.HTTPError as exc:
-                error = self._http_error_text(exc)
+                error = f"{type(exc).__name__}: {exc}"
                 print(f"[notify] discord_send_failed: {notification.as_text()}")
                 self._record_delivery(
                     status="failed",
@@ -152,7 +147,7 @@ class Notifier:
                     suppress_window_sec=suppress_window_sec,
                 )
             except httpx.HTTPError as exc:
-                error = self._http_error_text(exc)
+                error = f"{type(exc).__name__}: {exc}"
                 print(f"[notify] ntfy_send_failed: {notification.as_text()}")
                 self._record_delivery(
                     status="failed",
@@ -164,58 +159,6 @@ class Notifier:
                     suppressed_count=0,
                 )
                 return Notifier.SendResult(sent=False, error=error, status="failed")
-        if provider == "webpush":
-            if self.webpush_send is None:
-                self._record_delivery(
-                    status="failed",
-                    provider=provider,
-                    message=notification,
-                    error="webpush_unconfigured",
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                    suppressed_count=0,
-                )
-                return Notifier.SendResult(
-                    sent=False,
-                    error="webpush_unconfigured",
-                    status="failed",
-                )
-            try:
-                dispatch = self.webpush_send(notification)
-            except Exception as exc:  # noqa: BLE001
-                error = f"webpush_dispatch_error: {type(exc).__name__}: {exc}"
-                self._record_delivery(
-                    status="failed",
-                    provider=provider,
-                    message=notification,
-                    error=error,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                    suppressed_count=0,
-                )
-                return Notifier.SendResult(sent=False, error=error, status="failed")
-            if dispatch.sent and dispatch.error is None and dispatch.status == "sent":
-                return self._record_send_success(
-                    provider=provider,
-                    message=notification,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                )
-            self._record_delivery(
-                status=dispatch.status,
-                provider=provider,
-                message=notification,
-                error=dispatch.error,
-                dedupe_key=dedupe_key,
-                suppress_window_sec=suppress_window_sec,
-                suppressed_count=0,
-                sent=bool(dispatch.sent),
-            )
-            return Notifier.SendResult(
-                sent=dispatch.sent,
-                error=dispatch.error,
-                status=dispatch.status,
-            )
 
         self._record_delivery(
             status="failed",
@@ -300,25 +243,6 @@ class Notifier:
                 params=params,
             )
             response.raise_for_status()
-
-    @staticmethod
-    def _http_error_text(exc: httpx.HTTPError) -> str:
-        parts = [type(exc).__name__]
-        response = getattr(exc, "response", None)
-        if response is not None:
-            status_code = getattr(response, "status_code", None)
-            if status_code is not None:
-                parts.append(f"status={status_code}")
-            try:
-                body = str(response.text or "").strip()
-            except Exception:  # noqa: BLE001
-                body = ""
-            if body:
-                parts.append(Notifier._preview(body, limit=240))
-        message = str(exc).strip()
-        if message:
-            parts.append(message)
-        return ": ".join(parts)
 
     @staticmethod
     def _utcnow_iso() -> str:
@@ -424,9 +348,7 @@ class Notifier:
         dedupe_key: str | None,
         suppress_window_sec: float | None,
         suppressed_count: int,
-        sent: bool = False,
     ) -> None:
-        sent_at = self._utcnow_iso() if sent else None
         with self._delivery_lock:
             self._last_delivery.update(
                 {
@@ -435,7 +357,6 @@ class Notifier:
                     "periodic_status_enabled": self.supports_periodic_status(),
                     "last_status": status,
                     "last_attempt_at": self._utcnow_iso(),
-                    "last_sent_at": sent_at if sent_at is not None else self._last_delivery.get("last_sent_at"),
                     "last_event_type": message.event_type,
                     "last_title": str(message.title or "").strip() or None,
                     "last_body_preview": self._preview(message.body),

@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 
 from v2.config.loader import load_effective_config
-from v2.notify import NotificationMessage, WebPushDispatchResult, build_notifier_from_config
+from v2.notify import NotificationMessage, build_notifier_from_config
 from v2.notify.notifier import Notifier
 
 
@@ -109,32 +109,6 @@ def test_build_notifier_from_config_prefers_ntfy_when_topic_present() -> None:
     assert notifier.provider == "ntfy"
     assert notifier.ntfy_base_url == "https://ntfy.sh"
     assert notifier.ntfy_topic == "ops-alerts"
-
-
-def test_build_notifier_from_config_prefers_webpush_when_enabled() -> None:
-    cfg = load_effective_config(
-        profile="ra_2026_alpha_v2_expansion_live_candidate",
-        mode="shadow",
-        env="testnet",
-        env_map={
-            "WEBPUSH_ENABLED": "true",
-        },
-    )
-
-    notifier = build_notifier_from_config(
-        cfg,
-        webpush_send=lambda message: WebPushDispatchResult(  # type: ignore[return-value]
-            sent=bool(message.title),
-            error=None,
-            status="sent",
-        ),
-        webpush_public_key="PUBLIC_KEY",
-    )
-
-    assert notifier.enabled is True
-    assert notifier.provider == "webpush"
-    assert notifier.webpush_public_key == "PUBLIC_KEY"
-    assert notifier.supports_periodic_status() is False
 
 
 def test_notifier_disabled_notification_path_returns_disabled() -> None:
@@ -266,32 +240,6 @@ def test_notifier_ntfy_publish_uses_hosted_headers(monkeypatch) -> None:  # type
     assert snapshot["last_event_type"] is None
 
 
-def test_notifier_webpush_records_partial_delivery_without_clearing_last_sent_at() -> None:
-    notifier = Notifier(
-        enabled=True,
-        provider="webpush",
-        webpush_public_key="PUBLIC_KEY",
-        webpush_send=lambda _message: WebPushDispatchResult(
-            sent=True,
-            error="partial_failure:1",
-            status="partial",
-        ),
-    )
-
-    result = notifier.send_notification(
-        NotificationMessage(
-            title="웹 푸시 테스트",
-            body="현재 기기에서 수신 여부를 확인합니다.",
-        )
-    )
-
-    assert result.sent is True
-    assert result.status == "partial"
-    snapshot = notifier.delivery_snapshot()
-    assert snapshot["last_status"] == "partial"
-    assert snapshot["last_sent_at"] is not None
-
-
 def test_notifier_suppresses_duplicate_dedupe_key_within_window(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[str] = []
     now = {"value": 100.0}
@@ -357,60 +305,3 @@ def test_notifier_suppresses_duplicate_dedupe_key_within_window(monkeypatch) -> 
     assert final_snapshot["last_status"] == "sent"
     assert final_snapshot["last_suppressed_count"] == 1
     assert len(calls) == 2
-
-
-def test_notifier_ntfy_http_error_snapshot_includes_response_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    request = httpx.Request("POST", "https://ntfy.sh/ops-alerts")
-    response = httpx.Response(
-        429,
-        request=request,
-        json={
-            "code": 42908,
-            "http": 429,
-            "error": "limit reached: daily message quota reached",
-        },
-    )
-
-    class _QuotaClient:
-        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            _ = args
-            _ = kwargs
-
-        def __enter__(self) -> "_QuotaClient":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-            _ = exc_type
-            _ = exc
-            _ = tb
-
-        def post(self, url: str, content: bytes, headers: dict[str, str], params: dict[str, str]):  # type: ignore[no-untyped-def]
-            _ = url
-            _ = content
-            _ = headers
-            _ = params
-            return response
-
-    monkeypatch.setattr(httpx, "Client", _QuotaClient)
-    notifier = Notifier(
-        enabled=True,
-        provider="ntfy",
-        ntfy_base_url="https://ntfy.sh",
-        ntfy_topic="ops-alerts",
-    )
-
-    result = notifier.send_notification(
-        NotificationMessage(
-            title="실시간 판단 대기",
-            body="거래량 조건 미충족",
-        )
-    )
-
-    assert result.sent is False
-    assert result.status == "failed"
-    assert result.error is not None
-    assert "status=429" in result.error
-    assert "daily message quota reached" in result.error
-    snapshot = notifier.delivery_snapshot()
-    assert snapshot["last_status"] == "failed"
-    assert "daily message quota reached" in str(snapshot["last_error"])

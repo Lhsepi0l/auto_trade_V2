@@ -70,10 +70,6 @@ def _position_open_heartbeat_window_sec(*, notify_interval_sec: Any) -> float:
     return min(max(base_interval * 30.0, 900.0), 3600.0)
 
 
-def _normalized_provider(provider: Any) -> str:
-    return str(provider or "").strip().lower()
-
-
 def _message_from_parts(
     *,
     title: str | None,
@@ -139,7 +135,6 @@ def build_runtime_event_notification(
     event: str,
     fields: dict[str, Any],
     context: RuntimeNotificationContext,
-    provider: str | None = None,
 ) -> NotificationMessage | None:
     raw_event = str(event or "").strip()
     if not raw_event:
@@ -295,11 +290,7 @@ def build_runtime_event_notification(
             metadata=dict(fields),
         )
     if raw_event == "cycle_result":
-        return build_cycle_result_notification(
-            fields=fields,
-            context=context,
-            provider=provider,
-        )
+        return build_cycle_result_notification(fields=fields, context=context)
     return None
 
 
@@ -307,12 +298,10 @@ def build_cycle_result_notification(
     *,
     fields: dict[str, Any],
     context: RuntimeNotificationContext,
-    provider: str | None = None,
 ) -> NotificationMessage | None:
     action = str(fields.get("action") or "").strip()
     reason = str(fields.get("reason") or "").strip()
     trigger_source = str(fields.get("trigger_source") or "scheduler").strip().lower()
-    provider_name = _normalized_provider(provider)
     symbol_line = _symbol_side_line(
         symbol=fields.get("candidate_symbol"),
         side=fields.get("candidate_side"),
@@ -343,8 +332,6 @@ def build_cycle_result_notification(
         )
 
     if action == "no_candidate":
-        if trigger_source == "scheduler" and provider_name == "ntfy":
-            return None
         body = _build_body(symbol_line, human_reason, context.identity_line)
         return NotificationMessage(
             title=f"{title_prefix} 대기",
@@ -375,8 +362,6 @@ def build_cycle_result_notification(
                 ),
                 metadata=dict(fields),
             )
-        if trigger_source == "scheduler" and provider_name == "ntfy":
-            return None
         title = "포지션 관리중" if reason == "position_open" else f"{title_prefix} 보류"
         body = _build_body(
             symbol_line,

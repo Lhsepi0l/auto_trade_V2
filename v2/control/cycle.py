@@ -24,95 +24,6 @@ def _summarize_alpha_reject_focus(alpha_blocks: dict[str, Any]) -> str | None:
     return ", ".join(f"{alpha_id}:{reason}" for alpha_id, reason in ordered[:3])
 
 
-def _primary_symbol_context(controller: Any, reject_context: Any) -> dict[str, Any] | None:
-    if not isinstance(reject_context, dict):
-        return None
-    for symbol in controller._risk.get("universe_symbols") or []:
-        if symbol in reject_context and isinstance(reject_context[symbol], dict):
-            return reject_context[symbol]
-    return next(
-        (value for value in reject_context.values() if isinstance(value, dict)),
-        None,
-    )
-
-
-def _maybe_emit_alpha_drift_lifecycle_events(
-    controller: Any,
-    *,
-    cycle: KernelCycleResult,
-    reject_context: Any,
-    event_time: str | None,
-) -> None:
-    symbol_context = _primary_symbol_context(controller, reject_context)
-    alpha_blocks = (
-        dict(symbol_context.get("alpha_blocks") or {})
-        if isinstance(symbol_context, dict)
-        else {}
-    )
-    alpha_reject_metrics = (
-        dict(symbol_context.get("alpha_reject_metrics") or {})
-        if isinstance(symbol_context, dict)
-        else {}
-    )
-    drift_metrics = (
-        dict(alpha_reject_metrics.get("alpha_drift") or {})
-        if isinstance(alpha_reject_metrics.get("alpha_drift"), dict)
-        else {}
-    )
-    if (
-        cycle.state == "no_candidate"
-        and alpha_blocks.get("alpha_drift") == "trigger_missing"
-        and bool(drift_metrics.get("drift_setup_queued"))
-    ):
-        setup_open_time_ms = int(_to_float(drift_metrics.get("drift_setup_open_time_ms"), default=0.0))
-        symbol = str((symbol_context or {}).get("symbol") or controller.cfg.behavior.exchange.default_symbol).strip().upper()
-        setup_key = f"{symbol}:{setup_open_time_ms}"
-        if setup_open_time_ms > 0 and controller._last_alpha_drift_setup_key != setup_key:
-            controller._last_alpha_drift_setup_key = setup_key
-            controller._log_event(
-                "alpha_drift_setup_queued",
-                notify=False,
-                symbol=symbol,
-                alpha_id="alpha_drift",
-                entry_family="drift",
-                setup_open_time_ms=setup_open_time_ms,
-                setup_expiry_bars=drift_metrics.get("drift_setup_expiry_bars"),
-                event_time=event_time,
-            )
-
-    if (
-        cycle.candidate is not None
-        and str(getattr(cycle.candidate, "alpha_id", "") or "").strip() == "alpha_drift"
-        and cycle.state in {"executed", "dry_run"}
-    ):
-        execution_hints_raw = cycle.candidate.execution_hints
-        execution_hints = (
-            dict(execution_hints_raw)
-            if isinstance(execution_hints_raw, dict)
-            else {}
-        )
-        setup_open_time_ms = int(
-            _to_float(execution_hints.get("drift_setup_open_time_ms"), default=0.0)
-        )
-        symbol = str(getattr(cycle.candidate, "symbol", "") or "").strip().upper()
-        confirm_key = f"{symbol}:{setup_open_time_ms}:{cycle.state}"
-        if symbol and controller._last_alpha_drift_confirm_key != confirm_key:
-            controller._last_alpha_drift_confirm_key = confirm_key
-            controller._log_event(
-                "alpha_drift_confirmed",
-                notify=False,
-                symbol=symbol,
-                alpha_id="alpha_drift",
-                entry_family=str(getattr(cycle.candidate, "entry_family", "") or "").strip() or "drift",
-                side=str(getattr(cycle.candidate, "side", "") or "").strip().upper() or None,
-                action=cycle.state,
-                score=getattr(cycle.candidate, "score", None),
-                entry_price=getattr(cycle.candidate, "entry_price", None),
-                setup_open_time_ms=setup_open_time_ms if setup_open_time_ms > 0 else None,
-                event_time=event_time,
-            )
-
-
 def fetch_live_positions(
     controller: Any,
 ) -> tuple[dict[str, float], dict[str, dict[str, Any]], bool, str | None]:
@@ -382,7 +293,16 @@ def run_cycle_once_locked(
         elif cycle.state in {"executed", "dry_run"}:
             controller._risk["last_strategy_block_reason"] = None
         if cycle.state == "no_candidate" and isinstance(reject_context, dict):
-            symbol_context = _primary_symbol_context(controller, reject_context)
+            symbol_context = None
+            for symbol in controller._risk.get("universe_symbols") or []:
+                if symbol in reject_context and isinstance(reject_context[symbol], dict):
+                    symbol_context = reject_context[symbol]
+                    break
+            if symbol_context is None and reject_context:
+                symbol_context = next(
+                    (value for value in reject_context.values() if isinstance(value, dict)),
+                    None,
+                )
             alpha_blocks = (
                 dict(symbol_context.get("alpha_blocks") or {})
                 if isinstance(symbol_context, dict)
@@ -424,12 +344,6 @@ def run_cycle_once_locked(
             controller._record_recent_block(cycle.reason)
         controller._maybe_apply_auto_risk_circuit(cycle)
         controller._persist_risk_config()
-        _maybe_emit_alpha_drift_lifecycle_events(
-            controller,
-            cycle=cycle,
-            reject_context=reject_context,
-            event_time=controller._last_cycle["tick_finished_at"],
-        )
         controller._log_event(
             "cycle_result",
             action=cycle.state,
