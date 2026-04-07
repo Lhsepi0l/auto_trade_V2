@@ -21,3 +21,10 @@ class NotificationMessage:
         if title and body:
             return f"**{title}**\n{body}"
         return body or title
+
+
+@dataclass(frozen=True)
+class WebPushDispatchResult:
+    sent: bool
+    error: str | None = None
+    status: str = "sent"

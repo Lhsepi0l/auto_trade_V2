@@ -1,0 +1,79 @@
+<main class="operator-app">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">AUTO TRADER V2</p>
+      <h1>운영 로그</h1>
+      <p class="subtitle">브라우저 임시 기록이 아니라 서버에 저장된 운영 이벤트를 시간순으로 조회합니다.</p>
+    </div>
+    <div class="hero-meta">
+      <span class="pill">영속 로그</span>
+      <button id="logs-export-bundle-quick" class="btn" type="button">빠른 추출</button>
+      <button id="logs-export-bundle-full" class="btn ghost" type="button">전체 추출</button>
+      <button id="logs-refresh" class="btn ghost" type="button">새로고침</button>
+    </div>
+  </header>
+
+  <section id="action-feedback" class="feedback" hidden></section>
+
+  <section class="card event-main logs-card">
+    <div class="card-head">
+      <div>
+        <h2>서버 운영 로그</h2>
+        <p class="card-subtitle">엔진, 판단, 리스크, 포지션, 리포트, 운영 액션을 길게 추적합니다.</p>
+      </div>
+      <div class="button-row">
+        <span class="event-count" id="logs-feed-count">0건</span>
+      </div>
+    </div>
+
+    <form id="logs-filter-form" class="logs-toolbar" autocomplete="off">
+      <div class="field-row">
+        <label for="logs-category-select">카테고리</label>
+        <select id="logs-category-select" name="category">
+          <option value="">전체</option>
+          <option value="status">상태</option>
+          <option value="decision">판단</option>
+          <option value="blocked">차단</option>
+          <option value="risk">리스크</option>
+          <option value="position">포지션</option>
+          <option value="report">리포트</option>
+          <option value="action">액션</option>
+        </select>
+      </div>
+      <div class="field-row logs-query-field">
+        <label for="logs-query-input">검색</label>
+        <input id="logs-query-input" name="query" type="text" placeholder="제목, 사유, 심볼 검색">
+      </div>
+      <div class="field-row">
+        <label for="logs-limit-select">건수</label>
+        <select id="logs-limit-select" name="limit">
+          <option value="200">200</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+        </select>
+      </div>
+      <div class="logs-toolbar-actions">
+        <button class="btn" type="submit">조회</button>
+      </div>
+    </form>
+
+    <div class="event-legend">
+      <span class="event-legend-item info">상태</span>
+      <span class="event-legend-item decision">판단</span>
+      <span class="event-legend-item blocked">차단</span>
+      <span class="event-legend-item risk">리스크</span>
+      <span class="event-legend-item position">포지션</span>
+      <span class="event-legend-item report">리포트</span>
+      <span class="event-legend-item action">액션</span>
+    </div>
+    <div class="logs-meta">
+      <span id="logs-feed-meta">최신순</span>
+    </div>
+    <div id="logs-feed" class="event-feed-scroll logs-feed-scroll"></div>
+    <div class="logs-pagination">
+      <button id="logs-prev" class="btn ghost" type="button">이전</button>
+      <span id="logs-page-info" class="logs-page-info">1 - 0 / 0</span>
+      <button id="logs-next" class="btn ghost" type="button">다음</button>
+    </div>
+  </section>
+</main>

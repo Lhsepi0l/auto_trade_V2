@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from v2.control.operator_events import build_operator_event_payload
+from v2.notify import WebPushDispatchResult
 from v2.operator import OperatorService
 from v2.operator.actions import wrap_operator_action
 from v2.operator.read_models import build_operator_console_payload
@@ -219,6 +220,41 @@ def test_operator_event_payload_humanizes_partial_reduce() -> None:
     assert "remain=0.03" in str(payload["sub_text"])
 
 
+def test_operator_event_payload_humanizes_alpha_drift_lifecycle() -> None:
+    queued = build_operator_event_payload(
+        event="alpha_drift_setup_queued",
+        fields={
+            "symbol": "BTCUSDT",
+            "setup_open_time_ms": 1234567890000,
+            "setup_expiry_bars": 8,
+            "event_time": "2026-04-04T00:00:00+00:00",
+        },
+    )
+    assert queued is not None
+    assert queued["category"] == "decision"
+    assert queued["title"] == "BTCUSDT drift setup 대기"
+    assert queued["main_text"] == "alpha_drift / setup queued"
+    assert "expiry=8" in str(queued["sub_text"])
+
+    confirmed = build_operator_event_payload(
+        event="alpha_drift_confirmed",
+        fields={
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "action": "executed",
+            "score": 0.81,
+            "entry_price": 101234.5,
+            "setup_open_time_ms": 1234567890000,
+            "event_time": "2026-04-04T00:05:00+00:00",
+        },
+    )
+    assert confirmed is not None
+    assert confirmed["category"] == "decision"
+    assert confirmed["title"] == "BTCUSDT drift confirm"
+    assert confirmed["main_text"] == "alpha_drift / LONG confirm"
+    assert "setup_open_time_ms=1234567890000" in str(confirmed["sub_text"])
+
+
 def test_wrap_operator_action_classifies_busy_response() -> None:
     wrapped = wrap_operator_action(
         action="tick_now",
@@ -428,6 +464,49 @@ def test_operator_service_lists_persisted_operator_events(tmp_path) -> None:  # 
 
     assert events
     assert events[0]["event_type"] == "runtime_start"
+
+
+def test_operator_service_exposes_push_state_and_test_action(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+
+    class _FakeWebPushService:
+        def availability_snapshot(self) -> dict[str, object]:
+            return {
+                "available": True,
+                "public_key": "PUBLIC_KEY",
+                "subscription_count": 1,
+                "last_error": None,
+            }
+
+        def list_subscriptions(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "device_label": "민수 iPhone 운영앱",
+                    "platform": "iPhone",
+                    "active": True,
+                    "standalone": True,
+                    "endpoint_hint": "https://example...",
+                    "last_success_at": "2026-04-05T00:00:00+00:00",
+                    "last_failure_at": None,
+                    "last_error": None,
+                }
+            ]
+
+        def send_test_notification(self, *, device_label: str | None = None) -> WebPushDispatchResult:
+            _ = device_label
+            return WebPushDispatchResult(sent=True, error=None, status="sent")
+
+    controller.webpush_service = _FakeWebPushService()
+    service = OperatorService(controller=controller)
+
+    state = service.push_state()
+    out = service.send_push_test(device_label="민수 iPhone 운영앱")
+
+    assert state["available"] is True
+    assert state["subscription_count"] == 1
+    assert state["devices"][0]["device_label"] == "민수 iPhone 운영앱"
+    assert out["action"] == "push_test"
+    assert out["result"]["notifier_sent"] is True
 
 
 def test_operator_event_payload_humanizes_boot_and_readiness_transitions() -> None:
