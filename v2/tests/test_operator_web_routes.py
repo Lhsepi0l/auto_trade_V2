@@ -98,6 +98,9 @@ def test_operator_console_route_renders(tmp_path) -> None:  # type: ignore[no-un
 
     assert response.status_code == 200
     assert "웹 운영 콘솔" in response.text
+    assert "상태 · 실행 · 리스크" in response.text
+    assert ">개요<" in response.text
+    assert "mission control" in response.text
     assert "/operator/static/operator.js" in response.text
     assert "/operator/manifest.webmanifest" in response.text
 
@@ -109,10 +112,21 @@ def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyp
 
     assert response.status_code == 200
     assert "운영 로그" in response.text
+    assert "조회 · 검색 · 추출" in response.text
+    assert ">필터<" in response.text
     assert "빠른 추출" in response.text
     assert "전체 추출" in response.text
     assert "/operator/api/logs" not in response.text
     assert 'data-operator-page="logs"' in response.text
+
+
+def test_operator_favicon_route_redirects(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    client = TestClient(_build_operator_app(tmp_path))
+
+    response = client.get("/favicon.ico", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith("/operator/static/favicon.svg")
 
 
 def test_operator_manifest_and_push_routes_work(tmp_path) -> None:  # type: ignore[no-untyped-def]

@@ -553,15 +553,19 @@ function buildEventRowMarkup(event) {
       <div class="event-row-top">
         <div class="event-row-left">
           <span class="event-badge ${categoryStyle}">${escapeHtml(getEventCategoryLabel(event))}</span>
-          <span class="event-title">${escapeHtml(fmtMaybe(event?.title))}</span>
+          <div class="event-copy">
+            <div class="event-summaryline">
+              <span class="event-title">${escapeHtml(fmtMaybe(event?.title))}</span>
+              <span class="event-mainline">${escapeHtml(fmtMaybe(event?.main_text))}</span>
+            </div>
+            ${event?.sub_text ? `<div class="event-subline">${escapeHtml(fmtMaybe(event.sub_text))}</div>` : ""}
+          </div>
         </div>
         <div class="event-time-stack">
           <span class="event-time-absolute">${escapeHtml(formatAbsoluteTime(event?.event_time))}</span>
           <span class="event-time-relative">${escapeHtml(relativeTime(event?.event_time))}</span>
         </div>
       </div>
-      <div class="event-mainline">${escapeHtml(fmtMaybe(event?.main_text))}</div>
-      ${event?.sub_text ? `<div class="event-subline">${escapeHtml(fmtMaybe(event.sub_text))}</div>` : ""}
     </div>
   `;
 }
@@ -1448,9 +1452,17 @@ function initNav() {
   });
 }
 
+function initAdaptiveDisclosures() {
+  const shouldCollapse = window.innerWidth <= 720;
+  document.querySelectorAll(".adaptive-disclosure[data-mobile-collapsed='true']").forEach((el) => {
+    el.open = !shouldCollapse;
+  });
+}
+
 function initConsolePage() {
   bindActionButtons();
   bindForms();
+  initAdaptiveDisclosures();
   loadConsole().catch((error) => setFeedback(String(error), "failed"));
   loadEventFeed().catch((error) => setFeedback(String(error), "failed"));
   window.setInterval(() => {
@@ -1461,6 +1473,7 @@ function initConsolePage() {
 
 function initLogsPage() {
   bindLogsPage();
+  initAdaptiveDisclosures();
   loadLogsFeed().catch((error) => setFeedback(String(error), "failed"));
   window.setInterval(() => {
     loadLogsFeed().catch(() => {});

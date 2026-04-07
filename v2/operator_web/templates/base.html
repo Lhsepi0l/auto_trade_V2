@@ -4,12 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ TITLE }}</title>
-    <meta name="theme-color" content="#0f766e">
+    <meta
+      name="description"
+      content="Auto Trader V2 웹 운영 패널. 상태, 포지션, 로그, 리스크."
+    >
+    <meta name="theme-color" content="#0071e3">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="AT Ops">
     <link rel="manifest" href="{{ OPERATOR_MANIFEST_URL }}">
-    <link rel="icon" href="{{ OPERATOR_ICON_URL }}" type="image/svg+xml">
+    <link rel="icon" href="{{ OPERATOR_FAVICON_URL }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="{{ OPERATOR_APPLE_ICON_URL }}">
     <link rel="stylesheet" href="{{ OPERATOR_CSS_URL }}">
   </head>
@@ -18,11 +22,12 @@
     data-operator-sw-url="{{ OPERATOR_SW_URL }}"
     data-operator-scope="/operator/"
   >
+    <a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
     <header class="operator-topbar">
       <div class="operator-topbar-inner">
-        <a class="operator-brand" href="/operator">
+        <a class="operator-brand" href="/operator" aria-label="Auto Trader V2 홈">
           <span class="operator-brand-mark">AT</span>
-          <span class="operator-brand-copy">AUTO TRADER V2</span>
+          <span class="operator-brand-copy">Auto Trader V2</span>
         </a>
         <button
           id="operator-nav-toggle"
@@ -31,7 +36,7 @@
           aria-expanded="false"
           aria-controls="operator-nav"
         >
-          ☰ 메뉴
+          메뉴
         </button>
         <nav id="operator-nav" class="operator-nav" aria-label="운영 네비게이션">
           <a class="operator-nav-link {{ NAV_CONSOLE_ACTIVE }}" href="/operator">대시보드</a>

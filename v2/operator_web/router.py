@@ -166,6 +166,7 @@ def _render_page(*, title: str, body_template: str, page_id: str) -> HTMLRespons
         .replace("{{ NAV_CONSOLE_ACTIVE }}", "is-active" if page_id == "console" else "")
         .replace("{{ NAV_LOGS_ACTIVE }}", "is-active" if page_id == "logs" else "")
         .replace("{{ OPERATOR_CSS_URL }}", _asset_url("operator.css"))
+        .replace("{{ OPERATOR_FAVICON_URL }}", _asset_url("favicon.svg"))
         .replace("{{ OPERATOR_JS_URL }}", _asset_url("operator.js"))
         .replace("{{ OPERATOR_ICON_URL }}", _asset_url("operator-icon.svg"))
         .replace("{{ OPERATOR_APPLE_ICON_URL }}", _asset_url("operator-icon.svg"))
@@ -231,6 +232,10 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
     @router.get("/operator/logs/")
     async def operator_logs_slash() -> RedirectResponse:
         return RedirectResponse(url="/operator/logs", status_code=307)
+
+    @router.get("/favicon.ico")
+    async def operator_favicon() -> RedirectResponse:
+        return RedirectResponse(url=_asset_url("favicon.svg"), status_code=307)
 
     @router.get("/operator/api/console")
     async def operator_console_payload() -> dict[str, Any]:
