@@ -1190,13 +1190,18 @@ textarea {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
   min-height: 28px;
   padding: 0 10px 0 18px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface-soft);
   font-size: 11px;
+  line-height: 1;
   color: var(--text);
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .event-legend-item::before,
