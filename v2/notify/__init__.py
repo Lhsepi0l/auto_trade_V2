@@ -10,5 +10,14 @@ __all__ = [
     "Notifier",
     "RuntimeNotificationContext",
     "WebPushDispatchResult",
+    "WebPushService",
     "build_notifier_from_config",
 ]
+
+
+def __getattr__(name: str):
+    if name == "WebPushService":
+        from .webpush import WebPushService
+
+        return WebPushService
+    raise AttributeError(name)
