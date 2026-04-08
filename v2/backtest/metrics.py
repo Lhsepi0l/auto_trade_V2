@@ -12,12 +12,13 @@ from v2.backtest.analytics import (
 )
 from v2.backtest.common import _candidate_from_payload, _to_float, _to_int
 from v2.backtest.snapshots import _Kline15m
-from v2.clean_room import Candidate
-from v2.clean_room.portfolio import (
+from v2.kernel import Candidate
+from v2.kernel.portfolio import (
     PortfolioRoutingConfig,
     portfolio_bucket_for_symbol,
     route_ranked_candidates,
 )
+from v2.management import PositionManagementSpec
 
 
 def _simulate_symbol_metrics(
@@ -850,60 +851,71 @@ def _simulate_symbol_metrics(
                     execution_hints = (
                         (decision or {}).get("execution") if isinstance(decision, dict) else None
                     )
-                    time_stop_bars: int | None = None
-                    progress_check_bars = 0
-                    progress_min_mfe_r = 0.0
-                    progress_extend_trigger_r = 0.0
-                    progress_extend_bars = 0
+                    management_spec = PositionManagementSpec.from_execution_hints(
+                        execution_hints if isinstance(execution_hints, dict) else None
+                    )
+                    time_stop_bars: int | None = (
+                        int(management_spec.time_stop_bars)
+                        if int(management_spec.time_stop_bars) > 0
+                        else None
+                    )
+                    progress_check_bars = int(management_spec.progress_check_bars)
+                    progress_min_mfe_r = float(management_spec.progress_min_mfe_r)
+                    progress_extend_trigger_r = float(management_spec.progress_extend_trigger_r)
+                    progress_extend_bars = int(management_spec.progress_extend_bars)
                     stalled_trend_timeout_bars: int | None = None
-                    stop_exit_cooldown_bars = max(int(reverse_cooldown_bars), 0)
-                    loss_streak_trigger_hint = 0
-                    loss_streak_cooldown_bars_hint = 0
-                    profit_exit_cooldown_bars = max(int(reverse_cooldown_bars), 0)
-                    tp_partial_ratio = 0.0
+                    stop_exit_cooldown_bars = max(
+                        int(management_spec.stop_exit_cooldown_bars),
+                        int(reverse_cooldown_bars),
+                        0,
+                    )
+                    loss_streak_trigger_hint = int(management_spec.loss_streak_trigger)
+                    loss_streak_cooldown_bars_hint = int(management_spec.loss_streak_cooldown_bars)
+                    profit_exit_cooldown_bars = max(
+                        int(management_spec.profit_exit_cooldown_bars),
+                        int(reverse_cooldown_bars),
+                        0,
+                    )
+                    tp_partial_ratio = float(management_spec.tp_partial_ratio)
                     tp_partial_price: float | None = None
-                    tp_partial_at_r = 0.0
-                    break_even_move_r = 0.0
+                    tp_partial_at_r = float(management_spec.tp_partial_at_r)
+                    break_even_move_r = float(management_spec.move_stop_to_be_at_r)
                     runner_exit_mode: str | None = None
                     runner_trailing_atr_mult = 0.0
                     stalled_volume_ratio_floor = 0.0
                     regime_lost_exit_required = True
-                    allow_reverse_exit = True
-                    entry_quality_score_v2 = 0.0
-                    entry_regime_strength = 0.0
-                    entry_bias_strength = 0.0
-                    quality_exit_applied = False
-                    selective_extension_proof_bars = 0
-                    selective_extension_min_mfe_r = 0.0
-                    selective_extension_min_regime_strength = 0.0
-                    selective_extension_min_bias_strength = 0.0
-                    selective_extension_min_quality_score_v2 = 0.0
-                    selective_extension_time_stop_bars = 0
-                    selective_extension_take_profit_r = 0.0
-                    selective_extension_move_stop_to_be_at_r = 0.0
+                    allow_reverse_exit = bool(management_spec.allow_reverse_exit)
+                    entry_quality_score_v2 = float(management_spec.entry_quality_score_v2)
+                    entry_regime_strength = float(management_spec.entry_regime_strength)
+                    entry_bias_strength = float(management_spec.entry_bias_strength)
+                    quality_exit_applied = bool(management_spec.quality_exit_applied)
+                    selective_extension_proof_bars = int(
+                        management_spec.selective_extension_proof_bars
+                    )
+                    selective_extension_min_mfe_r = float(
+                        management_spec.selective_extension_min_mfe_r
+                    )
+                    selective_extension_min_regime_strength = float(
+                        management_spec.selective_extension_min_regime_strength
+                    )
+                    selective_extension_min_bias_strength = float(
+                        management_spec.selective_extension_min_bias_strength
+                    )
+                    selective_extension_min_quality_score_v2 = float(
+                        management_spec.selective_extension_min_quality_score_v2
+                    )
+                    selective_extension_time_stop_bars = int(
+                        management_spec.selective_extension_time_stop_bars
+                    )
+                    selective_extension_take_profit_r = float(
+                        management_spec.selective_extension_take_profit_r
+                    )
+                    selective_extension_move_stop_to_be_at_r = float(
+                        management_spec.selective_extension_move_stop_to_be_at_r
+                    )
                     alpha_id = str((decision or {}).get("alpha_id") or "").strip() or None
                     entry_family = str((decision or {}).get("entry_family") or "").strip() or None
                     if isinstance(execution_hints, dict):
-                        hint_time_stop_bars = _to_int(execution_hints.get("time_stop_bars"))
-                        if hint_time_stop_bars is not None and hint_time_stop_bars > 0:
-                            time_stop_bars = int(hint_time_stop_bars)
-                        hint_progress_check_bars = _to_int(execution_hints.get("progress_check_bars"))
-                        if hint_progress_check_bars is not None and hint_progress_check_bars >= 0:
-                            progress_check_bars = int(hint_progress_check_bars)
-                        hint_progress_min_mfe_r = _to_float(execution_hints.get("progress_min_mfe_r"))
-                        if hint_progress_min_mfe_r is not None and hint_progress_min_mfe_r >= 0.0:
-                            progress_min_mfe_r = float(hint_progress_min_mfe_r)
-                        hint_progress_extend_trigger_r = _to_float(
-                            execution_hints.get("progress_extend_trigger_r")
-                        )
-                        if (
-                            hint_progress_extend_trigger_r is not None
-                            and hint_progress_extend_trigger_r >= 0.0
-                        ):
-                            progress_extend_trigger_r = float(hint_progress_extend_trigger_r)
-                        hint_progress_extend_bars = _to_int(execution_hints.get("progress_extend_bars"))
-                        if hint_progress_extend_bars is not None and hint_progress_extend_bars >= 0:
-                            progress_extend_bars = int(hint_progress_extend_bars)
                         hint_stalled_trend_timeout_bars = _to_int(
                             execution_hints.get("stalled_trend_timeout_bars")
                         )
@@ -912,45 +924,9 @@ def _simulate_symbol_metrics(
                             and hint_stalled_trend_timeout_bars > 0
                         ):
                             stalled_trend_timeout_bars = int(hint_stalled_trend_timeout_bars)
-                        hint_stop_exit_cooldown_bars = _to_int(
-                            execution_hints.get("stop_exit_cooldown_bars")
-                        )
-                        if (
-                            hint_stop_exit_cooldown_bars is not None
-                            and hint_stop_exit_cooldown_bars >= 0
-                        ):
-                            stop_exit_cooldown_bars = int(hint_stop_exit_cooldown_bars)
-                        hint_loss_streak_trigger = _to_int(execution_hints.get("loss_streak_trigger"))
-                        if hint_loss_streak_trigger is not None and hint_loss_streak_trigger >= 0:
-                            loss_streak_trigger_hint = int(hint_loss_streak_trigger)
-                        hint_loss_streak_cooldown_bars = _to_int(
-                            execution_hints.get("loss_streak_cooldown_bars")
-                        )
-                        if (
-                            hint_loss_streak_cooldown_bars is not None
-                            and hint_loss_streak_cooldown_bars >= 0
-                        ):
-                            loss_streak_cooldown_bars_hint = int(hint_loss_streak_cooldown_bars)
-                        hint_profit_exit_cooldown_bars = _to_int(
-                            execution_hints.get("profit_exit_cooldown_bars")
-                        )
-                        if (
-                            hint_profit_exit_cooldown_bars is not None
-                            and hint_profit_exit_cooldown_bars >= 0
-                        ):
-                            profit_exit_cooldown_bars = int(hint_profit_exit_cooldown_bars)
-                        hint_tp_partial_ratio = _to_float(execution_hints.get("tp_partial_ratio"))
-                        if hint_tp_partial_ratio is not None:
-                            tp_partial_ratio = min(max(float(hint_tp_partial_ratio), 0.0), 1.0)
                         hint_tp_partial_price = _to_float(execution_hints.get("tp_partial_price"))
                         if hint_tp_partial_price is not None and hint_tp_partial_price > 0.0:
                             tp_partial_price = float(hint_tp_partial_price)
-                        hint_tp_partial_at_r = _to_float(execution_hints.get("tp_partial_at_r"))
-                        if hint_tp_partial_at_r is not None and hint_tp_partial_at_r > 0.0:
-                            tp_partial_at_r = float(hint_tp_partial_at_r)
-                        hint_break_even_move_r = _to_float(execution_hints.get("move_stop_to_be_at_r"))
-                        if hint_break_even_move_r is not None and hint_break_even_move_r >= 0.0:
-                            break_even_move_r = float(hint_break_even_move_r)
                         hint_runner_exit_mode = execution_hints.get("runner_exit_mode")
                         if hint_runner_exit_mode is not None:
                             runner_exit_mode = str(hint_runner_exit_mode).strip().lower() or None
@@ -970,120 +946,6 @@ def _simulate_symbol_metrics(
                             and hint_stalled_volume_ratio_floor >= 0.0
                         ):
                             stalled_volume_ratio_floor = float(hint_stalled_volume_ratio_floor)
-                        hint_allow_reverse_exit = execution_hints.get("allow_reverse_exit")
-                        if isinstance(hint_allow_reverse_exit, bool):
-                            allow_reverse_exit = bool(hint_allow_reverse_exit)
-                        elif isinstance(hint_allow_reverse_exit, str):
-                            allow_reverse_exit = hint_allow_reverse_exit.strip().lower() in {
-                                "1",
-                                "true",
-                                "yes",
-                                "y",
-                                "on",
-                            }
-                        hint_entry_quality_score_v2 = _to_float(
-                            execution_hints.get("entry_quality_score_v2")
-                        )
-                        if hint_entry_quality_score_v2 is not None and hint_entry_quality_score_v2 >= 0.0:
-                            entry_quality_score_v2 = float(hint_entry_quality_score_v2)
-                        hint_entry_regime_strength = _to_float(
-                            execution_hints.get("entry_regime_strength")
-                        )
-                        if hint_entry_regime_strength is not None and hint_entry_regime_strength >= 0.0:
-                            entry_regime_strength = float(hint_entry_regime_strength)
-                        hint_entry_bias_strength = _to_float(
-                            execution_hints.get("entry_bias_strength")
-                        )
-                        if hint_entry_bias_strength is not None and hint_entry_bias_strength >= 0.0:
-                            entry_bias_strength = float(hint_entry_bias_strength)
-                        hint_quality_exit_applied = execution_hints.get("quality_exit_applied")
-                        if isinstance(hint_quality_exit_applied, bool):
-                            quality_exit_applied = bool(hint_quality_exit_applied)
-                        elif isinstance(hint_quality_exit_applied, str):
-                            quality_exit_applied = hint_quality_exit_applied.strip().lower() in {
-                                "1",
-                                "true",
-                                "yes",
-                                "y",
-                                "on",
-                            }
-                        hint_selective_extension_proof_bars = _to_int(
-                            execution_hints.get("selective_extension_proof_bars")
-                        )
-                        if (
-                            hint_selective_extension_proof_bars is not None
-                            and hint_selective_extension_proof_bars >= 0
-                        ):
-                            selective_extension_proof_bars = int(hint_selective_extension_proof_bars)
-                        hint_selective_extension_min_mfe_r = _to_float(
-                            execution_hints.get("selective_extension_min_mfe_r")
-                        )
-                        if (
-                            hint_selective_extension_min_mfe_r is not None
-                            and hint_selective_extension_min_mfe_r >= 0.0
-                        ):
-                            selective_extension_min_mfe_r = float(hint_selective_extension_min_mfe_r)
-                        hint_selective_extension_min_regime_strength = _to_float(
-                            execution_hints.get("selective_extension_min_regime_strength")
-                        )
-                        if (
-                            hint_selective_extension_min_regime_strength is not None
-                            and hint_selective_extension_min_regime_strength >= 0.0
-                        ):
-                            selective_extension_min_regime_strength = float(
-                                hint_selective_extension_min_regime_strength
-                            )
-                        hint_selective_extension_min_bias_strength = _to_float(
-                            execution_hints.get("selective_extension_min_bias_strength")
-                        )
-                        if (
-                            hint_selective_extension_min_bias_strength is not None
-                            and hint_selective_extension_min_bias_strength >= 0.0
-                        ):
-                            selective_extension_min_bias_strength = float(
-                                hint_selective_extension_min_bias_strength
-                            )
-                        hint_selective_extension_min_quality_score_v2 = _to_float(
-                            execution_hints.get("selective_extension_min_quality_score_v2")
-                        )
-                        if (
-                            hint_selective_extension_min_quality_score_v2 is not None
-                            and hint_selective_extension_min_quality_score_v2 >= 0.0
-                        ):
-                            selective_extension_min_quality_score_v2 = float(
-                                hint_selective_extension_min_quality_score_v2
-                            )
-                        hint_selective_extension_time_stop_bars = _to_int(
-                            execution_hints.get("selective_extension_time_stop_bars")
-                        )
-                        if (
-                            hint_selective_extension_time_stop_bars is not None
-                            and hint_selective_extension_time_stop_bars >= 0
-                        ):
-                            selective_extension_time_stop_bars = int(
-                                hint_selective_extension_time_stop_bars
-                            )
-                        hint_selective_extension_take_profit_r = _to_float(
-                            execution_hints.get("selective_extension_take_profit_r")
-                        )
-                        if (
-                            hint_selective_extension_take_profit_r is not None
-                            and hint_selective_extension_take_profit_r >= 0.0
-                        ):
-                            selective_extension_take_profit_r = float(
-                                hint_selective_extension_take_profit_r
-                            )
-                        hint_selective_extension_move_stop_to_be_at_r = _to_float(
-                            execution_hints.get("selective_extension_move_stop_to_be_at_r")
-                        )
-                        if (
-                            hint_selective_extension_move_stop_to_be_at_r is not None
-                            and hint_selective_extension_move_stop_to_be_at_r >= 0.0
-                        ):
-                            selective_extension_move_stop_to_be_at_r = float(
-                                hint_selective_extension_move_stop_to_be_at_r
-                            )
-
                     expected_edge_pct, risk_pct = _entry_reward_and_risk_pct(
                         signal_side=signal_side,
                         entry_fill=float(entry_fill),

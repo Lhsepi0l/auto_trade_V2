@@ -27,4 +27,4 @@ class NotificationMessage:
 class WebPushDispatchResult:
     sent: bool
     error: str | None = None
-    status: str = "sent"
+    status: str | None = None

@@ -91,6 +91,12 @@ def test_alpha_live_candidate_profile_loads() -> None:
     assert enabled[0].params["drift_setup_expiry_bars"] == 8
     assert enabled[0].params["drift_take_profit_r"] == 1.8
     assert enabled[0].params["drift_time_stop_bars"] == 16
+    assert enabled[0].params["management_policy"] == "tp1_runner"
+    assert enabled[0].params["tp_partial_ratio"] == 0.25
+    assert enabled[0].params["tp_partial_target_frac"] == 0.6
+    assert enabled[0].params["tp_partial_min_r"] == 1.0
+    assert enabled[0].params["tp_partial_max_r"] == 1.2
+    assert enabled[0].params["move_stop_to_be_at_r"] == 1.0
     assert cfg.behavior.risk.max_leverage == 5.0
     assert cfg.behavior.risk.max_exposure_pct == 0.10
     assert cfg.behavior.risk.daily_loss_limit_pct == -0.015

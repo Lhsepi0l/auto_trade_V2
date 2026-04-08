@@ -67,6 +67,12 @@ base:
         stop_atr_mult: 1.5
         min_stop_distance_frac: 0.0020
         take_profit_r: 2.0
+        management_policy: tp1_runner
+        tp_partial_ratio: 0.25
+        tp_partial_target_frac: 0.60
+        tp_partial_min_r: 1.0
+        tp_partial_max_r: 1.2
+        move_stop_to_be_at_r: 1.0
         time_stop_bars: 24
         stop_exit_cooldown_bars: 12
         profit_exit_cooldown_bars: 0

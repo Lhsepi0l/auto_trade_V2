@@ -34,6 +34,15 @@ from v2.control.mutating_responses import (
     build_trade_close_response,
 )
 from v2.control.operator_events import build_operator_event_payload
+from v2.control.position_management_runtime import (
+    build_position_management_plan,
+    handle_take_profit_rearm,
+    mark_exit_requested,
+    mark_runner_activated,
+    maybe_handle_fill_event_fast_path,
+    plan_management_policy,
+    plan_uses_runner_management,
+)
 from v2.control.presentation import (
     build_portfolio_slot_summary,
     build_reconcile_response,
@@ -241,7 +250,6 @@ class RuntimeController:
         scheduler: Scheduler,
         order_manager: OrderManager,
         notifier: Notifier,
-        webpush_service: Any | None = None,
         rest_client: Any | None = None,
         user_stream_manager: Any | None = None,
         market_data_state: dict[str, Any] | None = None,
@@ -255,7 +263,6 @@ class RuntimeController:
         self.scheduler = scheduler
         self.order_manager = order_manager
         self.notifier = notifier
-        self.webpush_service = webpush_service
         self.rest_client = rest_client
         self.user_stream_manager = user_stream_manager
         self._market_data_state = market_data_state if market_data_state is not None else {}
@@ -266,13 +273,6 @@ class RuntimeController:
         if (not self.notifier.enabled) and str(self.notifier.ntfy_topic or "").strip():
             self.notifier.enabled = True
         if (
-            str(self.notifier.provider or "none").strip().lower() == "none"
-            and bool(getattr(self.webpush_service, "availability_snapshot", None))
-            and bool((self.webpush_service.availability_snapshot() or {}).get("available"))
-            and bool(self.cfg.secrets.webpush_enabled)
-        ):
-            self.notifier.provider = "webpush"
-        elif (
             str(self.notifier.provider or "none").strip().lower() == "none"
             and str(self.notifier.ntfy_topic or "").strip()
         ):
@@ -1302,148 +1302,25 @@ class RuntimeController:
         self._save_position_management_state(state)
 
     @staticmethod
+    def _plan_management_policy(plan: dict[str, Any] | None) -> str:
+        return plan_management_policy(plan)
+
+    @classmethod
+    def _plan_uses_runner_management(cls, plan: dict[str, Any] | None) -> bool:
+        return plan_uses_runner_management(plan)
+
+    @staticmethod
     def _position_management_side(candidate_side: str | None) -> str:
         side = str(candidate_side or "").strip().upper()
         return "LONG" if side == "BUY" else "SHORT"
 
     def _record_position_management_plan(self, *, cycle: KernelCycleResult) -> None:
-        candidate = cycle.candidate
-        if candidate is None or cycle.state != "executed":
+        plan = build_position_management_plan(cycle=cycle)
+        if not isinstance(plan, dict):
             return
-        execution_hints = (
-            dict(candidate.execution_hints)
-            if isinstance(candidate.execution_hints, dict)
-            else None
-        )
-        if not execution_hints:
-            return
-        symbol = str(candidate.symbol or "").strip().upper()
+        symbol = str(plan.get("symbol") or "").strip().upper()
         if not symbol:
             return
-        entry_price = _to_float(candidate.entry_price, default=0.0)
-        stop_price = _to_float(candidate.stop_price_hint, default=0.0)
-        if entry_price <= 0.0 or stop_price <= 0.0:
-            return
-        risk_per_unit = abs(entry_price - stop_price)
-        if risk_per_unit <= 0.0:
-            return
-
-        plan = {
-            "symbol": symbol,
-            "side": self._position_management_side(getattr(candidate, "side", None)),
-            "entry_score": float(_to_float(getattr(candidate, "score", 0.0), default=0.0)),
-            "entry_regime": str(getattr(candidate, "regime_hint", "") or "").strip().upper() or None,
-            "entry_price": float(entry_price),
-            "stop_price": float(stop_price),
-            "take_profit_price": _to_float(candidate.take_profit_hint, default=0.0),
-            "risk_per_unit": float(risk_per_unit),
-            "volatility_frac": (
-                float(_to_float(getattr(candidate, "volatility_hint", 0.0), default=0.0)) / float(entry_price)
-                if _to_float(getattr(candidate, "volatility_hint", 0.0), default=0.0) > 0.0
-                else float(risk_per_unit) / float(entry_price)
-            ),
-            "entry_time_ms": int(time.time() * 1000),
-            "created_at": _utcnow_iso(),
-            "alpha_id": getattr(candidate, "alpha_id", None),
-            "entry_family": getattr(candidate, "entry_family", None),
-            "max_favorable_price": float(entry_price),
-            "max_favorable_r": 0.0,
-            "progress_check_bars": int(_to_float(execution_hints.get("progress_check_bars"), default=0.0)),
-            "progress_min_mfe_r": float(_to_float(execution_hints.get("progress_min_mfe_r"), default=0.0)),
-            "progress_extend_trigger_r": float(
-                _to_float(execution_hints.get("progress_extend_trigger_r"), default=0.0)
-            ),
-            "progress_extend_bars": int(_to_float(execution_hints.get("progress_extend_bars"), default=0.0)),
-            "reward_risk_reference_r": float(
-                _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0)
-            ),
-            "tp_partial_ratio": float(
-                _to_float(
-                    execution_hints.get("tp_partial_ratio"),
-                    default=0.25
-                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
-                    else 0.0,
-                )
-            ),
-            "tp_partial_at_r": float(
-                _to_float(
-                    execution_hints.get("tp_partial_at_r"),
-                    default=min(
-                        max(
-                            _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0)
-                            * 0.6,
-                            1.0,
-                        ),
-                        1.2,
-                    )
-                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
-                    else 0.0,
-                )
-            ),
-            "move_stop_to_be_at_r": float(
-                _to_float(
-                    execution_hints.get("move_stop_to_be_at_r"),
-                    default=1.0
-                    if _to_float(execution_hints.get("reward_risk_reference_r"), default=0.0) >= 1.5
-                    else 0.0,
-                )
-            ),
-            "time_stop_bars": int(_to_float(execution_hints.get("time_stop_bars"), default=0.0)),
-            "current_time_stop_bars": int(
-                _to_float(execution_hints.get("time_stop_bars"), default=0.0)
-            ),
-            "entry_quality_score_v2": float(
-                _to_float(execution_hints.get("entry_quality_score_v2"), default=0.0)
-            ),
-            "entry_regime_strength": float(
-                _to_float(execution_hints.get("entry_regime_strength"), default=0.0)
-            ),
-            "entry_bias_strength": float(
-                _to_float(execution_hints.get("entry_bias_strength"), default=0.0)
-            ),
-            "quality_exit_applied": bool(execution_hints.get("quality_exit_applied")),
-            "selective_extension_proof_bars": int(
-                _to_float(execution_hints.get("selective_extension_proof_bars"), default=0.0)
-            ),
-            "selective_extension_min_mfe_r": float(
-                _to_float(execution_hints.get("selective_extension_min_mfe_r"), default=0.0)
-            ),
-            "selective_extension_min_regime_strength": float(
-                _to_float(
-                    execution_hints.get("selective_extension_min_regime_strength"),
-                    default=0.0,
-                )
-            ),
-            "selective_extension_min_bias_strength": float(
-                _to_float(
-                    execution_hints.get("selective_extension_min_bias_strength"),
-                    default=0.0,
-                )
-            ),
-            "selective_extension_min_quality_score_v2": float(
-                _to_float(
-                    execution_hints.get("selective_extension_min_quality_score_v2"),
-                    default=0.0,
-                )
-            ),
-            "selective_extension_time_stop_bars": int(
-                _to_float(execution_hints.get("selective_extension_time_stop_bars"), default=0.0)
-            ),
-            "selective_extension_take_profit_r": float(
-                _to_float(execution_hints.get("selective_extension_take_profit_r"), default=0.0)
-            ),
-            "selective_extension_move_stop_to_be_at_r": float(
-                _to_float(
-                    execution_hints.get("selective_extension_move_stop_to_be_at_r"),
-                    default=0.0,
-                )
-            ),
-            "progress_extension_applied": False,
-            "selective_extension_activated": False,
-            "breakeven_protection_armed": False,
-            "partial_reduce_done": False,
-        }
-
         state = self._load_position_management_state()
         state[symbol] = plan
         self._save_position_management_state(state)
@@ -1612,6 +1489,7 @@ class RuntimeController:
             current_bias_strength = _to_float(signal_view.get("bias_strength"), default=0.0)
             entry_score = max(_to_float(plan.get("entry_score"), default=0.0), 0.0)
             if current_signal_side and current_signal_side not in {side} and signal_state == "candidate":
+                plan = mark_exit_requested(plan)
                 self._clear_position_management_state(symbol=symbol)
                 _ = _run_async_blocking(
                     lambda s=symbol: self.close_position(
@@ -1631,6 +1509,7 @@ class RuntimeController:
                 return True, plan
 
             if signal_state != "candidate" and signal_reason in {"regime_missing", "bias_missing"}:
+                plan = mark_exit_requested(plan)
                 self._clear_position_management_state(symbol=symbol)
                 _ = _run_async_blocking(
                     lambda s=symbol: self.close_position(
@@ -1709,6 +1588,7 @@ class RuntimeController:
                             reason="weakness_reduce_reprice",
                         )
                         plan["stop_price"] = float(entry_price)
+                    plan = mark_runner_activated(plan)
                     self._log_event(
                         "position_reduced",
                         symbol=symbol,
@@ -1772,6 +1652,7 @@ class RuntimeController:
                             stop_loss_price=_to_float(plan.get("stop_price"), default=entry_price),
                             reason="weakness_reduce_reprice",
                         )
+                    plan = mark_runner_activated(plan)
                     self._log_event(
                         "position_reduced",
                         symbol=symbol,
@@ -1881,6 +1762,7 @@ class RuntimeController:
                     plan["stop_price"] = float(stop_price)
                     if take_profit_price > 0.0:
                         plan["take_profit_price"] = float(take_profit_price)
+                plan = mark_runner_activated(plan)
 
                 self._log_event(
                     "position_reduced",
@@ -2003,6 +1885,7 @@ class RuntimeController:
                 )
 
         if bool(plan.get("breakeven_protection_armed")) and current_r <= 0.0:
+            plan = mark_exit_requested(plan)
             self._clear_position_management_state(symbol=symbol)
             _ = _run_async_blocking(
                 lambda s=symbol: self.close_position(
@@ -2024,6 +1907,7 @@ class RuntimeController:
         progress_min_mfe_r = _to_float(plan.get("progress_min_mfe_r"), default=0.0)
         if progress_check_bars > 0 and progress_min_mfe_r > 0.0 and held_bars >= progress_check_bars:
             if max_favorable_r < progress_min_mfe_r:
+                plan = mark_exit_requested(plan)
                 self._clear_position_management_state(symbol=symbol)
                 _ = _run_async_blocking(
                     lambda s=symbol: self.close_position(
@@ -2044,6 +1928,7 @@ class RuntimeController:
 
         time_stop_bars = int(_to_float(plan.get("current_time_stop_bars"), default=0.0))
         if time_stop_bars > 0 and held_bars >= time_stop_bars:
+            plan = mark_exit_requested(plan)
             self._clear_position_management_state(symbol=symbol)
             _ = _run_async_blocking(
                 lambda s=symbol: self.close_position(
@@ -2364,6 +2249,26 @@ class RuntimeController:
         from v2.control.cycle import fetch_live_positions
 
         return fetch_live_positions(self)
+
+    def _confirm_live_position_row(self, *, symbol: str) -> tuple[dict[str, Any] | None, bool]:
+        symbol_u = str(symbol or "").strip().upper()
+        if not symbol_u:
+            return None, False
+        positions, position_rows, positions_ok, _position_error = self._fetch_live_positions()
+        if not positions_ok:
+            return None, False
+        position_amt = _to_float(positions.get(symbol_u), default=0.0)
+        if abs(position_amt) <= 0.0:
+            return None, True
+        row = position_rows.get(symbol_u)
+        if isinstance(row, dict):
+            confirmed = dict(row)
+        else:
+            confirmed = {}
+        confirmed["symbol"] = symbol_u
+        confirmed["positionAmt"] = position_amt
+        confirmed["positionSide"] = str(confirmed.get("positionSide") or "BOTH").strip().upper() or "BOTH"
+        return confirmed, True
 
     def _is_live_reentry_blocked(self) -> bool:
         from v2.control.cycle import is_live_reentry_blocked
@@ -2866,6 +2771,19 @@ class RuntimeController:
                             ),
                             timeout_sec=8.0,
                         )
+                        if outcome == "TP" and isinstance(management_plan, dict):
+                            if handle_take_profit_rearm(
+                                self,
+                                symbol=symbol,
+                                filled_client_id=filled_id,
+                                management_plan=dict(management_plan),
+                            ):
+                                next_management_state[symbol] = self._load_position_management_state().get(
+                                    symbol,
+                                    dict(management_plan),
+                                )
+                                continue
+
                         next_management_state.pop(symbol, None)
                         self._emit_bracket_exit_alert(symbol=symbol, outcome=outcome)
                         if outcome == "SL":
@@ -3250,6 +3168,7 @@ class RuntimeController:
             event=event,
             reason="user_stream_event",
         )
+        _ = maybe_handle_fill_event_fast_path(self, event=event)
         self._user_stream_last_event_at = _utcnow_iso()
         self._last_private_stream_ok_at = self._user_stream_last_event_at
         self._update_stale_transitions()
@@ -3543,7 +3462,6 @@ def build_runtime_controller(
     scheduler: Scheduler,
     event_bus: EventBus,
     notifier: Notifier,
-    webpush_service: Any | None = None,
     rest_client: Any | None,
     user_stream_manager: Any | None = None,
     market_data_state: dict[str, Any] | None = None,
@@ -3559,7 +3477,6 @@ def build_runtime_controller(
         scheduler=scheduler,
         order_manager=OrderManager(event_bus=event_bus),
         notifier=notifier,
-        webpush_service=webpush_service,
         rest_client=rest_client,
         user_stream_manager=user_stream_manager,
         market_data_state=market_data_state,

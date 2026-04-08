@@ -2475,6 +2475,265 @@ def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
     assert "+5.2500 USDT" in notification.body
 
 
+def test_control_api_bracket_poller_rearms_after_take_profit_when_position_remains_open(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_brackets_tp_rearm.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-old",
+        sl_order_client_id="sl-old",
+        state="ACTIVE",
+    )
+    _ = storage.insert_fill(
+        fill_id="fill-tp-rearm-1",
+        client_id="tp-old",
+        exchange_id="tp-rearm-1",
+        symbol="BTCUSDT",
+        side="SELL",
+        qty=0.01,
+        price=101.0,
+        realized_pnl=1.25,
+        fill_time_ms=int(time.time() * 1000),
+    )
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "management_policy": "tp1_runner",
+                    "entry_price": 100.0,
+                    "stop_price": 100.0,
+                    "take_profit_price": 103.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": int(time.time() * 1000) - (15 * 60 * 1000),
+                    "current_time_stop_bars": 12,
+                    "time_stop_bars": 12,
+                }
+            }
+        },
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTTakeProfitRearm:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+            self.place_calls: list[dict[str, str]] = []
+            self.position_calls = 0
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.place_calls.append(dict(params))
+            return {
+                "algoId": 5000 + len(self.place_calls),
+                "clientAlgoId": str(params.get("clientAlgoId") or ""),
+                "status": "NEW",
+            }
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "sl-old"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            self.position_calls += 1
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.02",
+                    "entryPrice": "100.0",
+                    "markPrice": "101.2",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000", "walletBalance": "1000"}]
+
+    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None)
+    )
+
+    rest = _AlgoRESTTakeProfitRearm()
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=rest,
+    )
+    notifier.send_notification.reset_mock()
+
+    controller._poll_brackets_once()
+
+    assert rest.position_calls >= 2
+    assert {str(item.get("clientAlgoId") or "") for item in rest.cancel_calls} == {"sl-old"}
+    assert len(rest.place_calls) == 2
+    rows = storage.list_bracket_states()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "ACTIVE"
+    assert rows[0]["tp_order_client_id"] not in {None, "", "tp-old"}
+    assert rows[0]["sl_order_client_id"] not in {None, "", "sl-old"}
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    assert "BTCUSDT" in payload["positions"]
+    assert notifier.send_notification.call_count == 0
+
+
+def test_control_api_user_stream_trade_event_rearms_runner_without_waiting_for_poller(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        mode="live",
+        env="testnet",
+        env_map={"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"},
+    )
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_tp_fast_path.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    storage.set_bracket_state(
+        symbol="BTCUSDT",
+        tp_order_client_id="tp-fast",
+        sl_order_client_id="sl-fast",
+        state="ACTIVE",
+    )
+    storage.save_runtime_marker(
+        marker_key="position_management_state",
+        payload={
+            "positions": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "side": "LONG",
+                    "management_policy": "tp1_runner",
+                    "lifecycle_state": "ENTRY_ARMED",
+                    "entry_price": 100.0,
+                    "stop_price": 100.0,
+                    "take_profit_price": 103.0,
+                    "risk_per_unit": 2.0,
+                    "entry_time_ms": int(time.time() * 1000) - (15 * 60 * 1000),
+                    "current_time_stop_bars": 12,
+                    "time_stop_bars": 12,
+                    "tp_partial_ratio": 0.25,
+                    "tp_partial_at_r": 1.2,
+                    "move_stop_to_be_at_r": 1.0,
+                }
+            }
+        },
+    )
+
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+
+    class _KernelNoop:
+        def run_once(self) -> KernelCycleResult:
+            return KernelCycleResult(state="no_candidate", reason="no_candidate", candidate=None)
+
+    class _AlgoRESTFastPath:
+        def __init__(self) -> None:
+            self.cancel_calls: list[dict[str, str]] = []
+            self.place_calls: list[dict[str, str]] = []
+
+        async def place_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.place_calls.append(dict(params))
+            return {
+                "algoId": 7000 + len(self.place_calls),
+                "clientAlgoId": str(params.get("clientAlgoId") or ""),
+                "status": "NEW",
+            }
+
+        async def cancel_algo_order(self, *, params: dict[str, str]) -> dict[str, str]:
+            self.cancel_calls.append(dict(params))
+            return {}
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, str]]:
+            _ = symbol
+            return [{"symbol": "BTCUSDT", "clientAlgoId": "sl-fast"}]
+
+        async def get_positions(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.02",
+                    "entryPrice": "100.0",
+                    "markPrice": "101.2",
+                    "positionSide": "BOTH",
+                }
+            ]
+
+        async def get_balances(self) -> list[dict[str, str]]:
+            return [{"asset": "USDT", "availableBalance": "1000", "walletBalance": "1000"}]
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=_KernelNoop(),
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=Notifier(enabled=False),
+        rest_client=_AlgoRESTFastPath(),
+    )
+
+    asyncio.run(
+        controller._handle_user_stream_event(
+            {
+                "e": "ORDER_TRADE_UPDATE",
+                "E": int(time.time() * 1000),
+                "o": {
+                    "s": "BTCUSDT",
+                    "c": "tp-fast",
+                    "i": 9001,
+                    "x": "TRADE",
+                    "X": "FILLED",
+                    "S": "SELL",
+                    "l": "0.01",
+                    "L": "101.0",
+                    "rp": "1.25",
+                    "t": 55501,
+                    "T": int(time.time() * 1000),
+                },
+            }
+        )
+    )
+
+    rows = storage.list_bracket_states()
+    assert rows[0]["state"] == "ACTIVE"
+    assert rows[0]["tp_order_client_id"] not in {None, "", "tp-fast"}
+    assert rows[0]["sl_order_client_id"] not in {None, "", "sl-fast"}
+    payload = storage.load_runtime_marker(marker_key="position_management_state")
+    assert payload is not None
+    assert payload["positions"]["BTCUSDT"]["lifecycle_state"] == "RUNNER_ACTIVE"
+
+
 def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -3320,6 +3579,42 @@ def test_control_api_records_position_management_plan_for_executed_cycle(
     assert plan["stop_price"] == 98.0
     assert plan["take_profit_price"] == 104.0
     assert plan["progress_check_bars"] == 6
+
+
+def test_control_api_record_plan_does_not_infer_runner_defaults_from_reward_target(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    cycle = KernelCycleResult(
+        state="executed",
+        reason="executed",
+        candidate=Candidate(
+            symbol="BTCUSDT",
+            side="BUY",
+            score=1.0,
+            entry_price=100.0,
+            stop_price_hint=98.0,
+            take_profit_hint=104.0,
+            execution_hints={
+                "time_stop_bars": 12,
+                "reward_risk_reference_r": 2.0,
+            },
+        ),
+        size=SizePlan(symbol="BTCUSDT", qty=0.01, leverage=3.0, notional=1.0),
+        execution=ExecutionResult(ok=True, order_id="oid-2", reason="live_order_submitted"),
+    )
+
+    controller._record_position_management_plan(cycle=cycle)
+
+    payload = controller.state_store.runtime_storage().load_runtime_marker(
+        marker_key="position_management_state"
+    )
+    assert payload is not None
+    plan = payload["positions"]["BTCUSDT"]
+    assert plan["reward_risk_reference_r"] == 2.0
+    assert plan["tp_partial_ratio"] == 0.0
+    assert plan["tp_partial_at_r"] == 0.0
+    assert plan["move_stop_to_be_at_r"] == 0.0
 
 
 def test_control_api_position_management_progress_failure_closes_position(

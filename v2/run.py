@@ -69,7 +69,6 @@ from v2.backtest.providers import (  # noqa: F401
 from v2.backtest.research_policy import _portfolio_research_gate  # noqa: F401
 from v2.backtest.snapshots import _FundingRateRow, _Kline15m, _ReplayFrame  # noqa: F401
 from v2.backtest.summaries import _build_half_year_window_summaries, _format_utc_iso  # noqa: F401
-from v2.clean_room.kernel import _build_strategy_selector  # noqa: F401
 from v2.common.logging_setup import LoggingConfig, setup_logging
 from v2.config.loader import (
     EffectiveConfig,
@@ -78,6 +77,7 @@ from v2.config.loader import (
 )
 from v2.engine import EngineStateStore
 from v2.exchange import BinanceAdapter
+from v2.kernel.kernel import _build_strategy_selector  # noqa: F401
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 from v2.tpsl import BracketPlanner  # noqa: F401
@@ -1296,6 +1296,23 @@ def _run_local_backtest_portfolio_replay(*args, **kwargs):
 
 
 def _run_local_backtest(*args, **kwargs):
+    if args and isinstance(args[0], EffectiveConfig):
+        cfg = args[0]
+        enabled = [
+            entry
+            for entry in cfg.behavior.strategies
+            if bool(getattr(entry, "enabled", False))
+        ]
+        params = enabled[0].params if enabled and isinstance(getattr(enabled[0], "params", None), dict) else {}
+        kwargs.setdefault("drift_side_mode", str(params.get("drift_side_mode") or "BOTH"))
+        kwargs.setdefault(
+            "drift_take_profit_r",
+            float(params.get("drift_take_profit_r") or 1.8),
+        )
+        kwargs.setdefault(
+            "drift_time_stop_bars",
+            int(params.get("drift_time_stop_bars") or 16),
+        )
     return _lazy_impl("v2.backtest.local_runner", "_run_local_backtest")(*args, **kwargs)
 
 
@@ -1535,6 +1552,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             equity_floor_pct=float(args.backtest_equity_floor_pct),
             max_trade_margin_loss_fraction=float(args.backtest_max_trade_margin_loss_fraction),
             min_signal_score=float(args.backtest_min_signal_score),
+            enabled_alphas_override=(
+                None
+                if args.backtest_enabled_alphas is None
+                else str(args.backtest_enabled_alphas)
+            ),
             reverse_exit_min_profit_pct=float(args.backtest_reverse_exit_min_profit_pct),
             reverse_exit_min_signal_score=float(args.backtest_reverse_exit_min_signal_score),
             drawdown_scale_start_pct=float(args.backtest_drawdown_scale_start_pct),
@@ -1585,6 +1607,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.backtest_alpha_trend_adx_rising_min_delta_4h
             ),
             alpha_expected_move_cost_mult=float(args.backtest_alpha_expected_move_cost_mult),
+            drift_side_mode=str(args.backtest_drift_side_mode),
+            drift_take_profit_r=float(args.backtest_drift_take_profit_r),
+            drift_time_stop_bars=int(args.backtest_drift_time_stop_bars),
             fb_failed_break_buffer_bps=float(args.backtest_fb_failed_break_buffer_bps),
             fb_wick_ratio_min=float(args.backtest_fb_wick_ratio_min),
             fb_take_profit_r=float(args.backtest_fb_take_profit_r),

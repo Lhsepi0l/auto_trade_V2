@@ -20,6 +20,10 @@ class OperatorService:
     def __init__(self, *, controller: RuntimeController) -> None:
         self._controller = controller
 
+    def _webpush_service(self) -> Any | None:
+        service = getattr(self._controller, "webpush_service", None)
+        return service if service is not None else None
+
     @staticmethod
     def _stringify_value(value: Any) -> str:
         if isinstance(value, bool):
@@ -44,79 +48,81 @@ class OperatorService:
         return payload
 
     def push_state(self) -> dict[str, Any]:
-        service = getattr(self._controller, "webpush_service", None)
-        runtime_provider = self._controller.notifier.resolved_provider()
-        if service is None:
+        service = self._webpush_service()
+        if service is None or not hasattr(service, "availability_snapshot"):
             return {
                 "available": False,
-                "runtime_provider": runtime_provider,
-                "runtime_provider_enabled": runtime_provider == "webpush" and bool(self._controller.notifier.enabled),
                 "public_key": None,
                 "subscription_count": 0,
-                "last_error": "webpush_service_unavailable",
-                "devices": [],
+                "subscriptions": [],
+                "last_error": "webpush_unavailable",
             }
-        availability = service.availability_snapshot()
-        availability["runtime_provider"] = runtime_provider
-        availability["runtime_provider_enabled"] = runtime_provider == "webpush" and bool(self._controller.notifier.enabled)
-        availability["devices"] = service.list_subscriptions()
-        availability["app_scope"] = "/operator"
-        availability["service_worker_url"] = "/operator/sw.js"
-        availability["manifest_url"] = "/operator/manifest.webmanifest"
-        return availability
+        snapshot = service.availability_snapshot()
+        subscriptions = (
+            service.list_subscriptions()
+            if hasattr(service, "list_subscriptions")
+            else []
+        )
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        if not isinstance(subscriptions, list):
+            subscriptions = []
+        return {
+            "available": bool(snapshot.get("available")),
+            "public_key": snapshot.get("public_key"),
+            "subscription_count": int(snapshot.get("subscription_count") or len(subscriptions)),
+            "subscriptions": list(subscriptions),
+            "last_error": snapshot.get("last_error"),
+        }
 
     def register_push_subscription(
         self,
         *,
         subscription: dict[str, Any],
-        device_id: str | None,
-        device_label: str | None,
-        user_agent: str | None,
-        platform: str | None,
-        standalone: bool,
+        device_id: str | None = None,
+        device_label: str | None = None,
+        user_agent: str | None = None,
+        platform: str | None = None,
+        standalone: bool = False,
     ) -> dict[str, Any]:
-        service = getattr(self._controller, "webpush_service", None)
-        if service is None:
-            raise ValueError("webpush_service_unavailable")
+        service = self._webpush_service()
+        if service is None or not hasattr(service, "register_subscription"):
+            raise ValueError("webpush_unavailable")
         result = service.register_subscription(
-            subscription=subscription,
+            subscription=dict(subscription or {}),
             device_id=device_id,
             device_label=device_label,
             user_agent=user_agent,
             platform=platform,
-            standalone=standalone,
+            standalone=bool(standalone),
         )
-        result["push"] = self.push_state()
         return wrap_operator_action(
             action="push_subscribe",
-            raw_result=result,
-            context={"device_label": str(device_label or "").strip() or None},
+            raw_result=result if isinstance(result, dict) else {"ok": True},
+            context={"device_label": device_label, "platform": platform},
         )
 
     def unregister_push_subscription(self, *, endpoint: str) -> dict[str, Any]:
-        service = getattr(self._controller, "webpush_service", None)
-        if service is None:
-            raise ValueError("webpush_service_unavailable")
-        result = service.unregister_subscription(endpoint=endpoint)
-        result["push"] = self.push_state()
-        return wrap_operator_action(action="push_unsubscribe", raw_result=result)
+        service = self._webpush_service()
+        if service is None or not hasattr(service, "unregister_subscription"):
+            raise ValueError("webpush_unavailable")
+        result = service.unregister_subscription(endpoint=str(endpoint))
+        return wrap_operator_action(
+            action="push_unsubscribe",
+            raw_result=result if isinstance(result, dict) else {"ok": True},
+            context={"endpoint": str(endpoint)},
+        )
 
     def send_push_test(self, *, device_label: str | None = None) -> dict[str, Any]:
-        service = getattr(self._controller, "webpush_service", None)
-        if service is None:
-            raise ValueError("webpush_service_unavailable")
-        dispatch = service.send_test_notification(device_label=device_label)
-        result = {
-            "ok": bool(dispatch.sent),
-            "notifier_sent": bool(dispatch.sent),
-            "notifier_error": dispatch.error,
-            "status": dispatch.status,
-            "push": self.push_state(),
-        }
+        service = self._webpush_service()
+        if service is None or not hasattr(service, "send_test_notification"):
+            raise ValueError("webpush_unavailable")
+        result = service.send_test_notification(device_label=device_label)
+        raw_result = result if isinstance(result, dict) else {"ok": getattr(result, "sent", True)}
         return wrap_operator_action(
             action="push_test",
-            raw_result=result,
-            context={"device_label": str(device_label or "").strip() or None},
+            raw_result=raw_result,
+            context={"device_label": device_label},
         )
 
     def record_client_log(
@@ -125,24 +131,22 @@ class OperatorService:
         category: str,
         title: str,
         main_text: str,
-        sub_text: str | None,
-        context: dict[str, Any],
+        sub_text: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        event_time = context.get("event_time")
-        if not isinstance(event_time, str) or not event_time.strip():
-            from datetime import datetime, timezone
-
-            event_time = datetime.now(timezone.utc).isoformat()
-        self._controller.state_store.runtime_storage().append_operator_event(
-            event_type="client_log",
-            category=category,
-            title=title,
-            main_text=main_text,
+        self._controller._log_event(
+            "client_log",
+            category=str(category or "action"),
+            title=str(title or "client_log"),
+            main_text=str(main_text or ""),
             sub_text=sub_text,
-            event_time=event_time,
-            context=context,
+            client_context=dict(context or {}),
         )
-        return {"ok": True}
+        return wrap_operator_action(
+            action="client_log",
+            raw_result={"ok": True},
+            context={"category": category, "title": title},
+        )
 
     def start_or_resume(self) -> dict[str, Any]:
         return wrap_operator_action(action="start_resume", raw_result=self._controller.start())

@@ -586,6 +586,32 @@ def test_alpha_v2_expansion_emits_progress_aware_exit_hints() -> None:
     assert float(decision["execution"]["entry_quality_score_v2"]) > 0.0
 
 
+def test_alpha_v2_expansion_emits_explicit_runner_management_hints() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.8,
+            "expansion_range_atr_min": 0.5,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.35,
+            "expansion_close_location_min": 0.65,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_expansion()})
+
+    assert decision["intent"] == "LONG"
+    assert decision["management_hint"] == "tp1_runner"
+    execution = decision["execution"]
+    assert execution["management_policy"] == "tp1_runner"
+    assert execution["tp_partial_ratio"] == 0.25
+    assert execution["tp_partial_at_r"] == 1.2
+    assert execution["move_stop_to_be_at_r"] == 1.0
+    assert execution["reward_risk_reference_r"] == 2.0
+
+
 def test_alpha_v2_expansion_emits_selective_extension_hints() -> None:
     strategy = RA2026AlphaV2(
         params={

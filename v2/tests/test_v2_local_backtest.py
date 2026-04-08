@@ -264,6 +264,19 @@ def test_local_backtest_profile_default_survives_when_cli_override_is_omitted() 
     assert merged["expansion_buffer_bps"] == 2.0
 
 
+def test_local_backtest_enabled_alphas_override_wins_over_profile_default() -> None:
+    merged = _merge_local_backtest_profile_alpha_overrides(
+        profile_name="ra_2026_alpha_v2_expansion_live_candidate",
+        active_strategy_name="ra_2026_alpha_v2",
+        strategy_runtime_params={
+            "enabled_alphas": ["alpha_drift"],
+        },
+    )
+
+    assert merged["enabled_alphas"] == ["alpha_drift"]
+    assert merged["expansion_quality_score_v2_min"] == 0.62
+
+
 def test_calc_max_drawdown_pct() -> None:
     value = _calc_max_drawdown_pct([100.0, 110.0, 99.0, 120.0, 108.0])
     assert round(value, 2) == 10.0
