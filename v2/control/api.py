@@ -251,6 +251,7 @@ class RuntimeController:
         order_manager: OrderManager,
         notifier: Notifier,
         rest_client: Any | None = None,
+        webpush_service: Any | None = None,
         user_stream_manager: Any | None = None,
         market_data_state: dict[str, Any] | None = None,
         runtime_lock_active: bool = False,
@@ -264,6 +265,7 @@ class RuntimeController:
         self.order_manager = order_manager
         self.notifier = notifier
         self.rest_client = rest_client
+        self.webpush_service = webpush_service
         self.user_stream_manager = user_stream_manager
         self._market_data_state = market_data_state if market_data_state is not None else {}
         self._runtime_lock_active = bool(runtime_lock_active)
@@ -3463,6 +3465,7 @@ def build_runtime_controller(
     event_bus: EventBus,
     notifier: Notifier,
     rest_client: Any | None,
+    webpush_service: Any | None = None,
     user_stream_manager: Any | None = None,
     market_data_state: dict[str, Any] | None = None,
     runtime_lock_active: bool = False,
@@ -3478,6 +3481,7 @@ def build_runtime_controller(
         order_manager=OrderManager(event_bus=event_bus),
         notifier=notifier,
         rest_client=rest_client,
+        webpush_service=webpush_service,
         user_stream_manager=user_stream_manager,
         market_data_state=market_data_state,
         runtime_lock_active=runtime_lock_active,
