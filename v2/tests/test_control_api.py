@@ -6728,6 +6728,93 @@ def test_live_uncertainty_still_allows_flatten_reduce_only_recovery(tmp_path) ->
     assert exchange.reduce_only_calls[0]["side"] == "SELL"
 
 
+def test_manual_close_position_does_not_latch_ops_gate_when_runtime_was_not_paused(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    class _HealthyREST:
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_balances(self) -> list[dict[str, Any]]:
+            return [{"asset": "USDT", "availableBalance": "1000"}]
+
+    class _FlattenExchange:
+        def __init__(self) -> None:
+            self.reduce_only_calls: list[dict[str, Any]] = []
+
+        async def cancel_all_open_orders(self, *, symbol: str) -> dict[str, Any]:
+            _ = symbol
+            return {}
+
+        async def get_open_orders(self) -> list[dict[str, Any]]:
+            return []
+
+        async def get_open_algo_orders(self, *, symbol: str | None = None) -> list[dict[str, Any]]:
+            _ = symbol
+            return []
+
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            _ = params
+            return {}
+
+        async def get_positions(self) -> list[dict[str, Any]]:
+            if self.reduce_only_calls:
+                return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
+            return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
+
+        async def place_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: str,
+            quantity: float,
+            position_side: str = "BOTH",
+        ) -> dict[str, Any]:
+            self.reduce_only_calls.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "position_side": position_side,
+                }
+            )
+            return {}
+
+    controller, _state_store, _ops = _build_live_controller(tmp_path, rest_client=_HealthyREST())
+    exchange = _FlattenExchange()
+    controller.ops.exchange = exchange
+
+    out = asyncio.run(controller.close_position(symbol="BTCUSDT"))
+
+    assert out["symbol"] == "BTCUSDT"
+    assert len(exchange.reduce_only_calls) == 1
+    ops_state = controller.state_store.get().operational
+    assert ops_state.paused is False
+    assert ops_state.safe_mode is False
+
+
+def test_start_resumes_latched_ops_mode_while_engine_thread_is_running(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    controller.state_store.set(status="RUNNING")
+    controller.ops.safe_mode()
+    controller._running = True
+    controller._thread = threading.current_thread()
+    controller._risk["last_block_reason"] = "ops_paused"
+
+    out = controller.start()
+
+    assert out["state"] == "RUNNING"
+    ops_state = controller.state_store.get().operational
+    assert ops_state.paused is False
+    assert ops_state.safe_mode is False
+    assert controller._risk["last_block_reason"] is None
+
+
 def test_live_market_data_stale_blocks_new_entries_and_unblocks_when_fresh(tmp_path) -> None:  # type: ignore[no-untyped-def]
     class _HealthyREST:
         async def get_open_orders(self) -> list[dict[str, Any]]:

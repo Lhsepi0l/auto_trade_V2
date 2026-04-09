@@ -3030,15 +3030,24 @@ class RuntimeController:
 
     def start(self) -> dict[str, Any]:
         thread_to_start: threading.Thread | None = None
+        resumed_running_gate = False
         with self._lock:
             self._auto_reconcile_if_recovery_required(reason="operator_start")
             active_thread = self._active_worker_thread_locked()
             if self._running and active_thread is not None:
+                ops_state = self.state_store.get().operational
+                if bool(ops_state.paused) or bool(ops_state.safe_mode):
+                    self.ops.resume()
+                    resumed_running_gate = True
+                    if self._risk.get("last_block_reason") in {"ops_paused", "safe_mode"}:
+                        self._risk["last_block_reason"] = None
                 state = capture_runtime_state(self.state_store)
-                return build_state_response(runtime_state=state)
+                result = build_state_response(runtime_state=state)
+                self._emit_status_update(force=resumed_running_gate)
+                return result
             self.state_store.set(status="RUNNING")
             self.ops.resume()
-            if self._risk.get("last_block_reason") == "ops_paused":
+            if self._risk.get("last_block_reason") in {"ops_paused", "safe_mode"}:
                 self._risk["last_block_reason"] = None
             self._running = True
             self._thread_stop.clear()
@@ -3377,7 +3386,7 @@ class RuntimeController:
         position_state = self.state_store.get().current_position.get(symbol.upper())
         close_qty = abs(_to_float(getattr(position_state, "position_amt", 0.0), default=0.0))
         self._log_event("flatten_requested", action="close_position", symbol=symbol.upper())
-        result = await self.ops.flatten(symbol=symbol)
+        result = await self.ops.flatten(symbol=symbol, latch_ops_mode=False)
         _ = self.notifier.send_notification(
             build_position_close_notification(
                 symbol=result.symbol,

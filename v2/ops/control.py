@@ -56,16 +56,25 @@ class OpsController:
         ops = self.state_store.get().operational
         return (not ops.paused) and (not ops.safe_mode)
 
-    async def flatten(self, *, symbol: str, retries: int = 10, retry_delay_sec: float = 0.2) -> FlattenResult:
+    async def flatten(
+        self,
+        *,
+        symbol: str,
+        retries: int = 10,
+        retry_delay_sec: float = 0.2,
+        latch_ops_mode: bool = True,
+    ) -> FlattenResult:
         symbol_u = symbol.upper()
 
-        self.state_store.apply_ops_mode(paused=True, safe_mode=True, reason=f"ops.flatten:{symbol_u}")
+        if latch_ops_mode:
+            self.state_store.apply_ops_mode(paused=True, safe_mode=True, reason=f"ops.flatten:{symbol_u}")
 
         if self.exchange is None:
+            ops = self.state_store.get().operational
             return FlattenResult(
                 symbol=symbol_u,
-                paused=True,
-                safe_mode=True,
+                paused=bool(ops.paused),
+                safe_mode=bool(ops.safe_mode),
                 open_regular_orders=0,
                 open_algo_orders=0,
                 position_amt=0.0,
@@ -100,10 +109,11 @@ class OpsController:
                     balances=[],
                     reason=f"ops.flatten.verify:{symbol_u}",
                 )
+                ops = self.state_store.get().operational
                 return FlattenResult(
                     symbol=symbol_u,
-                    paused=True,
-                    safe_mode=True,
+                    paused=bool(ops.paused),
+                    safe_mode=bool(ops.safe_mode),
                     open_regular_orders=0,
                     open_algo_orders=0,
                     position_amt=0.0,
