@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from v2.control import api as api_module
+from v2.control.runtime_utils import (
+    FutureTimeoutError,
+    logger,
+)
+from v2.control.runtime_utils import (
+    run_async_blocking as _run_async_blocking,
+)
+from v2.control.runtime_utils import (
+    to_float as _to_float,
+)
 from v2.exchange.types import ResyncSnapshot
-
-FutureTimeoutError = api_module.FutureTimeoutError
-_run_async_blocking = api_module._run_async_blocking
-_to_float = api_module._to_float
-logger = api_module.logger
 
 
 def recover_submission_intents_from_snapshot(

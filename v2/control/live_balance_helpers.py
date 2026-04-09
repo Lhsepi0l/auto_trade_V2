@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any
 
+from v2.control.runtime_utils import FutureTimeoutError, age_seconds, run_async_blocking, to_float
 from v2.exchange import BinanceRESTError
 
 if TYPE_CHECKING:
@@ -14,34 +14,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("v2.control.api")
 
 
-def _api_module() -> Any:
-    from v2.control import api as api_module
-
-    return api_module
-
-
 def build_freshness_snapshot(controller: RuntimeController) -> dict[str, Any]:
-    api_module = _api_module()
-    _age_seconds = api_module._age_seconds
-    _to_float = api_module._to_float
-
     user_ws_stale_sec = max(
         10.0,
-        _to_float(
+        to_float(
             controller._risk.get("user_ws_stale_sec"),
             default=max(float(controller.scheduler.tick_seconds) * 4.0, 60.0),
         ),
     )
     market_data_stale_sec = max(
         5.0,
-        _to_float(
+        to_float(
             controller._risk.get("market_data_stale_sec"),
             default=max(float(controller.scheduler.tick_seconds) * 2.0, 30.0),
         ),
     )
     reconcile_max_age_sec = max(
         30.0,
-        _to_float(controller._risk.get("reconcile_max_age_sec"), default=300.0),
+        to_float(controller._risk.get("reconcile_max_age_sec"), default=300.0),
     )
     last_user_ws_event_at = controller._user_stream_last_event_at
     last_private_stream_ok_at = controller._last_private_stream_ok_at
@@ -52,13 +42,13 @@ def build_freshness_snapshot(controller: RuntimeController) -> dict[str, Any]:
     )
     last_market_data_source_error = controller._market_data_state.get("last_market_data_source_error")
     last_reconcile_at = controller.state_store.get().last_reconcile_at
-    user_ws_age_sec = _age_seconds(last_private_stream_ok_at)
-    market_data_age_sec = _age_seconds(last_market_data_at)
-    market_data_source_age_sec = _age_seconds(last_market_data_source_ok_at)
-    reconcile_age_sec = _age_seconds(last_reconcile_at)
+    user_ws_age_sec = age_seconds(last_private_stream_ok_at)
+    market_data_age_sec = age_seconds(last_market_data_at)
+    market_data_source_age_sec = age_seconds(last_market_data_source_ok_at)
+    reconcile_age_sec = age_seconds(last_reconcile_at)
 
     if user_ws_age_sec is None and controller._user_stream_started:
-        user_ws_age_sec = _age_seconds(controller._user_stream_started_at)
+        user_ws_age_sec = age_seconds(controller._user_stream_started_at)
 
     user_ws_stale = (
         controller.cfg.mode == "live"
@@ -137,10 +127,6 @@ def get_cached_or_fallback_balance(
 def fetch_live_usdt_balance(
     controller: RuntimeController,
 ) -> tuple[float | None, float | None, str]:
-    api_module = _api_module()
-    _run_async_blocking = api_module._run_async_blocking
-    _to_float = api_module._to_float
-
     fresh_cache = get_cached_live_balance(controller, max_age_sec=20.0)
     if fresh_cache is not None:
         controller._last_balance_error = None
@@ -158,7 +144,7 @@ def fetch_live_usdt_balance(
     fetch_exc: Exception | None = None
     for attempt in range(2):
         try:
-            payload = _run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
+            payload = run_async_blocking(lambda: rest_client.get_balances(), timeout_sec=8.0)
             fetch_exc = None
             break
         except Exception as exc:  # noqa: BLE001
@@ -219,11 +205,11 @@ def fetch_live_usdt_balance(
         controller._last_balance_error_detail = "asset_usdt_not_found"
         return get_cached_or_fallback_balance(controller, preserve_private_error=True)
 
-    available = _to_float(
+    available = to_float(
         target.get("availableBalance") or target.get("withdrawAvailable") or target.get("balance"),
         default=0.0,
     )
-    wallet = _to_float(
+    wallet = to_float(
         target.get("walletBalance")
         or target.get("crossWalletBalance")
         or target.get("balance"),

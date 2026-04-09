@@ -2,15 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from v2.control import api as api_module
+from v2.control.runtime_utils import (
+    FutureTimeoutError,
+    logger,
+)
+from v2.control.runtime_utils import (
+    run_async_blocking as _run_async_blocking,
+)
+from v2.control.runtime_utils import (
+    to_bool as _to_bool,
+)
+from v2.control.runtime_utils import (
+    to_float as _to_float,
+)
+from v2.control.runtime_utils import (
+    utcnow_iso as _utcnow_iso,
+)
 from v2.kernel.contracts import KernelCycleResult
-
-FutureTimeoutError = api_module.FutureTimeoutError
-_run_async_blocking = api_module._run_async_blocking
-_to_bool = api_module._to_bool
-_to_float = api_module._to_float
-_utcnow_iso = api_module._utcnow_iso
-logger = api_module.logger
 
 
 def _summarize_alpha_reject_focus(alpha_blocks: dict[str, Any]) -> str | None:

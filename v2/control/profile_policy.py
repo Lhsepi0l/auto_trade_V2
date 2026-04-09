@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from v2.control.runtime_utils import normalize_pct as _normalize_pct
+from v2.control.runtime_utils import to_bool as _to_bool
+from v2.control.runtime_utils import to_float as _to_float
+
 CANONICAL_LIVE_PROFILE = "ra_2026_alpha_v2_expansion_verified_q070"
 PRIVATE_REST_UNSAFE_ERRORS = {
     "rest_client_unavailable",
@@ -68,12 +72,6 @@ def build_live_readiness_snapshot(
     live_balance_source: str | None = None,
     private_error: str | None = None,
 ) -> dict[str, Any]:
-    from v2.control import api as api_module
-
-    _normalize_pct = api_module._normalize_pct
-    _to_bool = api_module._to_bool
-    _to_float = api_module._to_float
-
     gate = controller._gate_snapshot(probe_private_rest=True)
     strategies = [
         str(entry.name).strip()
