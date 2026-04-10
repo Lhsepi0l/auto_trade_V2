@@ -42,6 +42,14 @@ Use Python 3.10+ conventions with 4-space indentation and type hints on public i
 - Keep behavior config in `v2/config/config.yaml`; treat `.env` as secrets/infrastructure only
 - Prefer deletion over addition, and prefer existing helpers/patterns before new abstractions
 
+## Engineering Standard
+- Always write code with optimization in mind first: avoid unnecessary I/O, repeated computation, duplicate branching, and hidden work
+- Never accept messy or tangled code when a clearer boundary or smaller design will solve the same problem
+- Avoid hardcoding unless the value is a true domain constant that is unlikely to change; prefer config, typed contracts, and explicit helper boundaries
+- Favor simple, explicit, composable code over clever patches, incidental abstractions, and “just make it work” glue
+- Write as if the code will be reviewed by a 10+ year senior cryptocurrency quant trading engineer: correctness, risk awareness, runtime efficiency, and maintainability all matter at the same time
+- If a change makes the code harder to reason about, keep refactoring until the structure reads cleanly
+
 ## Testing Guidelines
 Use `pytest` with test files named `test_*.py` under `v2/tests/`.
 - Add or update tests with every logic change, especially around control/runtime, exchange adapters, and strategy gating
