@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--control-http",
         action="store_true",
-        help="run v2 full control HTTP API (Discord compatible)",
+        help="run v2 full control HTTP API",
     )
     parser.add_argument(
         "--operator-web",

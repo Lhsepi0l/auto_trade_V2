@@ -99,7 +99,7 @@ if [[ "$ENVIRONMENT" != "testnet" && "$ENVIRONMENT" != "prod" ]]; then
 fi
 
 if [[ "$CONTROL_HTTP_MODE" != "control-http" ]]; then
-    echo "run_stack.sh requires control-http. --ops-http is blocked because /readyz and Discord bot wiring depend on the full control API."
+    echo "run_stack.sh requires control-http. --ops-http is blocked because /readyz depends on the full control API."
     exit 1
 fi
 

@@ -42,7 +42,6 @@ python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live 
 - control HTTP는 `127.0.0.1:8101` 기준으로만 노출합니다.
 - control HTTP mutating endpoint에는 별도 인증이 없으므로 SSH 터널/VPN/역방향 프록시 인증 없이 외부 공개하지 않습니다.
 - 정상적인 일상 운영은 웹 패널(`http://127.0.0.1:8101/operator`)을 기본으로 사용합니다.
-- Discord는 선택형 fallback / emergency-use-only surface 입니다.
 
 ### 종료
 - 수동 중지는 `Ctrl+C`로 프로세스를 종료합니다.
@@ -52,7 +51,7 @@ python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live 
 ### 옵션
 - `--ops-action` 사용 시에는 즉시 종료되는 단일 동작 CLI 입니다.
 - `--ops-http`를 함께 사용하면 오퍼레이터 API 서버를 띄워서 HTTP로 제어합니다.
-- `--control-http`를 사용하면 Discord 패널 호환 제어 API(`http://<host>:8101`)를 띄웁니다.
+- `--control-http`를 사용하면 제어 API(`http://<host>:8101`)를 띄웁니다.
 - `--report-dir`, `--report-path`는 리플레이 보고서 생성에만 사용합니다.
 
 ### 로컬 3년 백테스트 (BTC/ETH)
@@ -110,7 +109,7 @@ python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live 
 
 ### 통합 실행(원커맨드)
 ```bash
-# 기본 권장 경로: web-first (Discord off)
+# 기본 권장 경로: web-first
 bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 
 ```
@@ -121,7 +120,7 @@ bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 
 
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash
-# dry-run으로 유닛 내용 확인 (기본: web-first, Discord off)
+# dry-run으로 유닛 내용 확인
 bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
 
 # 실제 설치/기동 (권장 기본 경로)

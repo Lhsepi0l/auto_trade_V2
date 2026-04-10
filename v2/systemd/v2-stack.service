@@ -1,5 +1,5 @@
 [Unit]
-Description=Auto Trader V2 web-first stack (control API + optional Discord fallback)
+Description=Auto Trader V2 web-first stack (control API + operator web)
 After=network-online.target
 Wants=network-online.target
 

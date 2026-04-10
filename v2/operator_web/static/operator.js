@@ -919,7 +919,6 @@ async function loadConsole() {
   renderList("guidance-safety", payload.guidance?.safety || []);
   renderMapList("guidance-state-meanings", payload.guidance?.state_meanings || {});
   renderList("guidance-first-checks", payload.guidance?.first_checks || []);
-  renderList("guidance-discord-fallback", payload.guidance?.discord_fallback || []);
   const startBtn = document.getElementById("action-start");
   const pauseBtn = document.getElementById("action-pause");
   const panicBtn = document.getElementById("action-panic");

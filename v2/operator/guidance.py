@@ -5,7 +5,7 @@ def build_operator_guidance() -> dict[str, object]:
     return {
         "panel_scope": [
             "엔진 시작/일시정지/패닉/즉시 판단, 복구(reconcile), 포지션 정리, 핵심 리스크 설정을 제어합니다.",
-            "웹 패널이 일상 운영의 기본 콘솔이며, Discord는 필요 시만 켜는 선택형 백업 표면입니다.",
+            "웹 패널이 일상 운영의 기본 콘솔입니다.",
         ],
         "safety": [
             "실거래 전에는 mode/env와 readiness, stale 상태를 먼저 확인하세요.",
@@ -21,9 +21,5 @@ def build_operator_guidance() -> dict[str, object]:
             "readiness/private 오류",
             "recovery 필요 여부와 마지막 reconcile 시각",
             "포지션/자본/차단 사유",
-        ],
-        "discord_fallback": [
-            "Discord는 선택형 fallback 또는 emergency-use surface입니다.",
-            "정상적인 일상 운영은 웹 패널에서 수행하고, Discord는 웹 접근 불가 시에만 사용합니다.",
         ],
     }

@@ -414,7 +414,7 @@ def test_read_model_marks_unset_scoring_fields_clearly() -> None:
     assert payload["risk_forms"]["scoring"]["weights"]["10m"] == 0.25
     assert payload["risk_forms"]["scoring"]["weights"]["15m"] == 0.0
     assert payload["risk_forms"]["scoring"]["donchian_fast_ema_period"] == 8
-    assert payload["risk_forms"]["scoring"]["state_label"] == "runtime override 없음, Discord 기본값 표시"
+    assert payload["risk_forms"]["scoring"]["state_label"] == "runtime override 없음, 기본값 표시"
 
 
 def test_missing_market_is_translated_and_not_shown_as_true_block() -> None:

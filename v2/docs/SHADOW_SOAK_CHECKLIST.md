@@ -85,7 +85,7 @@ python -m v2.run \
 ```
 
 ### 3.2 full stack 기동
-Discord bot까지 같이 보려면 아래를 사용한다.
+웹 운영 패널까지 같이 보려면 아래를 사용한다.
 
 ```bash
 bash v2/scripts/run_stack.sh \

@@ -440,7 +440,7 @@ def build_operator_console_payload(
                     for timeframe in SCORING_TIMEFRAMES
                 },
                 "state_label": (
-                    "runtime override 없음, Discord 기본값 표시"
+                    "runtime override 없음, 기본값 표시"
                     if all(risk_config.get(f"tf_weight_{timeframe}") is None for timeframe in SCORING_TIMEFRAMES)
                     and risk_config.get("score_conf_threshold") is None
                     and risk_config.get("score_gap_threshold") is None
