@@ -179,6 +179,25 @@ class RuntimeStorage:
                 )
                 """.strip()
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS webpush_subscriptions (
+                    endpoint TEXT PRIMARY KEY,
+                    subscription_json TEXT NOT NULL,
+                    device_id TEXT,
+                    device_label TEXT,
+                    user_agent TEXT,
+                    platform TEXT,
+                    standalone INTEGER NOT NULL DEFAULT 0,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_success_at TEXT,
+                    last_failure_at TEXT,
+                    last_error TEXT
+                )
+                """.strip()
+            )
 
     def append_journal_event(
         self,
@@ -716,3 +735,139 @@ class RuntimeStorage:
             return int(row["total"])
         except Exception:  # noqa: BLE001
             return 0
+
+    def upsert_webpush_subscription(
+        self,
+        *,
+        endpoint: str,
+        subscription_json: str,
+        device_id: str | None,
+        device_label: str | None,
+        user_agent: str | None,
+        platform: str | None,
+        standalone: bool,
+    ) -> None:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO webpush_subscriptions(
+                    endpoint,
+                    subscription_json,
+                    device_id,
+                    device_label,
+                    user_agent,
+                    platform,
+                    standalone,
+                    active,
+                    created_at,
+                    updated_at,
+                    last_success_at,
+                    last_failure_at,
+                    last_error
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, NULL)
+                ON CONFLICT(endpoint) DO UPDATE SET
+                    subscription_json=excluded.subscription_json,
+                    device_id=excluded.device_id,
+                    device_label=excluded.device_label,
+                    user_agent=excluded.user_agent,
+                    platform=excluded.platform,
+                    standalone=excluded.standalone,
+                    active=1,
+                    updated_at=excluded.updated_at,
+                    last_error=NULL
+                """.strip(),
+                (
+                    endpoint,
+                    subscription_json,
+                    device_id,
+                    device_label,
+                    user_agent,
+                    platform,
+                    int(bool(standalone)),
+                    now,
+                    now,
+                ),
+            )
+
+    def list_webpush_subscriptions(self, *, active_only: bool = True) -> list[dict[str, Any]]:
+        sql = """
+            SELECT
+                endpoint,
+                subscription_json,
+                device_id,
+                device_label,
+                user_agent,
+                platform,
+                standalone,
+                active,
+                created_at,
+                updated_at,
+                last_success_at,
+                last_failure_at,
+                last_error
+            FROM webpush_subscriptions
+        """.strip()
+        params: tuple[Any, ...] = ()
+        if active_only:
+            sql = f"{sql} WHERE active = 1"
+        sql = f"{sql} ORDER BY updated_at DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_webpush_subscriptions(self, *, active_only: bool = True) -> int:
+        sql = "SELECT COUNT(*) AS total FROM webpush_subscriptions"
+        if active_only:
+            sql = f"{sql} WHERE active = 1"
+        with self._connect() as conn:
+            row = conn.execute(sql).fetchone()
+        if row is None:
+            return 0
+        return int(row["total"])
+
+    def deactivate_webpush_subscription(self, *, endpoint: str, reason: str | None = None) -> bool:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE webpush_subscriptions
+                SET active = 0,
+                    updated_at = ?,
+                    last_failure_at = ?,
+                    last_error = COALESCE(?, last_error)
+                WHERE endpoint = ?
+                """.strip(),
+                (now, now, reason, endpoint),
+            )
+        return int(cur.rowcount or 0) > 0
+
+    def record_webpush_subscription_success(self, *, endpoint: str) -> None:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE webpush_subscriptions
+                SET active = 1,
+                    updated_at = ?,
+                    last_success_at = ?,
+                    last_error = NULL
+                WHERE endpoint = ?
+                """.strip(),
+                (now, now, endpoint),
+            )
+
+    def record_webpush_subscription_failure(self, *, endpoint: str, error: str) -> None:
+        now = _utcnow_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE webpush_subscriptions
+                SET updated_at = ?,
+                    last_failure_at = ?,
+                    last_error = ?
+                WHERE endpoint = ?
+                """.strip(),
+                (now, now, error, endpoint),
+            )
