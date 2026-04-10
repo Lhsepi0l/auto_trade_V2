@@ -32,7 +32,7 @@ bash v2/scripts/run_stack.sh --mode shadow --env testnet
 - Discord fallback이 필요할 때만 아래를 사용합니다.
 
 ```bash
-bash v2/scripts/run_stack.sh --mode shadow --env testnet --with-discord-bot
+bash v2/scripts/run_stack.sh --mode shadow --env testnet
 ```
 
 ## 운영 원칙

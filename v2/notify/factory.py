@@ -11,16 +11,12 @@ def build_notifier_from_config(cfg: EffectiveConfig) -> Notifier:
         enabled = bool(cfg.secrets.ntfy_enabled)
 
     provider = str(cfg.behavior.notify.provider or "none").strip().lower()
-    if provider == "none":
-        if cfg.secrets.ntfy_topic:
-            provider = "ntfy"
-        elif cfg.secrets.notify_webhook_url:
-            provider = "discord"
+    if provider == "none" and cfg.secrets.ntfy_topic:
+        provider = "ntfy"
 
     return Notifier(
         enabled=enabled,
         provider=provider,
-        webhook_url=cfg.secrets.notify_webhook_url,
         ntfy_base_url=cfg.secrets.ntfy_base_url,
         ntfy_topic=cfg.secrets.ntfy_topic,
         ntfy_token=cfg.secrets.ntfy_token,

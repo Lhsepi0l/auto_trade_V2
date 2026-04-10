@@ -15,7 +15,6 @@ from .models import NotificationMessage
 class Notifier:
     enabled: bool = False
     provider: str = "none"
-    webhook_url: str | None = None
     ntfy_base_url: str | None = None
     ntfy_topic: str | None = None
     ntfy_token: str | None = None
@@ -55,8 +54,6 @@ class Notifier:
         if provider == "none":
             if str(self.ntfy_topic or "").strip():
                 return "ntfy"
-            if str(self.webhook_url or "").strip():
-                return "discord"
         return provider
 
     def supports_periodic_status(self) -> bool:
@@ -99,28 +96,6 @@ class Notifier:
         if suppress_result is not None:
             return suppress_result
 
-        if provider == "discord":
-            try:
-                self._send_discord(notification)
-                return self._record_send_success(
-                    provider=provider,
-                    message=notification,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                )
-            except httpx.HTTPError as exc:
-                error = self._http_error_text(exc)
-                print(f"[notify] discord_send_failed: {notification.as_text()}")
-                self._record_delivery(
-                    status="failed",
-                    provider=provider,
-                    message=notification,
-                    error=error,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                    suppressed_count=0,
-                )
-                return Notifier.SendResult(sent=False, error=error, status="failed")
         if provider == "ntfy":
             topic = str(self.ntfy_topic or "").strip()
             if not topic:
@@ -183,14 +158,6 @@ class Notifier:
         if isinstance(message, NotificationMessage):
             return message
         return NotificationMessage(body=str(message or "").strip())
-
-    def _send_discord(self, message: NotificationMessage) -> None:
-        url = str(self.webhook_url or "").strip()
-        if not url:
-            raise httpx.UnsupportedProtocol("discord_webhook_missing")
-        with httpx.Client(timeout=httpx.Timeout(self.timeout_sec)) as client:
-            response = client.post(url, json={"content": message.as_text()})
-            response.raise_for_status()
 
     @staticmethod
     def _normalize_tags(raw: tuple[str, ...] | list[str] | str | None) -> tuple[str, ...]:

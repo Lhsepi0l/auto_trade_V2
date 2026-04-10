@@ -149,7 +149,7 @@ record_cmd "${GIT_DIR}/branch.txt" git branch --show-current
 record_cmd "${GIT_DIR}/status.txt" git status --short
 record_cmd "${GIT_DIR}/diff_stat.txt" git diff --stat
 
-record_cmd "${SYSTEM_DIR}/processes.txt" pgrep -af "python -m v2.run|v2.discord_bot.bot|run_stack.sh|v2-stack.service"
+record_cmd "${SYSTEM_DIR}/processes.txt" pgrep -af "python -m v2.run|run_stack.sh|v2-stack.service"
 record_cmd "${SYSTEM_DIR}/sockets.txt" ss -ltnp
 record_cmd "${SYSTEM_DIR}/data_dirs.txt" find data logs v2/logs -maxdepth 2 -type f 2>/dev/null
 record_cmd "${SYSTEM_DIR}/systemctl_v2-stack.service.txt" systemctl status v2-stack.service --no-pager

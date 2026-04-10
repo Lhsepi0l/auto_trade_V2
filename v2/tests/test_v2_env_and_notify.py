@@ -16,7 +16,6 @@ def test_load_effective_config_reads_env_file(tmp_path: Path) -> None:
             [
                 "BINANCE_API_KEY=file-key",
                 "BINANCE_API_SECRET=file-secret",
-                "DISCORD_WEBHOOK_URL=https://discord.test/webhook",
             ]
         ),
         encoding="utf-8",
@@ -31,7 +30,6 @@ def test_load_effective_config_reads_env_file(tmp_path: Path) -> None:
     )
     assert cfg.secrets.binance_api_key == "file-key"
     assert cfg.secrets.binance_api_secret == "file-secret"
-    assert cfg.secrets.notify_webhook_url == "https://discord.test/webhook"
 
 
 def test_env_map_overrides_env_file(tmp_path: Path) -> None:
@@ -122,60 +120,13 @@ def test_notifier_disabled_notification_path_returns_disabled() -> None:
     assert result.error == "disabled"
 
 
-def test_notifier_discord_http_error_does_not_raise(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    class _BoomClient:
-        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            _ = args
-            _ = kwargs
+def test_notifier_with_unconfigured_provider_reports_error() -> None:
+    notifier = Notifier(enabled=True, provider="none")
 
-        def __enter__(self) -> "_BoomClient":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-            _ = exc_type
-            _ = exc
-            _ = tb
-
-        def post(self, url: str, json: dict[str, str]):  # type: ignore[no-untyped-def]
-            _ = url
-            _ = json
-            raise httpx.ConnectError("boom")
-
-    monkeypatch.setattr(httpx, "Client", _BoomClient)
-    notifier = Notifier(
-        enabled=True, provider="discord", webhook_url="https://discord.test/webhook"
-    )
-    notifier.send("hello")
-
-
-def test_notifier_send_with_result_reports_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    class _BoomClient:
-        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            _ = args
-            _ = kwargs
-
-        def __enter__(self) -> "_BoomClient":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-            _ = exc_type
-            _ = exc
-            _ = tb
-
-        def post(self, url: str, json: dict[str, str]):  # type: ignore[no-untyped-def]
-            _ = url
-            _ = json
-            raise httpx.ConnectError("boom")
-
-    monkeypatch.setattr(httpx, "Client", _BoomClient)
-    notifier = Notifier(
-        enabled=True, provider="discord", webhook_url="https://discord.test/webhook"
-    )
     result = notifier.send_with_result("hello")
 
     assert result.sent is False
-    assert result.error is not None
-    assert "ConnectError" in result.error
+    assert result.error == "provider_unconfigured"
 
 
 def test_notifier_ntfy_publish_uses_hosted_headers(monkeypatch) -> None:  # type: ignore[no-untyped-def]

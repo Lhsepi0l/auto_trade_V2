@@ -350,8 +350,6 @@ class RuntimeController:
         self._market_data_state = market_data_state if market_data_state is not None else {}
         self._runtime_lock_active = bool(runtime_lock_active)
         self._dirty_restart_detected = bool(dirty_restart_detected)
-        if (not self.notifier.enabled) and str(self.notifier.webhook_url or "").strip():
-            self.notifier.enabled = True
         if (not self.notifier.enabled) and str(self.notifier.ntfy_topic or "").strip():
             self.notifier.enabled = True
         if (
@@ -359,11 +357,6 @@ class RuntimeController:
             and str(self.notifier.ntfy_topic or "").strip()
         ):
             self.notifier.provider = "ntfy"
-        elif (
-            str(self.notifier.provider or "none").strip().lower() == "none"
-            and str(self.notifier.webhook_url or "").strip()
-        ):
-            self.notifier.provider = "discord"
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_stop = threading.Event()

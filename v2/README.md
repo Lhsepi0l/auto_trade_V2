@@ -13,7 +13,6 @@
 - `control/`: 제어 API와 상태 응답
 - `operator/`: 운영용 서비스/읽기 모델
 - `operator_web/`: `/operator` 웹 라우트/템플릿/정적 파일
-- `discord_bot/`: fallback 운영면
 - `ops/`, `runtime/`, `scripts/`, `systemd/`: 실행/배포/운영 자동화
 
 ## 3. 검증/연구면

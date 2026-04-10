@@ -27,7 +27,8 @@ RUNTIME_PYTEST_TARGETS=(
     "v2/tests/test_live_execution_service.py"
     "v2/tests/test_exchange_user_stream.py"
     "v2/tests/test_tpsl_brackets.py"
-    "v2/tests/test_discord_panel.py"
+    "v2/tests/test_operator_web_routes.py"
+    "v2/tests/test_webpush_service.py"
 )
 
 usage() {
@@ -301,7 +302,7 @@ from pathlib import Path
 
 path = Path("__CONFIG_PATH__")
 payload = path.read_text(encoding="utf-8")
-forbidden = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "DISCORD_WEBHOOK_URL"]
+forbidden = ["BINANCE_API_KEY", "BINANCE_API_SECRET"]
 
 for key in forbidden:
     if key in payload:

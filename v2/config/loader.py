@@ -126,7 +126,6 @@ class SecretConfig(BaseModel):
 
     binance_api_key: str | None = None
     binance_api_secret: str | None = None
-    notify_webhook_url: str | None = None
     ntfy_enabled: bool | None = None
     ntfy_base_url: str | None = None
     ntfy_topic: str | None = None
@@ -167,7 +166,6 @@ class SecretConfig(BaseModel):
         return cls(
             binance_api_key=cls._none_if_blank(source.get("BINANCE_API_KEY")),
             binance_api_secret=cls._none_if_blank(source.get("BINANCE_API_SECRET")),
-            notify_webhook_url=cls._none_if_blank(source.get("DISCORD_WEBHOOK_URL")),
             ntfy_enabled=cls._optional_bool(source.get("NTFY_ENABLED")),
             ntfy_base_url=cls._none_if_blank(source.get("NTFY_BASE_URL")),
             ntfy_topic=cls._none_if_blank(source.get("NTFY_TOPIC")),

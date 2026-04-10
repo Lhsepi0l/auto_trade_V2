@@ -113,17 +113,11 @@ python -m v2.run --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live 
 # 기본 권장 경로: web-first (Discord off)
 bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
 
-# 필요할 때만 Discord fallback 추가
-bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101 --with-discord-bot
 ```
 
-- 기본 web-first 실행은 `/operator`를 자동 활성화하고 Discord는 비활성 상태로 둡니다.
-- `--with-discord-bot`을 지정한 경우에만 Discord fallback 프로세스를 추가 기동합니다.
+- 기본 web-first 실행은 `/operator`를 자동 활성화합니다.
 - 한 프로세스라도 종료되면 나머지를 정리하고 함께 종료합니다.
-- 로그 파일: `v2/logs/control_api.log`, `v2/logs/discord_bot.log`
-- Discord fallback이 꺼져 있으면 `discord_bot.log`는 사용되지 않습니다.
-- 기본 `TRADER_API_BASE_URL`은 `http://127.0.0.1:<port>`로 자동 설정됩니다.
-- `run_stack.sh` / systemd 경로에서는 `.env`에 남아 있는 stale `TRADER_API_BASE_URL`보다 현재 `--host/--port` 로컬 control API 주소를 우선 사용합니다.
+- 로그 파일: `v2/logs/control_api.log`
 
 ### systemd 서비스(자동 재시작/부팅 자동기동)
 ```bash
@@ -132,9 +126,6 @@ bash v2/scripts/install_systemd_stack.sh --dry-run --user bot --workdir /home/bo
 
 # 실제 설치/기동 (권장 기본 경로)
 bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
-
-# Discord fallback까지 같이 둘 때만
-bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101 --with-discord-bot
 
 # 상태/로그 확인
 sudo systemctl status v2-stack.service --no-pager
@@ -151,11 +142,7 @@ bash v2/scripts/update_server_from_git.sh --branch migration/web-operator-panel 
 
 - 템플릿 유닛 파일은 `v2/systemd/v2-stack.service`에 포함되어 있습니다.
 - 설치 스크립트는 `/etc/systemd/system/v2-stack.service`를 생성하고 `enable --now`까지 수행합니다.
-- 설치 기본값은 web-first 이며 Discord fallback은 기본 비활성입니다.
-
-- `TRADER_API_BASE_URL` 기본값은 `http://127.0.0.1:8101` 입니다.
-- Discord 토큰은 `DISCORD_BOT_TOKEN`(또는 하위호환 `DISCORD_TOKEN`)을 사용합니다.
-- Discord는 정상 운영 필수 조건이 아닙니다. 필요 시에만 fallback 용도로 활성화합니다.
+- 설치 기본값은 web-first 입니다.
 
 ### Raspberry Pi 최소 검증
 운영 Pi에서는 `local_backtest`/연구용 테스트를 기본 검증 경로에 넣지 않습니다.
@@ -178,7 +165,6 @@ runtime 테스트 묶음은 아래만 포함합니다.
 - `v2/tests/test_live_execution_service.py`
 - `v2/tests/test_exchange_user_stream.py`
 - `v2/tests/test_tpsl_brackets.py`
-- `v2/tests/test_discord_panel.py`
 
 ### `ra_2026_alpha_v2_expansion_verified_q070` 기동 후 리스크 재설정
 `/risk` 값은 런타임 저장소에서 복구될 수 있으므로, systemd 재기동 직후 아래 값을 한 번씩 다시 고정합니다.
@@ -211,7 +197,7 @@ ss -ltnp | rg 8101
 5. 기존 키 유효성 해제(폐기) 여부를 거래소 콘솔에서 확인합니다.
 
 ### 권장 운영 순서
-- 실서버 교체 전: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `DISCORD_WEBHOOK_URL` 값만 갱신.
+- 실서버 교체 전: `BINANCE_API_KEY`, `BINANCE_API_SECRET` 값만 갱신.
 - 테스트넷 shadow 모드에서 먼저 구동 확인.
 - 즉시 `python -m v2.run --ops-action pause`로 진입 제어를 멈춰
   새 프로세스가 안전하게 시작되는지 확인.
@@ -254,9 +240,9 @@ curl -s -X POST http://127.0.0.1:8102/ops/flatten -H 'content-type: application/
 ## 6. 테스트넷/실서버 시작 체크리스트
 ### 실행 전
 - `v2/config/config.yaml`만 변경했는지 확인
-- `.env`에서 다음 값이 모두 현재 사용 환경에 맞는지 확인: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `DISCORD_WEBHOOK_URL`
+- `.env`에서 다음 값이 모두 현재 사용 환경에 맞는지 확인: `BINANCE_API_KEY`, `BINANCE_API_SECRET`
 - `python -m ruff check v2 v2/tests`
-- 서버(Pi): `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_v2_env_and_notify.py v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_live_execution_service.py v2/tests/test_exchange_user_stream.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py`
+- 서버(Pi): `python -m pytest -q v2/tests/test_v2_config_loader.py v2/tests/test_v2_env_and_notify.py v2/tests/test_v2_run_smoke.py v2/tests/test_control_api.py v2/tests/test_live_execution_service.py v2/tests/test_exchange_user_stream.py v2/tests/test_tpsl_brackets.py`
 - 워크스테이션(선택): `python -m pytest -q v2/tests`
 - `v2/scripts/preflight.sh --mode shadow --env testnet --profile ra_2026_alpha_v2_expansion_verified_q070` 실행(또는 `--mode live --env prod`, full suite가 필요하면 `--test-scope full`)
 

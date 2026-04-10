@@ -32,7 +32,7 @@ _SENSITIVE_KEY_PATTERNS = (
     "signature",
     "webhook",
 )
-_DISCORD_WEBHOOK_RE = re.compile(r"https://discord\.com/api/webhooks/\S+", re.IGNORECASE)
+_WEBHOOK_RE = re.compile(r"https?://[^\s,;]+/api/webhooks/\S+", re.IGNORECASE)
 _ASSIGN_SECRET_RE = re.compile(
     r"(?i)\b(api[_-]?key|api[_-]?secret|secret|token|password|authorization)\b\s*([=:])\s*([^\s,;]+)"
 )
@@ -53,7 +53,7 @@ def _redact(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [_redact(v) for v in value]
     if isinstance(value, str):
-        s = _DISCORD_WEBHOOK_RE.sub(_REDACTED, value)
+        s = _WEBHOOK_RE.sub(_REDACTED, value)
         s = _ASSIGN_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", s)
         s = _BEARER_RE.sub(f"Bearer {_REDACTED}", s)
         s = _AWS_KEY_RE.sub(_REDACTED, s)
