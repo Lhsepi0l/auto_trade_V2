@@ -71,6 +71,16 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - The active management principle is explicit `tp1_runner`
 - `v2/strategies/ra_2026_alpha_v2*.py` is the main live strategy family
 
+### Critical Recent Outcomes
+- Live runtime is aligned around one explicit management contract: `tp1_runner`
+- TP leg fills must preserve and re-arm remaining runner management when position size remains open
+- Normal `close_position` paths must not latch ops mode; `paused/safe_mode` latch is for real panic/flatten flows only
+- Shared position-management contracts are reused by both live control and backtest/replay paths
+- Web operator is the single active control surface; docs and scripts should assume web-first operation
+- `v2/control/api.py` was deliberately de-spaghettified into helper modules; future work should continue pushing logic outward, not pull it back in
+- Generated Python/runtime artifacts are intentionally untracked; keep worktrees and deploys clean
+- Root README and `v2/README.md` are now the first-stop navigation docs for humans opening the repo cold
+
 ### Active Operational Profiles
 Keep active operational profiles limited to:
 - `ra_2026_alpha_v2_expansion`
@@ -112,6 +122,11 @@ Keep active operational profiles limited to:
 - Interpret `no_candidate` / `no_entry:*` as strategy wait states, not execution failures
 - Current kill behavior is operator-invoked (`panic`/flatten); do not assume automatic account kill-switch enforcement unless explicitly implemented
 - Keep post-restart checks simple: `readyz`, runtime status, and control bind on `127.0.0.1:8101`
+
+### Local Backtest / Research Notes
+- Heavy historical replay belongs on the workstation, not the production Pi/server
+- `local_backtest/` is the quick launcher surface; `v2/backtest/` is the underlying implementation surface
+- Research outputs should stay local under `output/research/**` and must not quietly become active runtime dependencies
 
 ### Verification Habit
 For substantive changes, finish with:
