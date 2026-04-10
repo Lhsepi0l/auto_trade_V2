@@ -168,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="minimum signal score to allow entry",
     )
     parser.add_argument(
+        "--backtest-enabled-alphas",
+        default=None,
+        help="comma-separated enabled_alphas override for ra_2026_alpha_v2 local backtest (e.g. alpha_expansion,alpha_drift)",
+    )
+    parser.add_argument(
         "--backtest-alpha-squeeze-percentile-max",
         type=float,
         default=0.40,
@@ -286,6 +291,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="expected move cost multiplier override for ra_2026_alpha_v2",
+    )
+    parser.add_argument(
+        "--backtest-drift-side-mode",
+        default="BOTH",
+        help="drift side mode override for alpha_drift (BOTH, LONG, SHORT)",
+    )
+    parser.add_argument(
+        "--backtest-drift-take-profit-r",
+        type=float,
+        default=1.8,
+        help="take-profit R override for alpha_drift",
+    )
+    parser.add_argument(
+        "--backtest-drift-time-stop-bars",
+        type=int,
+        default=16,
+        help="time-stop bars override for alpha_drift",
     )
     parser.add_argument(
         "--backtest-fb-failed-break-buffer-bps",

@@ -9,8 +9,8 @@ from v2.backtest.providers import _ReplaySnapshotProvider
 from v2.backtest.reporting import _write_replay_report
 from v2.backtest.row_loader import _extract_snapshot_time, _load_replay_frames
 from v2.backtest.runtime_deps import get_build_runtime
-from v2.clean_room import build_default_kernel
 from v2.config.loader import EffectiveConfig
+from v2.kernel import build_default_kernel
 from v2.tpsl import BracketConfig, BracketPlanner
 
 

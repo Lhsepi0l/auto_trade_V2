@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from v2.clean_room import (
+from v2.config.loader import load_effective_config
+from v2.engine import EngineStateStore
+from v2.exchange.types import ResyncSnapshot
+from v2.kernel import (
     AlwaysAllowedRiskGate,
     Candidate,
     ExecutionResult,
@@ -14,10 +17,7 @@ from v2.clean_room import (
     TradeKernelConfig,
     build_default_kernel,
 )
-from v2.clean_room.kernel import _build_overheat_fetcher
-from v2.config.loader import load_effective_config
-from v2.engine import EngineStateStore
-from v2.exchange.types import ResyncSnapshot
+from v2.kernel.kernel import _build_overheat_fetcher
 from v2.storage import RuntimeStorage
 
 

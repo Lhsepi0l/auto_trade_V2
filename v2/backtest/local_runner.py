@@ -39,6 +39,7 @@ from v2.backtest.policy import (
     _VOL_TARGET_STRATEGIES,
     _is_vol_target_backtest_strategy,
     _locked_local_backtest_initial_capital,
+    _resolve_backtest_base_interval,
     _resolve_market_intervals,
 )
 from v2.backtest.providers import _HistoricalSnapshotProvider
@@ -47,10 +48,10 @@ from v2.backtest.research_policy import _portfolio_research_gate
 from v2.backtest.runtime_deps import get_local_backtest_symbol_replay_worker
 from v2.backtest.snapshots import _FundingRateRow, _Kline15m
 from v2.backtest.summaries import _build_half_year_window_summaries, _format_utc_iso
-from v2.clean_room import build_default_kernel
 from v2.config.loader import EffectiveConfig, EnvName, ModeName, load_effective_config
 from v2.engine import EngineStateStore
 from v2.exchange import BackoffPolicy, BinanceRESTClient
+from v2.kernel import build_default_kernel
 from v2.storage import RuntimeStorage
 from v2.tpsl import BracketConfig, BracketPlanner
 
@@ -58,6 +59,7 @@ from v2.tpsl import BracketConfig, BracketPlanner
 def _local_backtest_strategy_runtime_params(
     *,
     active_strategy_name: str,
+    enabled_alphas_override: str | None = None,
     alpha_squeeze_percentile_max: float,
     alpha_expansion_buffer_bps: float,
     alpha_expansion_range_atr_min: float,
@@ -78,6 +80,9 @@ def _local_backtest_strategy_runtime_params(
     alpha_trend_adx_rising_lookback_4h: int,
     alpha_trend_adx_rising_min_delta_4h: float,
     alpha_expected_move_cost_mult: float,
+    drift_side_mode: str,
+    drift_take_profit_r: float,
+    drift_time_stop_bars: int,
     fb_failed_break_buffer_bps: float,
     fb_wick_ratio_min: float,
     fb_take_profit_r: float,
@@ -150,7 +155,16 @@ def _local_backtest_strategy_runtime_params(
                 0.0,
             ),
             "expected_move_cost_mult": max(float(alpha_expected_move_cost_mult), 0.1),
+            "drift_side_mode": str(drift_side_mode).strip().upper() or "BOTH",
+            "drift_take_profit_r": max(float(drift_take_profit_r), 0.5),
+            "drift_time_stop_bars": max(int(drift_time_stop_bars), 1),
         }
+        if enabled_alphas_override is not None and str(enabled_alphas_override).strip():
+            params["enabled_alphas"] = [
+                token.strip().lower()
+                for token in str(enabled_alphas_override).split(",")
+                if token.strip()
+            ]
         if alpha_expansion_quality_score_v2_min is not None:
             params["expansion_quality_score_v2_min"] = min(
                 max(float(alpha_expansion_quality_score_v2_min), 0.0),
@@ -278,6 +292,7 @@ def _run_local_backtest_symbol_replay_worker(
     equity_floor_pct: float,
     max_trade_margin_loss_fraction: float,
     min_signal_score: float,
+    enabled_alphas_override: str | None = None,
     reverse_exit_min_profit_pct: float,
     reverse_exit_min_signal_score: float,
     default_reverse_exit_min_r: float,
@@ -309,6 +324,9 @@ def _run_local_backtest_symbol_replay_worker(
     alpha_trend_adx_rising_lookback_4h: int,
     alpha_trend_adx_rising_min_delta_4h: float,
     alpha_expected_move_cost_mult: float,
+    drift_side_mode: str,
+    drift_take_profit_r: float,
+    drift_time_stop_bars: int,
     fb_failed_break_buffer_bps: float,
     fb_wick_ratio_min: float,
     fb_take_profit_r: float,
@@ -376,13 +394,14 @@ def _run_local_backtest_symbol_replay_worker(
             continue
         seen_intervals.add(interval)
         resolved_intervals.append(interval)
-    if "15m" not in resolved_intervals:
-        resolved_intervals.insert(0, "15m")
+    base_interval = _resolve_backtest_base_interval(resolved_intervals)
+    if base_interval not in resolved_intervals:
+        resolved_intervals.insert(0, base_interval)
 
-    candles_15m = _load_interval_cached_with_fallback("15m")
+    candles_15m = _load_interval_cached_with_fallback(base_interval)
     market_candles: dict[str, list[_Kline15m]] = {}
     for interval in resolved_intervals:
-        if interval == "15m":
+        if interval == base_interval:
             continue
         market_candles[interval] = _load_interval_cached_with_fallback(interval)
     premium_rows_15m = _load_local_backtest_cached_premium_for_symbol(
@@ -416,6 +435,7 @@ def _run_local_backtest_symbol_replay_worker(
     provider = _HistoricalSnapshotProvider(
         symbol=symbol,
         candles_15m=candles_15m,
+        base_interval=base_interval,
         market_candles=market_candles,
         premium_rows_15m=premium_rows_15m,
         funding_rows=funding_rows,
@@ -443,6 +463,7 @@ def _run_local_backtest_symbol_replay_worker(
     active_strategy_name = enabled_strategies[0] if enabled_strategies else "none"
     strategy_runtime_params = _local_backtest_strategy_runtime_params(
         active_strategy_name=active_strategy_name,
+        enabled_alphas_override=enabled_alphas_override,
         alpha_squeeze_percentile_max=float(alpha_squeeze_percentile_max),
         alpha_expansion_buffer_bps=float(alpha_expansion_buffer_bps),
         alpha_expansion_range_atr_min=float(alpha_expansion_range_atr_min),
@@ -471,6 +492,9 @@ def _run_local_backtest_symbol_replay_worker(
         alpha_trend_adx_rising_lookback_4h=int(alpha_trend_adx_rising_lookback_4h),
         alpha_trend_adx_rising_min_delta_4h=float(alpha_trend_adx_rising_min_delta_4h),
         alpha_expected_move_cost_mult=float(alpha_expected_move_cost_mult),
+        drift_side_mode=str(drift_side_mode),
+        drift_take_profit_r=float(drift_take_profit_r),
+        drift_time_stop_bars=int(drift_time_stop_bars),
         fb_failed_break_buffer_bps=float(fb_failed_break_buffer_bps),
         fb_wick_ratio_min=float(fb_wick_ratio_min),
         fb_take_profit_r=float(fb_take_profit_r),
@@ -550,7 +574,7 @@ def _run_local_backtest_symbol_replay_worker(
         max_peak_drawdown_pct=max_peak_drawdown_pct,
     )
     interval_counts = {interval: len(rows) for interval, rows in market_candles.items()}
-    interval_counts["15m"] = len(candles_15m)
+    interval_counts[base_interval] = len(candles_15m)
     per_symbol_report["candles_by_interval"] = interval_counts
     per_symbol_report["candles_10m"] = int(interval_counts.get("10m", 0))
     per_symbol_report["candles_30m"] = int(interval_counts.get("30m", 0))
@@ -612,8 +636,9 @@ def _load_local_backtest_cached_market_for_symbol(
             continue
         seen_intervals.add(interval)
         resolved_intervals.append(interval)
-    if "15m" not in resolved_intervals:
-        resolved_intervals.insert(0, "15m")
+    base_interval = _resolve_backtest_base_interval(resolved_intervals)
+    if base_interval not in resolved_intervals:
+        resolved_intervals.insert(0, base_interval)
 
     candles_by_interval: dict[str, list[_Kline15m]] = {}
     for interval in resolved_intervals:
@@ -716,6 +741,7 @@ def _run_local_backtest_portfolio_replay(
 ) -> tuple[dict[str, Any], int]:
     candles_by_symbol: dict[str, dict[str, list[_Kline15m]]] = {}
     interval_counts_by_symbol: dict[str, dict[str, int]] = {}
+    base_interval = _resolve_backtest_base_interval(market_intervals)
     for symbol in symbols:
         market = _load_local_backtest_cached_market_for_symbol(
             cache_root=cache_root,
@@ -725,7 +751,7 @@ def _run_local_backtest_portfolio_replay(
             end_ms=end_ms,
             market_intervals=market_intervals,
         )
-        if len(market.get("15m", [])) == 0:
+        if len(market.get(base_interval, [])) == 0:
             continue
         candles_by_symbol[symbol] = market
         interval_counts_by_symbol[symbol] = {
@@ -792,6 +818,7 @@ def _run_local_backtest(
     equity_floor_pct: float,
     max_trade_margin_loss_fraction: float,
     min_signal_score: float,
+    enabled_alphas_override: str | None = None,
     reverse_exit_min_profit_pct: float,
     reverse_exit_min_signal_score: float,
     drawdown_scale_start_pct: float,
@@ -820,6 +847,9 @@ def _run_local_backtest(
     alpha_trend_adx_rising_lookback_4h: int,
     alpha_trend_adx_rising_min_delta_4h: float,
     alpha_expected_move_cost_mult: float,
+    drift_side_mode: str,
+    drift_take_profit_r: float,
+    drift_time_stop_bars: int,
     fb_failed_break_buffer_bps: float,
     fb_wick_ratio_min: float,
     fb_take_profit_r: float,
@@ -865,6 +895,7 @@ def _run_local_backtest(
         return 1
     use_ra_2026_mode = _is_vol_target_backtest_strategy(active_strategy_name)
     market_intervals = _resolve_market_intervals(cfg)
+    base_interval = _resolve_backtest_base_interval(market_intervals)
     fixed_leverage = (
         max(float(cfg.behavior.risk.max_leverage), 1.0) if use_ra_2026_mode else 30.0
     )
@@ -963,6 +994,7 @@ def _run_local_backtest(
     max_peak_drawdown_pct = 0.20 if active_strategy_name in _VOL_TARGET_STRATEGIES else None
     strategy_runtime_params = _local_backtest_strategy_runtime_params(
         active_strategy_name=active_strategy_name,
+        enabled_alphas_override=enabled_alphas_override,
         alpha_squeeze_percentile_max=float(alpha_squeeze_percentile_max),
         alpha_expansion_buffer_bps=float(alpha_expansion_buffer_bps),
         alpha_expansion_range_atr_min=float(alpha_expansion_range_atr_min),
@@ -991,6 +1023,9 @@ def _run_local_backtest(
         alpha_trend_adx_rising_lookback_4h=int(alpha_trend_adx_rising_lookback_4h),
         alpha_trend_adx_rising_min_delta_4h=float(alpha_trend_adx_rising_min_delta_4h),
         alpha_expected_move_cost_mult=float(alpha_expected_move_cost_mult),
+        drift_side_mode=str(drift_side_mode),
+        drift_take_profit_r=float(drift_take_profit_r),
+        drift_time_stop_bars=int(drift_time_stop_bars),
         fb_failed_break_buffer_bps=float(fb_failed_break_buffer_bps),
         fb_wick_ratio_min=float(fb_wick_ratio_min),
         fb_take_profit_r=float(fb_take_profit_r),
@@ -1308,7 +1343,7 @@ def _run_local_backtest(
                         return fetched_rows
 
                     candles_15m = _load_interval_with_cache(
-                        interval="15m",
+                        interval=base_interval,
                         on_progress=_on_download_progress,
                     )
                     if len(candles_15m) == 0:
@@ -1319,8 +1354,8 @@ def _run_local_backtest(
                         f"[LOCAL_BACKTEST] [{symbol_index}/{total_symbols}] {symbol} download complete candles={len(candles_15m)}"
                     )
 
-                    interval_counts: dict[str, int] = {"15m": len(candles_15m)}
-                    aux_intervals = [interval for interval in market_intervals if interval != "15m"]
+                    interval_counts: dict[str, int] = {base_interval: len(candles_15m)}
+                    aux_intervals = [interval for interval in market_intervals if interval != base_interval]
                     if aux_intervals:
                         print(
                             f"[LOCAL_BACKTEST] [{symbol_index}/{total_symbols}] {symbol} aux timeframe download started ({','.join(aux_intervals)})"
@@ -1444,8 +1479,8 @@ def _run_local_backtest(
                     "window_mode": backtest_window_label,
                     "backtest_start_utc": _format_utc_iso(start_ms),
                     "backtest_end_utc": _format_utc_iso(end_ms),
-                    "timeframe_base": "15m",
-                    "timeframe_context": [interval for interval in market_intervals if interval != "15m"],
+                    "timeframe_base": base_interval,
+                    "timeframe_context": [interval for interval in market_intervals if interval != base_interval],
                     "initial_capital_usdt": round(float(initial_capital), 6),
                     "initial_capital_locked": True,
                     "position_sizing_mode": "portfolio_risk_budget",
@@ -1600,6 +1635,7 @@ def _run_local_backtest(
                 "equity_floor_pct": equity_floor_pct,
                 "max_trade_margin_loss_fraction": max_trade_margin_loss_fraction,
                 "min_signal_score": min_signal_score,
+                "enabled_alphas_override": enabled_alphas_override,
                 "reverse_exit_min_profit_pct": reverse_exit_min_profit_pct,
                 "reverse_exit_min_signal_score": reverse_exit_min_signal_score,
                 "default_reverse_exit_min_r": default_reverse_exit_min_r,
@@ -1631,6 +1667,9 @@ def _run_local_backtest(
                 "alpha_trend_adx_rising_lookback_4h": alpha_trend_adx_rising_lookback_4h,
                 "alpha_trend_adx_rising_min_delta_4h": alpha_trend_adx_rising_min_delta_4h,
                 "alpha_expected_move_cost_mult": alpha_expected_move_cost_mult,
+                "drift_side_mode": drift_side_mode,
+                "drift_take_profit_r": drift_take_profit_r,
+                "drift_time_stop_bars": drift_time_stop_bars,
                 "fb_failed_break_buffer_bps": fb_failed_break_buffer_bps,
                 "fb_wick_ratio_min": fb_wick_ratio_min,
                 "fb_take_profit_r": fb_take_profit_r,
@@ -1872,8 +1911,8 @@ def _run_local_backtest(
                 "window_mode": backtest_window_label,
                 "backtest_start_utc": _format_utc_iso(start_ms),
                 "backtest_end_utc": _format_utc_iso(end_ms),
-                "timeframe_base": "15m",
-                "timeframe_context": [interval for interval in market_intervals if interval != "15m"],
+                "timeframe_base": base_interval,
+                "timeframe_context": [interval for interval in market_intervals if interval != base_interval],
                 "initial_capital_usdt": round(float(initial_capital), 6),
                 "initial_capital_locked": True,
                 "position_sizing_mode": (

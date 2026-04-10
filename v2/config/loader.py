@@ -68,7 +68,7 @@ class OpsConfig(BaseModel):
 
 class NotifyConfig(BaseModel):
     enabled: bool = False
-    provider: Literal["none", "discord", "ntfy", "webpush"] = "none"
+    provider: Literal["none", "discord", "ntfy"] = "none"
 
 
 class BehaviorConfig(BaseModel):
@@ -133,8 +133,6 @@ class SecretConfig(BaseModel):
     ntfy_token: str | None = None
     ntfy_tags: tuple[str, ...] = ()
     ntfy_priority: str | None = None
-    webpush_enabled: bool | None = None
-    webpush_subject: str | None = None
 
     @staticmethod
     def _none_if_blank(value: str | None) -> str | None:
@@ -176,8 +174,6 @@ class SecretConfig(BaseModel):
             ntfy_token=cls._none_if_blank(source.get("NTFY_TOKEN")),
             ntfy_tags=cls._csv_tuple(source.get("NTFY_TAGS")),
             ntfy_priority=cls._none_if_blank(source.get("NTFY_PRIORITY")),
-            webpush_enabled=cls._optional_bool(source.get("WEBPUSH_ENABLED")),
-            webpush_subject=cls._none_if_blank(source.get("WEBPUSH_SUBJECT")),
         )
 
 

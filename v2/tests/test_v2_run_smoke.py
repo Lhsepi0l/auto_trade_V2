@@ -62,6 +62,7 @@ def test_alpha_profile_shadow_startup_prints_effective_config(capsys) -> None:  
 
 def test_alpha_profile_is_supported_for_local_backtest() -> None:
     assert _is_vol_target_backtest_strategy("ra_2026_alpha_v2") is True
+    assert _is_vol_target_backtest_strategy("ebc_v1_continuation") is True
     assert _is_vol_target_backtest_strategy("ra_2026_v1") is False
 
 

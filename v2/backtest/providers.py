@@ -43,6 +43,7 @@ class _HistoricalSnapshotProvider:
         *,
         symbol: str,
         candles_15m: list[_Kline15m],
+        base_interval: str = "15m",
         market_candles: dict[str, list[_Kline15m]] | None = None,
         premium_rows_15m: list[_Kline15m] | None = None,
         funding_rows: list[_FundingRateRow] | None = None,
@@ -54,6 +55,7 @@ class _HistoricalSnapshotProvider:
         history_limit: int = 260,
     ) -> None:
         self._symbol = symbol
+        self._base_interval = str(base_interval).strip() or "15m"
         self._candles_15m = sorted(list(candles_15m), key=lambda row: int(row.open_time_ms))
         self._idx = -1
         limit = max(int(history_limit), 1)
@@ -90,8 +92,8 @@ class _HistoricalSnapshotProvider:
                 interval_key = str(interval).strip()
                 if interval_key and interval_key not in configured_intervals:
                     configured_intervals.append(interval_key)
-        if "15m" not in configured_intervals:
-            configured_intervals.insert(0, "15m")
+        if self._base_interval not in configured_intervals:
+            configured_intervals.insert(0, self._base_interval)
 
         seen_intervals: set[str] = set()
         ordered_intervals: list[str] = []
@@ -120,7 +122,7 @@ class _HistoricalSnapshotProvider:
         self._funding_index = -1
         self._funding_history: deque[_FundingRateRow] = deque(maxlen=32)
         for interval in self._intervals:
-            if interval == "15m":
+            if interval == self._base_interval:
                 continue
             rows = merged_market.get(interval, [])
             self._sources[interval] = sorted(list(rows), key=lambda row: int(row.open_time_ms))
@@ -179,10 +181,10 @@ class _HistoricalSnapshotProvider:
         if self._idx >= len(self._candles_15m):
             return {}
         row = self._candles_15m[self._idx]
-        self._histories["15m"].append(self._row_to_ohlc(row))
+        self._histories[self._base_interval].append(self._row_to_ohlc(row))
 
         for interval in self._intervals:
-            if interval == "15m":
+            if interval == self._base_interval:
                 continue
             self._advance_interval(interval=interval, current_close_time_ms=row.close_time_ms)
         self._advance_premium(current_close_time_ms=row.close_time_ms)

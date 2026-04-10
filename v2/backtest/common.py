@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from v2.clean_room import Candidate
-from v2.clean_room.portfolio import portfolio_bucket_for_symbol
+from v2.kernel import Candidate
+from v2.kernel.portfolio import portfolio_bucket_for_symbol
 
 
 def _to_float(value: Any) -> float | None:

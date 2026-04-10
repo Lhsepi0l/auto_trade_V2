@@ -9,8 +9,8 @@ from v2.backtest.decision_types import _ReplayDecisionBySymbol
 from v2.backtest.providers import _HistoricalPortfolioSnapshotProvider
 from v2.backtest.runtime_deps import get_build_strategy_selector
 from v2.backtest.snapshots import _FundingRateRow, _Kline15m
-from v2.clean_room import Candidate
 from v2.config.loader import EffectiveConfig
+from v2.kernel import Candidate
 from v2.tpsl import BracketPlanner
 
 

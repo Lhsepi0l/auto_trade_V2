@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from v2.clean_room.contracts import Candidate, KernelContext, RiskDecision
-from v2.clean_room.defaults import DynamicNotionalSizer, RiskAwareSizer
+from v2.kernel.contracts import Candidate, KernelContext, RiskDecision
+from v2.kernel.defaults import DynamicNotionalSizer, RiskAwareSizer
 
 
 def _context() -> KernelContext:
