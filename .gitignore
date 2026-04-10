@@ -4,6 +4,8 @@ data/
 logs/
 v2/logs/
 .omx/
+출력/
+archive/generated/
 
 # Python caches
 .venv/
@@ -14,5 +16,16 @@ __pycache__/
 .ruff_cache/
 
 # Local backtest generated outputs
+local_backtest/cache/
 local_backtest/reports/*
 !local_backtest/reports/.gitkeep
+
+# Generated deploy/preflight reports
+v2/reports/deployment_readiness_*.md
+v2/reports/preflight_*.md
+!v2/reports/README.md
+v2/v2/reports/*
+
+# Workspace/editor noise and accidental duplicate outputs
+.vscode/
+v2/v2/
