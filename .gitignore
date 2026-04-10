@@ -24,6 +24,7 @@ local_backtest/reports/*
 v2/reports/deployment_readiness_*.md
 v2/reports/preflight_*.md
 !v2/reports/README.md
+v2/reports/_cache/*
 v2/v2/reports/*
 
 # Workspace/editor noise and accidental duplicate outputs
