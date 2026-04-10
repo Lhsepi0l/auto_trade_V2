@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import math
-import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -38,6 +37,12 @@ from v2.discord_bot.ui_labels import (
     UNIVERSE_REMOVE_SYMBOL_BUTTON_LABEL,
     UNIVERSE_SYMBOLS_BUTTON_LABEL,
 )
+from v2.operator.form_defaults import SCORING_DEFAULTS, TRAILING_FORM_DEFAULTS
+from v2.operator.universe_scoring import parse_momentum_ema as _parse_momentum_ema_shared
+from v2.operator.universe_scoring import (
+    parse_scoring_weight_text as _parse_scoring_weight_text_shared,
+)
+from v2.operator.universe_scoring import parse_universe_symbols as _parse_universe_symbols_shared
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +143,7 @@ REASON_HINT_MAP: dict[str, str] = {
     "daily_loss_limit_reached": "일일 손실 제한에 걸렸습니다.",
     "dd_limit_reached": "DD 제한에 걸렸습니다.",
     "lose_streak_cooldown": "연속 손실 중이라 일시 정지됩니다.",
+    "short_overextension_risk": "급락 과확장 구간이라 숏 추격 진입을 건너뜁니다.",
     "equity_unavailable": "자산 데이터(Equity)를 가져올 수 없습니다.",
     "leverage_above_max_leverage": "레버리지가 허용 범위를 넘었습니다.",
     "single_asset_rule_violation": "단일 자산 모드에서는 동일 방향 중복 진입이 금지됩니다.",
@@ -791,22 +797,7 @@ def _parse_bool_like(raw: str, *, field: str) -> bool:
 
 
 def _parse_universe_symbols(raw: str) -> list[str]:
-    s = str(raw or "").strip()
-    if not s:
-        raise ValueError("심볼 목록이 비어 있습니다. BTCUSDT,ETHUSDT 형식으로 입력하세요.")
-    normalized_raw = s.replace("\n", ",").replace(";", ",").replace("，", ",")
-    parts = [p.strip().upper() for p in re.split(r"[\s,]+", normalized_raw) if p.strip()]
-    if not parts:
-        raise ValueError("심볼 형식이 유효하지 않습니다. BTCUSDT,ETHUSDT 형식으로 입력하세요.")
-
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in parts:
-        if item in seen:
-            continue
-        seen.add(item)
-        out.append(item)
-    return out
+    return _parse_universe_symbols_shared(raw)
 
 
 def _join_symbols_preview(symbols: list[str], *, limit: int = 150) -> str:
@@ -987,65 +978,53 @@ class ScoringSetupModal(discord.ui.Modal, title="판단식 설정"):
         self._view = view
         d = defaults or {}
         weights = {
-            "10m": d.get("tf_weight_10m", 0.25),
-            "15m": d.get("tf_weight_15m", 0.0),
-            "30m": d.get("tf_weight_30m", 0.25),
-            "1h": d.get("tf_weight_1h", 0.25),
-            "4h": d.get("tf_weight_4h", 0.25),
+            "10m": d.get("tf_weight_10m", SCORING_DEFAULTS["tf_weight_10m"]),
+            "15m": d.get("tf_weight_15m", SCORING_DEFAULTS["tf_weight_15m"]),
+            "30m": d.get("tf_weight_30m", SCORING_DEFAULTS["tf_weight_30m"]),
+            "1h": d.get("tf_weight_1h", SCORING_DEFAULTS["tf_weight_1h"]),
+            "4h": d.get("tf_weight_4h", SCORING_DEFAULTS["tf_weight_4h"]),
         }
         self.tf_weights.default = ",".join(
             [f"{k}={weights[k]}" for k in ("10m", "15m", "30m", "1h", "4h")]
         )
-        self.score_conf_threshold.default = str(d.get("score_conf_threshold", "0.60"))
-        self.score_gap_threshold.default = str(d.get("score_gap_threshold", "0.15"))
-        momentum_raw = d.get("donchian_momentum_filter", True)
+        self.score_conf_threshold.default = str(
+            d.get("score_conf_threshold", SCORING_DEFAULTS["score_conf_threshold"])
+        )
+        self.score_gap_threshold.default = str(
+            d.get("score_gap_threshold", SCORING_DEFAULTS["score_gap_threshold"])
+        )
+        momentum_raw = d.get(
+            "donchian_momentum_filter",
+            SCORING_DEFAULTS["donchian_momentum_filter"],
+        )
         if isinstance(momentum_raw, str):
             momentum_default = momentum_raw.strip().lower() in {"true", "1", "yes", "y", "on", "예"}
         else:
             momentum_default = bool(momentum_raw)
         self.donchian_momentum_filter.default = "예" if momentum_default else "아니오"
-        fast = int(_coerce_float(d.get("donchian_fast_ema_period"), default=8.0))
-        slow = int(_coerce_float(d.get("donchian_slow_ema_period"), default=21.0))
+        fast = int(
+            _coerce_float(
+                d.get("donchian_fast_ema_period"),
+                default=float(SCORING_DEFAULTS["donchian_fast_ema_period"]),
+            )
+        )
+        slow = int(
+            _coerce_float(
+                d.get("donchian_slow_ema_period"),
+                default=float(SCORING_DEFAULTS["donchian_slow_ema_period"]),
+            )
+        )
         if slow <= fast:
             slow = fast + 1
         self.donchian_momentum_ema.default = f"{fast},{slow}"
 
     @staticmethod
     def _parse_weight_text(raw: str) -> dict[str, float]:
-        parts = [p.strip() for p in str(raw).split(",") if p.strip()]
-        parsed = {}
-        order = ["10m", "15m", "30m", "1h", "4h"]
-        if not parts:
-            return parsed
-
-        has_key = all("=" in p for p in parts)
-        if has_key:
-            for part in parts:
-                if "=" not in part:
-                    raise ValueError("시간봉 가중치는 key=value 형태 또는 숫자 5개 이어야 합니다.")
-                k, v = part.split("=", 1)
-                key = k.strip().lower().replace(" ", "")
-                if key not in {"10m", "15m", "30m", "1h", "4h"}:
-                    raise ValueError("지원하지 않는 시간봉이 포함되어 있습니다.")
-                parsed[key] = _parse_float_range(v, field=f"tf_weight_{key}", min_v=0.0, max_v=1.0)
-            return parsed
-
-        if len(parts) != 5:
-            raise ValueError("숫자 입력은 5개(10m,15m,30m,1h,4h)를 모두 넣어주세요.")
-        for key, val in zip(order, parts, strict=True):
-            parsed[key] = _parse_float_range(val, field=f"tf_weight_{key}", min_v=0.0, max_v=1.0)
-        return parsed
+        return _parse_scoring_weight_text_shared(raw)
 
     @staticmethod
     def _parse_momentum_ema(raw: str) -> tuple[int, int]:
-        parts = [p.strip() for p in str(raw).split(",") if p.strip()]
-        if len(parts) != 2:
-            raise ValueError("모멘텀 속도는 '빠름,느림' 형식(예: 8,21)으로 입력해주세요.")
-        fast = _parse_int_range(parts[0], field="donchian_fast_ema_period", min_v=2, max_v=30)
-        slow = _parse_int_range(parts[1], field="donchian_slow_ema_period", min_v=3, max_v=80)
-        if slow <= fast:
-            slow = fast + 1
-        return fast, slow
+        return _parse_momentum_ema_shared(raw)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):
@@ -1232,21 +1211,33 @@ class TrailingConfigModal(discord.ui.Modal, title="트레일링 설정"):
         self._api = api
         self._view = view
         d = defaults or {}
-        self.trailing_enabled.default = "yes" if bool(d.get("trailing_enabled", True)) else "no"
-        self.trailing_mode.default = str(d.get("trailing_mode", "PCT"))
-        self.trail_arm_pnl_pct.default = str(d.get("trail_arm_pnl_pct", "1.2"))
-        self.trail_grace_minutes.default = str(d.get("trail_grace_minutes", "30"))
+        self.trailing_enabled.default = (
+            "yes"
+            if bool(d.get("trailing_enabled", TRAILING_FORM_DEFAULTS["trailing_enabled"]))
+            else "no"
+        )
+        self.trailing_mode.default = str(
+            d.get("trailing_mode", TRAILING_FORM_DEFAULTS["trailing_mode"])
+        )
+        self.trail_arm_pnl_pct.default = str(
+            d.get("trail_arm_pnl_pct", TRAILING_FORM_DEFAULTS["trail_arm_pnl_pct"])
+        )
+        self.trail_grace_minutes.default = str(
+            d.get("trail_grace_minutes", TRAILING_FORM_DEFAULTS["trail_grace_minutes"])
+        )
 
-        mode = str(d.get("trailing_mode", "PCT")).upper()
+        mode = str(d.get("trailing_mode", TRAILING_FORM_DEFAULTS["trailing_mode"])).upper()
         if mode == "ATR":
             self.mode_params.default = (
-                f"{d.get('atr_trail_timeframe', '1h')},"
-                f"{d.get('atr_trail_k', '2.0')},"
-                f"{d.get('atr_trail_min_pct', '0.6')},"
-                f"{d.get('atr_trail_max_pct', '1.8')}"
+                f"{d.get('atr_trail_timeframe', TRAILING_FORM_DEFAULTS['atr_trail_timeframe'])},"
+                f"{d.get('atr_trail_k', TRAILING_FORM_DEFAULTS['atr_trail_k'])},"
+                f"{d.get('atr_trail_min_pct', TRAILING_FORM_DEFAULTS['atr_trail_min_pct'])},"
+                f"{d.get('atr_trail_max_pct', TRAILING_FORM_DEFAULTS['atr_trail_max_pct'])}"
             )
         else:
-            self.mode_params.default = str(d.get("trail_distance_pnl_pct", "0.8"))
+            self.mode_params.default = str(
+                d.get("trail_distance_pnl_pct", TRAILING_FORM_DEFAULTS["trail_distance_pnl_pct"])
+            )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _is_admin(interaction):

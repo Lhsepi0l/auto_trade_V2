@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from v2 import run as run_module
-from v2.clean_room import build_default_kernel
 from v2.config.loader import EffectiveConfig
 from v2.control import build_runtime_controller, create_control_http_app
 from v2.core import EventBus, Scheduler
 from v2.engine import EngineStateStore
-from v2.notify import WebPushService, build_notifier_from_config
+from v2.kernel import build_default_kernel
+from v2.notify import build_notifier_from_config
 from v2.ops import create_ops_http_app
 from v2.runtime.boot import build_control_balance_rest_client
 
@@ -72,15 +72,7 @@ def serve_control_http(
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
                 state_store.set(mode=cfg.mode, status="STOPPED")
 
-                webpush_service = WebPushService(
-                    storage=storage,
-                    subject=cfg.secrets.webpush_subject,
-                )
-                notifier = build_notifier_from_config(
-                    cfg,
-                    webpush_send=webpush_service.send,
-                    webpush_public_key=webpush_service.availability_snapshot().get("public_key"),
-                )
+                notifier = build_notifier_from_config(cfg)
                 market_data_state: dict[str, Any] = {
                     "last_market_data_at": None,
                     "last_market_symbol_count": 0,
@@ -129,7 +121,6 @@ def serve_control_http(
                     scheduler=scheduler,
                     event_bus=event_bus,
                     notifier=notifier,
-                    webpush_service=webpush_service,
                     rest_client=balance_rest_client,
                     user_stream_manager=user_stream_manager,
                     market_data_state=market_data_state,

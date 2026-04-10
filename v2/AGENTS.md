@@ -8,6 +8,10 @@
 v2/
 |- run.py       # CLI entry + ops actions/http
 |- config/      # YAML loader and profile inheritance
+|- kernel/      # runtime decision/sizing/execution composition
+|- control/     # control API + operator-facing state assembly
+|- operator/    # operator service/read-model layer
+|- operator_web/# /operator web routes + assets
 |- exchange/    # REST + market/user stream adapters
 |- engine/      # state store + journal replay
 |- ops/         # pause/resume/safe/flatten controls
@@ -20,9 +24,11 @@ v2/
 |---|---|---|
 | Boot/profile/env wiring | `v2/run.py` | mode/env/profile and ops CLI |
 | Effective config | `v2/config/loader.py` | profile inheritance + validation |
+| Runtime decision kernel | `v2/kernel/kernel.py` | candidate selection + sizing/execution composition |
 | Exchange API integration | `v2/exchange/rest_client.py` | signed requests, open/algo ops |
 | User stream resilience | `v2/exchange/user_ws.py` | keepalive + reconnect + reorder |
 | State SSOT and replay | `v2/engine/state.py` | journal idempotency + reconcile |
+| Operator web surface | `v2/operator_web/router.py` | `/operator` routes + assets |
 | Bracket TP/SL | `v2/tpsl/brackets.py` | algo-only TP/SL lifecycle |
 | Ops controls | `v2/ops/control.py` | flatten verification sequence |
 

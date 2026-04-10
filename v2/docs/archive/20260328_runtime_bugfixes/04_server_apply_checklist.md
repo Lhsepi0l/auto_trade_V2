@@ -4,6 +4,7 @@
 이번 수정이 서버에 올라간 뒤
 - TP/SL 보호 주문이 유지되는지
 - 심볼 레버리지가 실제 주문에 반영되는지
+- private stream 재연결 후 `state_uncertain`이 과하게 남지 않는지
 를 짧은 절차로 확인하기 위함이다.
 
 ## 2. 서버 반영
@@ -28,6 +29,7 @@ curl -s http://127.0.0.1:8101/readyz
 - `state_uncertain=false`
 - `recovery_required=false`
 - bracket recovery 관련 이상 없음
+- `user_ws_stale=false`
 
 ## 4. 레버리지 확인 순서
 
@@ -62,7 +64,26 @@ curl -s http://127.0.0.1:8101/readyz
 - `기존 포지션 보유중` 같은 정상 상태가 경고처럼 계속 울리지 않는지
 - 진짜 실패/위험 알림만 강한 톤으로 오는지
 
-## 7. 추천 확인 명령
+## 7. 프라이빗 스트림 복구 확인 순서
+
+### 끊김 이후 복구가 있었을 때
+- `/status.user_stream.last_error`
+- `/status.state_uncertain`
+- `/readyz.user_ws_stale`
+를 같이 본다.
+
+### 정상 기대값
+- `user_stream_disconnect` 또는 `listen_key_expired`가 잠깐 찍혀도
+- 이후 `user_stream_private_ok` / `user_stream_resync`가 오면
+- `user_ws_stale=false`
+- `state_uncertain=false`
+- `state_uncertain_reason=null`
+
+### 비정상
+- `private_ok` 또는 `resync 성공`이 보이는데도
+- `state_uncertain=true`가 계속 남아 신규 판단을 막는 경우
+
+## 8. 추천 확인 명령
 
 ```bash
 journalctl -u v2-stack -n 200 --no-pager
@@ -77,7 +98,7 @@ ss -ltnp | grep 8101
 
 위 로그가 떠도 실제 포지션이 열려 있으면 repair 로 복구되는지 같이 본다.
 
-## 8. 이상 시 1차 판단 기준
+## 9. 이상 시 1차 판단 기준
 
 ### TP/SL 쪽
 - 포지션 open + recent fill 없음
@@ -95,7 +116,13 @@ ss -ltnp | grep 8101
 가 계속 반복되면 비정상
 - 특히 `source_error` 나 probe 실패 로그가 동반되면 외부 변수까지 같이 의심해야 한다
 
-## 9. 한 줄 요약
+### 프라이빗 스트림 쪽
+- `user_stream_disconnect` 후 `private_ok/resync`가 왔는데도
+- `state_uncertain=true`가 계속 남으면 비정상
+- 반대로 `live_positions_fetch_failed` 같은 non-stream uncertainty는 `private_ok`만으로 풀리면 안 된다
+
+## 10. 한 줄 요약
 - 진입 후 TP/SL 은 둘 다 살아 있어야 정상
 - 심볼 레버리지는 입력한 값 그대로 주문에 반영돼야 정상
 - 기존 포지션 보유 중에도 market data freshness는 계속 살아 있어야 정상
+- private stream이 이미 복구됐으면 `state_uncertain`은 같이 내려가야 정상

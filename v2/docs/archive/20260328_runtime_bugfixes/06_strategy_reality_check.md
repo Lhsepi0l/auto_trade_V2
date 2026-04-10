@@ -42,10 +42,9 @@
 
 그래서 이 버전은 **live 기본 경로에 채택하지 않았다.**
 
-### 3.2 현재 채택한 현실적 개선안
+### 3.2 현재 브랜치에 실제로 채택한 개선안
 - `15m/1h/4h` 유지
 - `expansion_quality_score_v2_min=0.62` 적용
-- `edge_ratio >= 0.95 + high quality + 정상 spread/stop`인 cost near-pass 허용
 
 의미:
 - 좋은 자리와 애매한 자리를 조금 더 구분하려는 보수적 개선
@@ -60,10 +59,23 @@
   - `2025-03-28 ~ 2025-09-27`은 소폭 개선
   - `2025-09-28 ~ 2026-03-28`은 사실상 동일
   이라서 “해를 만들지 않으면서 애매한 expansion을 더 자르는 값”으로 볼 수 있다.
-- 여기에 `cost near-pass`를 더했을 때도
-  - 1Y / 6M 성과는 그대로 유지됐고
-  - `cost_missing` 건수만 줄어들었다.
-  즉, 현재는 `trigger`보다 `cost edge_shortfall` 쪽이 더 실제 병목에 가깝다고 볼 수 있다.
+
+### 3.3 연구로 해봤지만 현재 브랜치에는 안 올린 것
+- `30m/2h` 직접 보강
+- `volume` rescue
+- `trigger_missing` same-candle rescue
+- `setup/confirm`
+- `edge_ratio >= 0.95 + high quality + 정상 spread/stop`인 `cost near-pass`
+
+이유는 공통적으로 이렇다.
+- local research로는 의미가 있었던 것도 있었지만
+- 현재 브랜치 기본 전략으로 올릴 정도로 “검증된 승자”라고 보기엔 아직 애매했다.
+
+즉, 지금 브랜치에 남은 건
+- `qv2_min=0.62`
+- local backtest precedence fix
+- `block_samples` 표본 추출 도구
+까지라고 보는 게 정확하다.
 
 ## 4. 왜 아직 “돈 버는 기계”라고 말하면 안 되나
 
@@ -127,7 +139,7 @@
   1Y/6M 모두 기대수익이 아주 소폭 후퇴해 채택하지 않았다.
 - 반대로 `cost_missing`는 `354`건 중 `353`건이 `edge_shortfall`이었고,
   `edge_ratio>=0.95` near-pass 표본이 의미 있게 존재했다.
-  이 규칙은 실제로 넣어도 성과를 해치지 않아서 채택했다.
+  이 규칙은 연구상으로는 유망했지만, 현재 브랜치 기본 전략으로는 아직 승격하지 않았다.
 - 추가로 near-buffer 후보 `203`개를 setup bucket으로 자동 분류한 결과, 현재 top 3는 아래처럼 정리됐다.
   - `broad_quality`: `gap<=8bps`, `body>=0.35`, `favored>=0.60`, `width>=0.05`, `range_atr>=0.85`, `count=106`
   - `balanced_range`: `gap<=5bps`, `body>=0.40`, `favored>=0.65`, `width>=0.05`, `range_atr>=0.90`, `count=57`
@@ -136,5 +148,6 @@
 
 한 줄 요약:
 - **시스템은 좋아졌다**
-- **전략은 아직 더 좁혀야 한다**
+- **현재 브랜치에 실제로 채택된 전략 개선은 `qv2_min=0.62`가 핵심이다**
+- **그 외 trigger/cost 연구는 아직 별도 연구 결과로 봐야 한다**
 - **과장 대신 검증으로 가야 한다**

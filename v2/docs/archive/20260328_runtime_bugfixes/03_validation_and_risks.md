@@ -10,12 +10,15 @@ python -m pytest -q v2/tests/test_control_api.py -k 'control_api_contract or per
 python -m pytest -q v2/tests/test_discord_panel.py -k 'symbol_leverage_modal'
 python -m pytest -q v2/tests/test_control_api.py -k 'market_data_stale or position_open_cycle_refreshes_market_data_before_stale_trip'
 python -m pytest -q v2/tests/test_control_api.py -k 'ntfy or position_open_block_does_not_spam'
+python -m pytest -q v2/tests/test_control_api.py -k 'user_stream_disconnect_resync_and_event_flow_update_state or user_stream_private_ok_clears_disconnect_uncertainty or user_stream_private_ok_does_not_clear_non_stream_uncertainty or user_stream_stale_blocks_new_entries_and_private_ok_unblocks or user_stream_resync_failure_sets_uncertainty'
+python -m pytest -q v2/tests/test_exchange_user_stream.py v2/tests/test_control_api.py -k 'user_stream'
 python -m pytest -q v2/tests/test_v2_env_and_notify.py
 python -m pytest -q v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_market_intervals_config.py
 python -m pytest -q v2/tests/test_v2_local_backtest.py -k 'profile_alpha_overrides_maps_expansion_profiles or historical_snapshot_provider or alpha_v2'
 python -m ruff check v2/control/api.py v2/tpsl/brackets.py v2/discord_bot/views/panel.py v2/tests/test_control_api.py v2/tests/test_tpsl_brackets.py v2/tests/test_discord_panel.py
 python -m ruff check v2/control/cycle.py v2/notify/runtime_events.py v2/tests/test_control_api.py v2/tests/test_v2_env_and_notify.py
-python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/clean_room/kernel.py v2/backtest/policy.py v2/backtest/local_runner.py v2/control/status_payloads.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_market_intervals_config.py v2/tests/test_v2_local_backtest.py
+python -m ruff check v2/control/api.py v2/tests/test_control_api.py
+python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/kernel/kernel.py v2/backtest/policy.py v2/backtest/local_runner.py v2/control/status_payloads.py v2/tests/test_ra_2026_alpha_v2.py v2/tests/test_v2_config_loader.py v2/tests/test_market_intervals_config.py v2/tests/test_v2_local_backtest.py
 ```
 
 ## 2. 이번에 추가/보강한 회귀 포인트
@@ -42,6 +45,11 @@ python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/clean_room/kernel.py v
 - `30m/2h` 보강 실험을 live 기본 경로로 채택하지 않아도 관련 실험 훅이 회귀 없이 남아 있는지
 - `ra_2026_alpha_v2_expansion_live_candidate`의 `expansion_quality_score_v2_min=0.62` 기본값이 설정/백테스트 경로에 일관되게 반영되는지
 - local backtest에서 CLI 미지정 시 generic default가 profile override를 덮어쓰지 않고, profile 기본값 `0.62`가 실제 replay까지 전달되는지
+
+### 2.5 프라이빗 스트림 복구 관련
+- `user_stream_disconnect` 후 `private_ok`가 오면 disconnect-origin `state_uncertain`이 자동 해제되는지
+- `live_positions_fetch_failed` 같은 non-stream uncertainty는 `private_ok`로 잘못 해제되지 않는지
+- user-stream stale 차단과 uncertainty 차단이 서로 다른 원인으로 구분돼 유지되는지
 
 ## 3. 오늘 기준 남아 있는 리스크
 
@@ -77,30 +85,32 @@ python -m ruff check v2/strategies/ra_2026_alpha_v2.py v2/clean_room/kernel.py v
 는 분명히 좋아졌지만,
   전략 자체가 월 `3000 USD` 급 우상향 시스템으로 증명된 것은 아니다.
 - fixed-window 1Y 비교에서 `30m/2h`를 live 기본 경로에 직접 녹인 버전은 baseline보다 `net/PF/DD`가 나빠 채택하지 않았다.
-- 현재 전략 쪽에서 채택한 현실적인 개선안은
+현재 브랜치 기준 전략 쪽에서 채택한 현실적인 개선안은
   - `15m/1h/4h` 유지
   - `expansion_quality_score_v2_min=0.62`
-  - `edge_ratio >= 0.95 + high quality + 정상 spread/stop`인 `cost near-pass` 허용
-로 expansion 품질을 더 보수적으로 거르면서도 과보수적인 cost 차단 일부를 풀어주는 것이다.
+이다.
+- `edge_ratio >= 0.95 + high quality + 정상 spread/stop`인 `cost near-pass`는 local research에서는 성과 비훼손 후보로 확인됐지만, 현재 브랜치 기본 전략으로는 아직 승격하지 않았다.
 - 2026-03-29 재검증 기준:
   - fixed-window 1Y `2025-03-28 ~ 2026-03-28`:
     - baseline `net=6.14`, `PF=2.707`, `DD=5.62%`, `trades=318`
     - `qv2_min=0.62` `net=6.73`, `PF=3.127`, `DD=4.48%`, `trades=281`
-    - `qv2_min=0.62 + cost near-pass`도 `net=6.73`, `PF=3.127`, `DD=4.48%`, `trades=281`로 동일 성과를 유지했고 `cost_missing`만 `467 -> 437`로 감소했다
   - 추가 6개월 창 `2025-03-28 ~ 2025-09-27`:
     - baseline `net=0.57`, `PF=2.140`, `DD=3.54%`, `trades=91`
     - `qv2_min=0.62` `net=0.64`, `PF=2.204`, `DD=3.34%`, `trades=89`
-    - `qv2_min=0.62 + cost near-pass`도 `net=0.64`, `PF=2.204`, `DD=3.34%`, `trades=89`로 동일했고 `cost_missing`은 `308 -> 288`로 감소했다
   - 추가 6개월 창 `2025-09-28 ~ 2026-03-28`:
     - baseline `net=4.81`, `PF=3.449`, `DD=4.48%`, `trades=159`
-    - `qv2_min=0.62 + cost near-pass`도 `net=4.81`, `PF=3.449`, `DD=4.48%`, `trades=159`로 동일했고 `cost_missing`은 `109 -> 101` 수준으로 감소했다.
+    - `qv2_min=0.62`는 사실상 중립이었다.
+- 추가 메모:
+  - `cost near-pass`는 연구상 유망했고 `cost_missing` 감소 효과도 확인했다.
+  - 다만 현재 브랜치에 커밋된 기본 전략은 아니므로, 운영 기준 문서에는 “연구 결과”로만 해석하는 게 맞다.
 
 ## 4. 오늘 변경의 실질적 의미
 - TP/SL 쪽은 "과잉 cleanup"을 막고 "repair"로 바꿨다.
 - 레버리지 쪽은 "조용한 cap"을 없애고 "입력값 기준 적용"으로 바꿨다.
 - stale 쪽은 "포지션 보유중이라 freshness가 늙어버리는 구조"를 막았다.
 - ntfy 쪽은 "정상 상태가 실패처럼 보이던 표현"을 정리했다.
-- 전략 쪽은 “더 많이 들어가게 만들기”보다 “애매한 확장을 더 잘 거르기” 쪽으로 방향을 재정렬했다.
+- private stream uncertainty 쪽은 "이미 복구된 스트림 disconnect가 readiness를 계속 붙잡는 구조"를 막았다.
+- 전략 쪽은 “더 많이 들어가게 만들기”보다 “애매한 확장을 더 잘 거르기” 쪽으로 방향을 재정렬했고, 현재 브랜치에 실제로 남긴 건 `qv2_min=0.62`와 표본 추출 도구다.
 
 둘 다 공통적으로:
 - 운영자가 기대한 결과와
