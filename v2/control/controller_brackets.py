@@ -395,19 +395,21 @@ def resolve_symbol_realized_pnl(controller: Any, *, symbol: str) -> float | None
 
 
 def emit_bracket_exit_alert(controller: Any, *, symbol: str, outcome: Literal["TP", "SL"]) -> None:
+    from v2.control.controller_events import dispatch_webpush_notification
+
     realized = controller._resolve_symbol_realized_pnl(symbol=symbol)
     normalized_realized = realized
     if realized is not None and abs(realized) < 0.00005:
         normalized_realized = 0.0
     try:
-        _ = controller.notifier.send_notification(
-            build_bracket_exit_notification(
-                symbol=symbol,
-                outcome=outcome,
-                realized_pnl=normalized_realized,
-                context=controller._notification_context(),
-            )
+        notification = build_bracket_exit_notification(
+            symbol=symbol,
+            outcome=outcome,
+            realized_pnl=normalized_realized,
+            context=controller._notification_context(),
         )
+        _ = controller.notifier.send_notification(notification)
+        dispatch_webpush_notification(controller, notification)
     except Exception:  # noqa: BLE001
         logger.exception("bracket_exit_notify_failed symbol=%s outcome=%s", symbol, outcome)
     controller._log_event(

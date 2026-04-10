@@ -90,6 +90,22 @@ def log_event(controller: Any, event: str, *, notify: bool = True, **fields: Any
     )
     if notification is not None and notify and not controller._boot_notification_muted:
         _ = controller.notifier.send_notification(notification)
+        dispatch_webpush_notification(controller, notification)
+
+
+def dispatch_webpush_notification(controller: Any, notification: Any) -> None:
+    if notification is None:
+        return
+    webpush_service = getattr(controller, "webpush_service", None)
+    if webpush_service is None or not hasattr(webpush_service, "send"):
+        return
+    try:
+        _ = webpush_service.send(notification)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "webpush_dispatch_failed event_type=%s",
+            getattr(notification, "event_type", None),
+        )
 
 
 def freshness_snapshot(controller: Any) -> dict[str, Any]:

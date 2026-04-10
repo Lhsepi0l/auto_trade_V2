@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from v2.control.controller_events import dispatch_webpush_notification
 from v2.control.mutating_responses import (
     build_trade_close_all_response,
     build_trade_close_response,
@@ -20,13 +21,13 @@ async def close_position(
     close_qty = abs(to_float(getattr(position_state, "position_amt", 0.0), default=0.0))
     controller._log_event("flatten_requested", action="close_position", symbol=symbol.upper())
     result = await controller.ops.flatten(symbol=symbol, latch_ops_mode=False)
-    _ = controller.notifier.send_notification(
-        build_position_close_notification(
-            symbol=result.symbol,
-            reason=notify_reason,
-            context=controller._notification_context(),
-        )
+    notification = build_position_close_notification(
+        symbol=result.symbol,
+        reason=notify_reason,
+        context=controller._notification_context(),
     )
+    _ = controller.notifier.send_notification(notification)
+    dispatch_webpush_notification(controller, notification)
     controller._log_event(
         "position_closed",
         symbol=result.symbol,

@@ -908,6 +908,32 @@ def test_control_api_manual_tick_emits_attention_notification_for_blocked_result
     assert "최소 신호 점수 미달" in notification.body
 
 
+def test_control_api_manual_tick_dispatches_webpush_for_position_open_block(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    controller.notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    controller.notifier.send_notification = MagicMock(  # type: ignore[method-assign]
+        return_value=Notifier.SendResult(sent=True, error=None, status="sent")
+    )
+    controller.webpush_service = MagicMock()
+    controller.webpush_service.send.return_value = {"sent": True}
+    controller._log_event(
+        "cycle_result",
+        action="blocked",
+        reason="position_open",
+        notify_interval_sec=30,
+        trigger_source="manual_tick",
+        event_time="2026-04-10T21:02:56.289272+00:00",
+    )
+
+    assert controller.notifier.send_notification.call_count == 1
+    assert controller.webpush_service.send.call_count == 1
+    notification = controller.notifier.send_notification.call_args[0][0]
+    assert isinstance(notification, NotificationMessage)
+    assert notification.title == "포지션 관리중"
+
+
 def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
