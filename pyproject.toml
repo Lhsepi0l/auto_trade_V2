@@ -18,6 +18,8 @@ dependencies = [
   "requests>=2.31",
   "websockets>=12.0",
   "httpx>=0.27",
+  "py-vapid",
+  "pywebpush",
 ]
 
 [project.optional-dependencies]

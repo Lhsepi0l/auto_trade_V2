@@ -94,8 +94,11 @@ def _build_operator_app(tmp_path, *, with_webpush: bool = False):  # type: ignor
 def test_operator_console_route_renders(tmp_path) -> None:  # type: ignore[no-untyped-def]
     client = TestClient(_build_operator_app(tmp_path))
 
-    response = client.get("/operator")
+    redirect = client.get("/operator", follow_redirects=False)
+    response = client.get("/operator/")
 
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == "/operator/"
     assert response.status_code == 200
     assert "웹 운영 콘솔" in response.text
     assert "상태 · 실행 · 리스크" in response.text
@@ -108,8 +111,11 @@ def test_operator_console_route_renders(tmp_path) -> None:  # type: ignore[no-un
 def test_operator_logs_route_renders(tmp_path) -> None:  # type: ignore[no-untyped-def]
     client = TestClient(_build_operator_app(tmp_path))
 
-    response = client.get("/operator/logs")
+    redirect = client.get("/operator/logs", follow_redirects=False)
+    response = client.get("/operator/logs/")
 
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == "/operator/logs/"
     assert response.status_code == 200
     assert "운영 로그" in response.text
     assert "조회 · 검색 · 추출" in response.text
@@ -151,21 +157,26 @@ def test_operator_manifest_and_push_routes_work(tmp_path) -> None:  # type: igno
         },
     )
     test_push = client.post("/operator/actions/push-test", json={"device_label": "민수 iPhone 운영앱"})
-    unsubscribe = client.post(
-        "/operator/api/push/unsubscribe",
-        json={"endpoint": "https://example.com/push/1"},
-    )
 
     assert manifest.status_code == 200
     assert manifest.json()["display"] == "standalone"
+    assert manifest.json()["start_url"] == "/operator/"
+    assert manifest.json()["scope"] == "/operator/"
     assert service_worker.status_code == 200
     assert "self.addEventListener(\"push\"" in service_worker.text
     assert payload.status_code == 200
     assert payload.json()["push"]["available"] is True
     assert subscribe.status_code == 200
     assert subscribe.json()["action"] == "push_subscribe"
+    push_state = client.get("/operator/api/push/state")
+    assert push_state.status_code == 200
+    assert len(push_state.json()["devices"]) == 1
     assert test_push.status_code == 200
     assert test_push.json()["action"] == "push_test"
+    unsubscribe = client.post(
+        "/operator/api/push/unsubscribe",
+        json={"endpoint": "https://example.com/push/1"},
+    )
     assert unsubscribe.status_code == 200
     assert unsubscribe.json()["action"] == "push_unsubscribe"
 

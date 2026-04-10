@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from v2.control.operator_events import build_operator_event_payload
 from v2.operator import OperatorService
 from v2.operator.actions import wrap_operator_action
@@ -147,6 +149,40 @@ def test_build_operator_console_payload_prefills_effective_margin_budget_not_bas
     )
 
     assert payload["risk_forms"]["margin_budget"]["margin_budget_usdt"] == 22.0
+
+
+def test_operator_service_push_state_exposes_devices_and_runtime_provider() -> None:
+    controller = SimpleNamespace(
+        notifier=SimpleNamespace(
+            delivery_snapshot=lambda: {
+                "enabled": True,
+                "provider": "ntfy",
+            }
+        ),
+        webpush_service=SimpleNamespace(
+            availability_snapshot=lambda: {
+                "available": True,
+                "public_key": "PUBLIC_KEY",
+                "subscription_count": 1,
+                "last_error": None,
+            },
+            list_subscriptions=lambda: [
+                {
+                    "device_label": "민수 iPhone 운영앱",
+                    "platform": "iPhone",
+                    "active": True,
+                    "standalone": True,
+                }
+            ],
+        ),
+    )
+
+    payload = OperatorService(controller=controller).push_state()
+
+    assert payload["runtime_provider"] == "ntfy"
+    assert payload["runtime_provider_enabled"] is True
+    assert payload["devices"] == payload["subscriptions"]
+    assert payload["devices"][0]["device_label"] == "민수 iPhone 운영앱"
 
 
 def test_wrap_operator_action_builds_consistent_response() -> None:

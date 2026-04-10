@@ -351,7 +351,7 @@ async function renderPushState(push) {
   setText("push-subscription-state", diagnostic.message);
   setText("push-subscription-count", push?.subscription_count);
   setText("push-last-error", push?.last_error);
-  renderPushDevices(push?.devices || []);
+  renderPushDevices(push?.devices || push?.subscriptions || []);
 
   const subscription = diagnostic.canSubscribe
     ? await currentPushSubscription().catch(() => null)

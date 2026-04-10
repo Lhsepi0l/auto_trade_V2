@@ -23,7 +23,7 @@ self.addEventListener("push", (event) => {
     badge: payload.badge || "/operator/static/operator-badge.svg",
     tag: payload.tag || "operator-update",
     data: {
-      path: payload.path || "/operator",
+      path: payload.path || "/operator/",
       eventType: payload.event_type || null,
     },
     renotify: false,
@@ -33,7 +33,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const rawPath = event.notification?.data?.path || "/operator";
+  const rawPath = event.notification?.data?.path || "/operator/";
   const targetUrl = new URL(rawPath, self.location.origin).toString();
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientsList) => {

@@ -14,7 +14,7 @@ from v2.core import Event, EventBus, Scheduler
 from v2.engine import EngineStateStore, OrderManager
 from v2.exchange import BackoffPolicy, BinanceRESTClient
 from v2.kernel import build_default_kernel
-from v2.notify import RuntimeNotificationContext, build_notifier_from_config
+from v2.notify import RuntimeNotificationContext, WebPushService, build_notifier_from_config
 from v2.notify.runtime_events import build_runtime_boot_notification
 from v2.risk import KillSwitch, RiskManager
 from v2.storage import RuntimeStorage
@@ -160,6 +160,7 @@ def run_runtime_preflight(cfg: EffectiveConfig, *, host: str, port: int) -> int:
             ):
                 storage, state_store, ops, adapter, rest_client = _build_runtime(cfg)
             notifier = build_notifier_from_config(cfg)
+            webpush_service = WebPushService(storage=storage)
             market_data_state: dict[str, Any] = {
                 "last_market_data_at": None,
                 "last_market_symbol_count": 0,
@@ -206,6 +207,7 @@ def run_runtime_preflight(cfg: EffectiveConfig, *, host: str, port: int) -> int:
                 event_bus=event_bus,
                 notifier=notifier,
                 rest_client=balance_rest_client,
+                webpush_service=webpush_service,
                 user_stream_manager=user_stream_manager,
                 market_data_state=market_data_state,
                 runtime_lock_active=True,

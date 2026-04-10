@@ -193,7 +193,7 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
                 "name": "Auto Trader Operator",
                 "short_name": "AT Ops",
                 "description": "실운영 제어와 즉시 대응을 위한 모바일 운영 앱",
-                "start_url": "/operator",
+                "start_url": "/operator/",
                 "scope": "/operator/",
                 "display": "standalone",
                 "background_color": "#f3efe5",
@@ -217,21 +217,21 @@ def register_operator_web_routes(*, app: FastAPI, controller: RuntimeController)
             headers={"Cache-Control": "no-cache"},
         )
 
-    @router.get("/operator", response_class=HTMLResponse)
+    @router.get("/operator/", response_class=HTMLResponse)
     async def operator_console() -> HTMLResponse:
         return _render_page(title="웹 운영 콘솔", body_template="operator_console.html", page_id="console")
 
-    @router.get("/operator/logs", response_class=HTMLResponse)
+    @router.get("/operator/logs/", response_class=HTMLResponse)
     async def operator_logs() -> HTMLResponse:
         return _render_page(title="운영 로그", body_template="operator_logs.html", page_id="logs")
 
-    @router.get("/operator/")
-    async def operator_console_slash() -> RedirectResponse:
-        return RedirectResponse(url="/operator", status_code=307)
+    @router.get("/operator")
+    async def operator_console_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/operator/", status_code=307)
 
-    @router.get("/operator/logs/")
-    async def operator_logs_slash() -> RedirectResponse:
-        return RedirectResponse(url="/operator/logs", status_code=307)
+    @router.get("/operator/logs")
+    async def operator_logs_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/operator/logs/", status_code=307)
 
     @router.get("/favicon.ico")
     async def operator_favicon() -> RedirectResponse:

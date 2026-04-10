@@ -49,13 +49,22 @@ class OperatorService:
 
     def push_state(self) -> dict[str, Any]:
         service = self._webpush_service()
+        notification = {}
+        notifier = getattr(self._controller, "notifier", None)
+        if notifier is not None and hasattr(notifier, "delivery_snapshot"):
+            snapshot = notifier.delivery_snapshot()
+            if isinstance(snapshot, dict):
+                notification = snapshot
         if service is None or not hasattr(service, "availability_snapshot"):
             return {
                 "available": False,
                 "public_key": None,
                 "subscription_count": 0,
                 "subscriptions": [],
+                "devices": [],
                 "last_error": "webpush_unavailable",
+                "runtime_provider": notification.get("provider"),
+                "runtime_provider_enabled": bool(notification.get("enabled")),
             }
         snapshot = service.availability_snapshot()
         subscriptions = (
@@ -72,7 +81,10 @@ class OperatorService:
             "public_key": snapshot.get("public_key"),
             "subscription_count": int(snapshot.get("subscription_count") or len(subscriptions)),
             "subscriptions": list(subscriptions),
+            "devices": list(subscriptions),
             "last_error": snapshot.get("last_error"),
+            "runtime_provider": notification.get("provider"),
+            "runtime_provider_enabled": bool(notification.get("enabled")),
         }
 
     def register_push_subscription(

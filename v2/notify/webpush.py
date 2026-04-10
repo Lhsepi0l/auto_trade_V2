@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import socket
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ def _mask_endpoint(endpoint: str) -> str:
 class WebPushService:
     storage: RuntimeStorage
     subject: str | None = None
-    target_path: str = "/operator"
+    target_path: str = "/operator/"
     icon_url: str = "/operator/static/operator-icon.svg"
     badge_url: str = "/operator/static/operator-badge.svg"
 
@@ -42,11 +43,12 @@ class WebPushService:
 
     def availability_snapshot(self) -> dict[str, Any]:
         public_key, error = self._public_key_snapshot()
+        dependency_error = self._dispatch_dependency_error()
         return {
-            "available": public_key is not None,
+            "available": public_key is not None and dependency_error is None,
             "public_key": public_key,
             "subscription_count": self.storage.count_webpush_subscriptions(active_only=True),
-            "last_error": error,
+            "last_error": dependency_error or error,
             "subject": self.subject,
         }
 
@@ -147,6 +149,9 @@ class WebPushService:
         public_key, error = self._public_key_snapshot()
         if public_key is None:
             return WebPushDispatchResult(sent=False, error=error or "webpush_key_unavailable", status="failed")
+        dependency_error = self._dispatch_dependency_error()
+        if dependency_error is not None:
+            return WebPushDispatchResult(sent=False, error=dependency_error, status="failed")
         keys = self.storage.load_runtime_marker(marker_key=_VAPID_MARKER_KEY) or {}
         private_key_pem = str(keys.get("private_key_pem") or "").strip()
         if not private_key_pem:
@@ -224,6 +229,15 @@ class WebPushService:
             return None, str(exc)
         public_key = str(keys.get("public_key") or "").strip()
         return (public_key or None, None if public_key else "webpush_public_key_missing")
+
+    @staticmethod
+    def _dispatch_dependency_error() -> str | None:
+        missing = [
+            name for name in ("py_vapid", "pywebpush") if importlib.util.find_spec(name) is None
+        ]
+        if not missing:
+            return None
+        return f"webpush_package_missing:{','.join(missing)}"
 
     def _ensure_vapid_keys(self) -> dict[str, Any]:
         current = self.storage.load_runtime_marker(marker_key=_VAPID_MARKER_KEY) or {}

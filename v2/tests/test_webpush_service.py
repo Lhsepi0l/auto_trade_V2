@@ -7,10 +7,13 @@ from v2.notify.webpush import WebPushService
 from v2.storage import RuntimeStorage
 
 
-def test_webpush_service_generates_and_persists_vapid_keys(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_webpush_service_generates_and_persists_vapid_keys(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
     storage.ensure_schema()
     service = WebPushService(storage=storage)
+    monkeypatch.setattr(service, "_dispatch_dependency_error", lambda: None)
 
     availability = service.availability_snapshot()
     marker = storage.load_runtime_marker(marker_key="webpush_vapid_keys")
@@ -22,10 +25,30 @@ def test_webpush_service_generates_and_persists_vapid_keys(tmp_path) -> None:  #
     assert "BEGIN PRIVATE KEY" in str(marker["private_key_pem"])
 
 
+def test_webpush_service_availability_reports_missing_dispatch_packages(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
+    storage.ensure_schema()
+    service = WebPushService(storage=storage)
+    monkeypatch.setattr(
+        service,
+        "_dispatch_dependency_error",
+        lambda: "webpush_package_missing:py_vapid,pywebpush",
+    )
+
+    availability = service.availability_snapshot()
+
+    assert availability["available"] is False
+    assert availability["public_key"]
+    assert availability["last_error"] == "webpush_package_missing:py_vapid,pywebpush"
+
+
 def test_webpush_service_deactivates_gone_subscription(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
     storage.ensure_schema()
     service = WebPushService(storage=storage)
+    monkeypatch.setattr(service, "_dispatch_dependency_error", lambda: None)
     service.register_subscription(
         subscription={
             "endpoint": "https://example.com/push/1",
@@ -64,6 +87,7 @@ def test_webpush_service_records_successful_send(tmp_path, monkeypatch) -> None:
     storage = RuntimeStorage(sqlite_path=str(tmp_path / "webpush.sqlite3"))
     storage.ensure_schema()
     service = WebPushService(storage=storage)
+    monkeypatch.setattr(service, "_dispatch_dependency_error", lambda: None)
     service.register_subscription(
         subscription={
             "endpoint": "https://example.com/push/1",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -171,6 +173,82 @@ def test_deploy_prep_parser_accepts_full_test_scope() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--test-scope", "full"])
     assert args.test_scope == "full"
+
+
+def test_serve_control_http_wires_webpush_service_when_operator_web_enabled(
+    monkeypatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    from v2.runtime import serve as serve_module
+    from v2.storage import RuntimeStorage
+
+    cfg = load_effective_config(
+        profile="ra_2026_alpha_v2_expansion_verified_q070",
+        mode="shadow",
+        env="testnet",
+        env_map={},
+    )
+    storage = RuntimeStorage(sqlite_path=str(tmp_path / "runtime.sqlite3"))
+    storage.ensure_schema()
+
+    class _StateStore:
+        def __init__(self) -> None:
+            self._status = SimpleNamespace(status="STOPPED")
+
+        def set(self, *, mode: str, status: str) -> None:
+            _ = mode
+            self._status = SimpleNamespace(status=status)
+
+        def get(self):
+            return self._status
+
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def _noop_lock(**kwargs):
+        _ = kwargs
+        yield
+
+    @contextmanager
+    def _noop_dirty_marker(**kwargs):
+        _ = kwargs
+        yield False
+
+    monkeypatch.setattr(serve_module, "_configure_runtime_logging", lambda **_: None)
+    monkeypatch.setattr(serve_module, "_live_runtime_lock", _noop_lock)
+    monkeypatch.setattr(serve_module, "_dirty_runtime_marker", _noop_dirty_marker)
+    monkeypatch.setattr(
+        serve_module,
+        "_build_runtime",
+        lambda cfg: (
+            storage,
+            _StateStore(),
+            SimpleNamespace(),
+            SimpleNamespace(),
+            None,
+        ),
+    )
+    monkeypatch.setattr(serve_module, "build_notifier_from_config", lambda cfg: SimpleNamespace())
+    monkeypatch.setattr(serve_module, "build_default_kernel", lambda **kwargs: SimpleNamespace())
+    monkeypatch.setattr(serve_module, "_build_control_balance_rest_client", lambda **kwargs: None)
+    monkeypatch.setattr(serve_module, "create_control_http_app", lambda **kwargs: "app")
+
+    def _capture_controller(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(serve_module, "build_runtime_controller", _capture_controller)
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
+
+    rc = serve_module.serve_control_http(
+        cfg,
+        host="127.0.0.1",
+        port=8101,
+        enable_operator_web=True,
+    )
+
+    assert rc == 0
+    assert captured["webpush_service"] is not None
+    assert captured["webpush_service"].availability_snapshot()["public_key"]
 
 
 def test_live_prod_direct_boot_is_blocked(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
