@@ -350,13 +350,13 @@ class RuntimeController:
         self._market_data_state = market_data_state if market_data_state is not None else {}
         self._runtime_lock_active = bool(runtime_lock_active)
         self._dirty_restart_detected = bool(dirty_restart_detected)
-        if (not self.notifier.enabled) and str(self.notifier.ntfy_topic or "").strip():
+        if (not self.notifier.enabled) and self.webpush_service is not None:
             self.notifier.enabled = True
         if (
             str(self.notifier.provider or "none").strip().lower() == "none"
-            and str(self.notifier.ntfy_topic or "").strip()
+            and self.webpush_service is not None
         ):
-            self.notifier.provider = "ntfy"
+            self.notifier.provider = "webpush"
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_stop = threading.Event()

@@ -312,7 +312,6 @@ def build_cycle_result_notification(
     action = str(fields.get("action") or "").strip()
     reason = str(fields.get("reason") or "").strip()
     trigger_source = str(fields.get("trigger_source") or "scheduler").strip().lower()
-    provider_name = _normalized_provider(provider)
     symbol_line = _symbol_side_line(
         symbol=fields.get("candidate_symbol"),
         side=fields.get("candidate_side"),
@@ -343,7 +342,7 @@ def build_cycle_result_notification(
         )
 
     if action == "no_candidate":
-        if trigger_source == "scheduler" and provider_name == "ntfy":
+        if trigger_source == "scheduler":
             return None
         body = _build_body(symbol_line, human_reason, context.identity_line)
         return NotificationMessage(
@@ -375,7 +374,7 @@ def build_cycle_result_notification(
                 ),
                 metadata=dict(fields),
             )
-        if trigger_source == "scheduler" and provider_name == "ntfy":
+        if trigger_source == "scheduler":
             return None
         title = "포지션 관리중" if reason == "position_open" else f"{title_prefix} 보류"
         body = _build_body(

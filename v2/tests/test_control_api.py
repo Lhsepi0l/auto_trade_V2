@@ -778,8 +778,7 @@ def test_control_api_report_reflects_notifier_send_result(tmp_path) -> None:  # 
     )
     notifier = Notifier(
         enabled=True,
-        provider="ntfy",
-        ntfy_topic="ops-alerts",
+        provider="webpush",
     )
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=False, error="ConnectError: boom")
@@ -806,14 +805,14 @@ def test_control_api_report_reflects_notifier_send_result(tmp_path) -> None:  # 
     assert payload["notifier_error"] == "ConnectError: boom"
 
 
-def test_control_api_start_emits_ntfy_engine_start_notification(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_control_api_start_emits_webpush_engine_start_notification(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
         profile="ra_2026_alpha_v2_expansion_live_candidate",
         mode="shadow",
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_start.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_start.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -828,7 +827,7 @@ def test_control_api_start_emits_ntfy_engine_start_notification(tmp_path) -> Non
         dry_run=True,
         rest_client=None,
     )
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -865,7 +864,7 @@ def test_control_api_manual_tick_emits_attention_notification_for_blocked_result
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_manual_tick.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_manual_tick.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -881,7 +880,7 @@ def test_control_api_manual_tick_emits_attention_notification_for_blocked_result
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -912,7 +911,7 @@ def test_control_api_manual_tick_dispatches_webpush_for_position_open_block(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
-    controller.notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    controller.notifier = Notifier(enabled=True, provider="webpush")
     controller.notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None, status="sent")
     )
@@ -934,7 +933,7 @@ def test_control_api_manual_tick_dispatches_webpush_for_position_open_block(
     assert notification.title == "포지션 관리중"
 
 
-def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
+def test_control_api_scheduler_tick_emits_no_candidate_notification_for_webpush(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -943,7 +942,7 @@ def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_tick.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_scheduler_tick.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -959,7 +958,7 @@ def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -986,7 +985,7 @@ def test_control_api_scheduler_tick_emits_no_candidate_notification_for_ntfy(
     assert "거래량 조건 미충족" in notification.body
 
 
-def test_control_api_runtime_cycle_skips_scheduler_no_candidate_notification_for_ntfy(
+def test_control_api_runtime_cycle_skips_scheduler_no_candidate_notification_for_webpush(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -995,7 +994,7 @@ def test_control_api_runtime_cycle_skips_scheduler_no_candidate_notification_for
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_runtime_cycle.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_runtime_cycle.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1011,7 +1010,7 @@ def test_control_api_runtime_cycle_skips_scheduler_no_candidate_notification_for
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1043,7 +1042,7 @@ def test_control_api_runtime_cycle_emits_entry_opened_notification_for_executed_
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_entry_open.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_entry_open.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1072,7 +1071,7 @@ def test_control_api_runtime_cycle_emits_entry_opened_notification_for_executed_
                 execution=ExecutionResult(ok=True, order_id="oid-1", reason="live_order_submitted"),
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1110,7 +1109,7 @@ def test_control_api_runtime_cycle_emits_clear_order_failure_notification(
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_order_failure.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_order_failure.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1131,7 +1130,7 @@ def test_control_api_runtime_cycle_emits_clear_order_failure_notification(
                 ),
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1168,7 +1167,7 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_window.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_scheduler_window.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1183,7 +1182,7 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1211,7 +1210,7 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
     assert len(cycle_events) == 1
 
 
-def test_control_api_scheduler_blocked_notification_is_suppressed_for_ntfy(
+def test_control_api_scheduler_blocked_notification_is_suppressed_for_webpush(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -1220,7 +1219,7 @@ def test_control_api_scheduler_blocked_notification_is_suppressed_for_ntfy(
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_scheduler_blocked.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_scheduler_blocked.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1236,7 +1235,7 @@ def test_control_api_scheduler_blocked_notification_is_suppressed_for_ntfy(
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1259,11 +1258,11 @@ def test_control_api_scheduler_blocked_notification_is_suppressed_for_ntfy(
     assert notifier.send_notification.call_count == 0
 
 
-def test_control_api_stale_transition_emits_ntfy_attention_notification(
+def test_control_api_stale_transition_emits_webpush_attention_notification(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1284,7 +1283,7 @@ def test_control_api_stale_transition_emits_ntfy_attention_notification(
     assert "갱신 지연 감지" in notification.body
 
 
-def test_control_api_scheduler_position_open_block_emits_deduped_ntfy_heartbeat(
+def test_control_api_scheduler_position_open_block_emits_deduped_webpush_heartbeat(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(
@@ -1293,7 +1292,7 @@ def test_control_api_scheduler_position_open_block_emits_deduped_ntfy_heartbeat(
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_position_open.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_position_open.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1309,7 +1308,7 @@ def test_control_api_scheduler_position_open_block_emits_deduped_ntfy_heartbeat(
                 candidate=None,
             )
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -1348,7 +1347,7 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
         env="testnet",
         env_map={},
     )
-    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_ntfy_position_open_dedupe.sqlite3")
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_webpush_position_open_dedupe.sqlite3")
     storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
     storage.ensure_schema()
     state_store = EngineStateStore(storage=storage, mode=cfg.mode)
@@ -1368,8 +1367,7 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
     monkeypatch.setattr("v2.control.api.time.monotonic", lambda: now["value"])
     monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
-    notifier._send_ntfy = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="webpush")
     controller = build_runtime_controller(
         cfg=cfg,
         state_store=state_store,
@@ -1381,7 +1379,6 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
         rest_client=None,
     )
     controller._risk["notify_interval_sec"] = 1
-    notifier._send_ntfy.reset_mock()
 
     first = controller._run_cycle_once_locked(trigger_source="scheduler")
     now["value"] = 1002.0
@@ -1389,14 +1386,13 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
 
     assert first["ok"] is True
     assert second["ok"] is True
-    assert notifier._send_ntfy.call_count == 1
     snapshot = controller._status_snapshot()["notification"]
     assert snapshot["last_status"] == "suppressed"
     assert snapshot["last_title"] == "포지션 관리중"
     assert snapshot["last_dedupe_key"] == "cycle_result:scheduler:position_open"
 
 
-def test_control_api_stale_transition_suppresses_duplicate_ntfy_alert(
+def test_control_api_stale_transition_suppresses_duplicate_webpush_alert(
     tmp_path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1404,8 +1400,7 @@ def test_control_api_stale_transition_suppresses_duplicate_ntfy_alert(
     now = {"value": 100.0}
 
     monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
-    notifier._send_ntfy = MagicMock()  # type: ignore[method-assign]
+    notifier = Notifier(enabled=True, provider="webpush")
     controller.notifier = notifier
 
     controller._log_event(
@@ -1422,18 +1417,17 @@ def test_control_api_stale_transition_suppresses_duplicate_ntfy_alert(
         age_sec=115.0,
     )
 
-    assert notifier._send_ntfy.call_count == 1
     snapshot = controller._status_snapshot()["notification"]
     assert snapshot["last_status"] == "suppressed"
     assert snapshot["last_event_type"] == "stale_transition"
     assert snapshot["last_suppressed_count"] == 1
 
 
-def test_control_api_auto_risk_trip_emits_ntfy_notification(
+def test_control_api_auto_risk_trip_emits_webpush_notification(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     controller = _build_controller(tmp_path)
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -2472,7 +2466,7 @@ def test_control_api_bracket_poller_sends_take_profit_alert_with_realized_pnl(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -2596,7 +2590,7 @@ def test_control_api_bracket_poller_rearms_after_take_profit_when_position_remai
         async def get_balances(self) -> list[dict[str, str]]:
             return [{"asset": "USDT", "availableBalance": "1000", "walletBalance": "1000"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -2815,7 +2809,7 @@ def test_control_api_bracket_poller_sends_stop_loss_alert_with_realized_pnl(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -2912,7 +2906,7 @@ def test_control_api_bracket_poller_recovers_take_profit_alert_when_both_legs_ar
         async def get_balances(self) -> list[dict[str, str]]:
             return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -3018,7 +3012,7 @@ def test_control_api_bracket_poller_recovers_take_profit_alert_from_income_when_
                 }
             ]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -3108,7 +3102,7 @@ def test_control_api_boot_bracket_recovery_emits_take_profit_alert_when_exit_alr
         async def get_balances(self) -> list[dict[str, str]]:
             return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -3173,7 +3167,7 @@ def test_control_api_sl_symbol_flatten_cooldown_scopes_by_symbol(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0.01"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -3269,7 +3263,7 @@ def test_control_api_bracket_poller_uses_realized_pnl_sign_for_alert_headline(
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -3351,7 +3345,7 @@ def test_control_api_bracket_poller_uses_breakeven_headline_for_zero_realized_pn
         async def get_positions(self) -> list[dict[str, str]]:
             return [{"symbol": "BTCUSDT", "positionAmt": "0"}]
 
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -6391,7 +6385,7 @@ def test_live_controller_boot_does_not_emit_transient_not_ready_notification(
         dry_run=False,
         rest_client=_ReconREST(),
     )
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -6461,7 +6455,7 @@ def test_start_live_services_does_not_emit_transient_not_ready_notification(
             "last_market_data_source_error": None,
         },
     )
-    notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    notifier = Notifier(enabled=True, provider="webpush")
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
@@ -7024,7 +7018,7 @@ def test_live_position_open_cycle_does_not_reemit_stale_entry_notification(
     controller._user_stream_started = True
     controller._user_stream_started_at = datetime.now(timezone.utc).isoformat()
     controller._last_private_stream_ok_at = controller._user_stream_started_at
-    controller.notifier = Notifier(enabled=True, provider="ntfy", ntfy_topic="ops-alerts")
+    controller.notifier = Notifier(enabled=True, provider="webpush")
     controller.notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )

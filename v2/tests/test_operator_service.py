@@ -83,7 +83,7 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
             },
             "notification": {
                 "enabled": True,
-                "provider": "ntfy",
+                "provider": "webpush",
                 "periodic_status_enabled": False,
                 "last_status": "sent",
                 "last_attempt_at": "2026-03-19T00:09:00+00:00",
@@ -117,7 +117,7 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
     assert payload["controls"]["preset_current_state_label"] == "현재 active 프리셋 개념 없음 (일회성 적용)"
     assert payload["recovery"]["startup_reconcile_ok"] is True
     assert payload["report"]["status"] == "success"
-    assert payload["notification"]["provider"] == "ntfy"
+    assert payload["notification"]["provider"] == "webpush"
     assert payload["notification"]["last_title"] == "자동 리스크 트립"
     assert payload["risk_forms"]["margin_budget"]["margin_budget_usdt"] == 80.0
     assert payload["guidance"]["panel_scope"]
@@ -156,7 +156,7 @@ def test_operator_service_push_state_exposes_devices_and_runtime_provider() -> N
         notifier=SimpleNamespace(
             delivery_snapshot=lambda: {
                 "enabled": True,
-                "provider": "ntfy",
+                "provider": "webpush",
             }
         ),
         webpush_service=SimpleNamespace(
@@ -179,7 +179,7 @@ def test_operator_service_push_state_exposes_devices_and_runtime_provider() -> N
 
     payload = OperatorService(controller=controller).push_state()
 
-    assert payload["runtime_provider"] == "ntfy"
+    assert payload["runtime_provider"] == "webpush"
     assert payload["runtime_provider_enabled"] is True
     assert payload["devices"] == payload["subscriptions"]
     assert payload["devices"][0]["device_label"] == "민수 iPhone 운영앱"

@@ -25,7 +25,7 @@
 | `engine/` | 상태 저장, journal, reconcile |
 | `tpsl/` | TP/SL bracket lifecycle |
 | `storage/` | SQLite schema / runtime markers |
-| `notify/` | ntfy / webpush 알림 |
+| `notify/` | webpush 알림 |
 | `runtime/` | 부트/serve 진입 glue |
 | `backtest/` | 리플레이/이벤트 테이프/연구용 백테스트 |
 | `tests/` | 회귀 테스트 |

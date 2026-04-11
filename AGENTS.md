@@ -21,7 +21,7 @@ Top-level map:
 - `v2/exchange/`, `v2/storage/`, `v2/tpsl/`: exchange/state/bracket plumbing
 - `v2/backtest/`: replay/event-tape/research helpers
 - `v2/management/`: shared position-management spec and lifecycle
-- `v2/notify/`: ntfy/webpush notifications
+- `v2/notify/`: webpush notifications
 - `v2/docs/`: active docs
 - `v2/docs/archive/`: historical docs only
 - `v2/tests/`: pytest suite
@@ -69,7 +69,7 @@ Recent history follows Conventional Commit style: `feat:`, `fix:`, `docs:`, `cho
 - `v2/` is the only active runtime surface
 - Operations are web-first through `/operator`
 - Discord runtime surfaces are fully removed; do not reintroduce Discord bot/panel/webhook codepaths
-- Notifications are centered on `ntfy` and `webpush`
+- Notifications are centered on `webpush`
 
 ### Current Architecture
 - `v2/control/api.py` is now a thin orchestration shell, not a utility dump

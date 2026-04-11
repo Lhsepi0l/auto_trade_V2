@@ -20,7 +20,7 @@ v2/
 |- engine/               # state store + journal/reconcile flow
 |- tpsl/                 # bracket planning and lifecycle
 |- storage/              # sqlite schema and runtime markers
-|- notify/               # ntfy/webpush notifier surfaces
+|- notify/               # webpush notifier surfaces
 |- runtime/              # boot / serve wiring
 |- backtest/             # local replay, event tape, research helpers
 |- docs/                 # active docs + archived history
@@ -45,7 +45,7 @@ v2/
 ## Current Design Decisions
 - Position management principle is explicit `tp1_runner`, not hidden partial-TP inference.
 - Control internals should depend on `runtime_utils.py`, not on `v2.control.api` as a utility bag.
-- Web Push and ntfy are valid notify surfaces. Discord webhook/provider is not.
+- Web Push is the active notify surface. Discord webhook/provider is not.
 - `v2/docs/archive/` holds historical notes; active guidance should stay in `v2/docs/` root.
 - Generated runtime/report artifacts should not be tracked. Keep repo noise low.
 

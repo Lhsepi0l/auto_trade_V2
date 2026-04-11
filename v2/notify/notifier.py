@@ -4,9 +4,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable
-
-import httpx
+from typing import Any
 
 from .models import NotificationMessage
 
@@ -15,12 +13,6 @@ from .models import NotificationMessage
 class Notifier:
     enabled: bool = False
     provider: str = "none"
-    ntfy_base_url: str | None = None
-    ntfy_topic: str | None = None
-    ntfy_token: str | None = None
-    ntfy_tags: tuple[str, ...] | list[str] | str | None = None
-    ntfy_priority: str | int | None = None
-    timeout_sec: float = 5.0
     _delivery_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _last_sent_mono_by_key: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _suppressed_count_by_key: dict[str, int] = field(default_factory=dict, init=False, repr=False)
@@ -50,14 +42,10 @@ class Notifier:
         }
 
     def resolved_provider(self) -> str:
-        provider = str(self.provider or "none").strip().lower()
-        if provider == "none":
-            if str(self.ntfy_topic or "").strip():
-                return "ntfy"
-        return provider
+        return str(self.provider or "none").strip().lower() or "none"
 
     def supports_periodic_status(self) -> bool:
-        return self.resolved_provider() != "ntfy"
+        return self.resolved_provider() == "none"
 
     def delivery_snapshot(self) -> dict[str, Any]:
         with self._delivery_lock:
@@ -96,44 +84,13 @@ class Notifier:
         if suppress_result is not None:
             return suppress_result
 
-        if provider == "ntfy":
-            topic = str(self.ntfy_topic or "").strip()
-            if not topic:
-                self._record_delivery(
-                    status="failed",
-                    provider=provider,
-                    message=notification,
-                    error="ntfy_topic_missing",
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                    suppressed_count=0,
-                )
-                return Notifier.SendResult(
-                    sent=False,
-                    error="ntfy_topic_missing",
-                    status="failed",
-                )
-            try:
-                self._send_ntfy(notification)
-                return self._record_send_success(
-                    provider=provider,
-                    message=notification,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                )
-            except httpx.HTTPError as exc:
-                error = self._http_error_text(exc)
-                print(f"[notify] ntfy_send_failed: {notification.as_text()}")
-                self._record_delivery(
-                    status="failed",
-                    provider=provider,
-                    message=notification,
-                    error=error,
-                    dedupe_key=dedupe_key,
-                    suppress_window_sec=suppress_window_sec,
-                    suppressed_count=0,
-                )
-                return Notifier.SendResult(sent=False, error=error, status="failed")
+        if provider == "webpush":
+            return self._record_send_success(
+                provider=provider,
+                message=notification,
+                dedupe_key=dedupe_key,
+                suppress_window_sec=suppress_window_sec,
+            )
 
         self._record_delivery(
             status="failed",
@@ -158,77 +115,6 @@ class Notifier:
         if isinstance(message, NotificationMessage):
             return message
         return NotificationMessage(body=str(message or "").strip())
-
-    @staticmethod
-    def _normalize_tags(raw: tuple[str, ...] | list[str] | str | None) -> tuple[str, ...]:
-        if raw is None:
-            return ()
-        if isinstance(raw, str):
-            values = raw.split(",")
-        else:
-            values = list(raw)
-        out: list[str] = []
-        for value in values:
-            tag = str(value or "").strip()
-            if tag and tag not in out:
-                out.append(tag)
-        return tuple(out)
-
-    def _merged_tags(self, extra_tags: Iterable[str]) -> tuple[str, ...]:
-        tags: list[str] = []
-        for value in [*self._normalize_tags(self.ntfy_tags), *self._normalize_tags(tuple(extra_tags))]:
-            if value not in tags:
-                tags.append(value)
-        return tuple(tags)
-
-    def _send_ntfy(self, message: NotificationMessage) -> None:
-        base_url = str(self.ntfy_base_url or "https://ntfy.sh").strip().rstrip("/")
-        topic = str(self.ntfy_topic or "").strip().lstrip("/")
-        if not topic:
-            raise httpx.UnsupportedProtocol("ntfy_topic_missing")
-
-        headers = {"Content-Type": "text/plain; charset=utf-8"}
-        params: dict[str, str] = {}
-        title = str(message.title or "").strip()
-        if title:
-            params["title"] = title
-        priority = message.priority if message.priority is not None else self.ntfy_priority
-        if priority is not None and str(priority).strip():
-            params["priority"] = str(priority).strip()
-        tags = self._merged_tags(message.tags)
-        if tags:
-            params["tags"] = ",".join(tags)
-        token = str(self.ntfy_token or "").strip()
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
-        with httpx.Client(timeout=httpx.Timeout(self.timeout_sec)) as client:
-            response = client.post(
-                f"{base_url}/{topic}",
-                content=str(message.body or "").encode("utf-8"),
-                headers=headers,
-                params=params,
-            )
-            response.raise_for_status()
-
-    @staticmethod
-    def _http_error_text(exc: httpx.HTTPError) -> str:
-        parts = [type(exc).__name__]
-        response = getattr(exc, "response", None)
-        if response is not None:
-            status_code = getattr(response, "status_code", None)
-            if status_code is not None:
-                parts.append(f"status={status_code}")
-            try:
-                body = str(response.text or "").strip()
-            except Exception:  # noqa: BLE001
-                body = ""
-            if body:
-                parts.append(Notifier._preview(body, limit=240))
-        message = str(exc).strip()
-        if message:
-            parts.append(message)
-        return ": ".join(parts)
 
     @staticmethod
     def _utcnow_iso() -> str:
