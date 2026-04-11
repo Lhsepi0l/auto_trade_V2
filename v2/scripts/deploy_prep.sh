@@ -13,6 +13,17 @@ CONFIG_PATH="config/config.yaml"
 REPORT_DIR="v2/reports"
 KEEP_REPORTS=""
 TEST_SCOPE="runtime"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x "$PROJECT_ROOT/.venv/bin/python" ]]; then
+    PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  else
+    PYTHON_BIN="$(command -v python)"
+  fi
+fi
 
 usage() {
     cat <<'EOF'
@@ -84,6 +95,10 @@ if [[ "$CONFIG_PATH" == v2/* ]]; then
     CONFIG_PATH="${CONFIG_PATH#v2/}"
 fi
 
+if [[ "$REPORT_DIR" == v2/* ]]; then
+    REPORT_DIR="${REPORT_DIR#v2/}"
+fi
+
 RUNTIME_PREFLIGHT_CONFIG="$CONFIG_PATH"
 if [[ "$RUNTIME_PREFLIGHT_CONFIG" != /* ]]; then
     RUNTIME_PREFLIGHT_CONFIG="v2/${RUNTIME_PREFLIGHT_CONFIG}"
@@ -107,7 +122,7 @@ echo "[deploy-prep] running preflight"
 "${PREFLIGHT_CMD[@]}"
 
 echo "[deploy-prep] running runtime preflight"
-python -m v2.run \
+"$PYTHON_BIN" -m v2.run \
   --profile "$PROFILE" \
   --mode "$MODE" \
   --env "$ENVIRONMENT" \
@@ -120,7 +135,7 @@ python -m v2.run \
 echo "[deploy-prep] running runtime smoke"
 if [[ "$MODE" == "live" && "$ENVIRONMENT" == "prod" ]]; then
   echo "[deploy-prep] running runtime smoke (live/prod guard path)"
-  if python -m v2.run \
+  if "$PYTHON_BIN" -m v2.run \
     --profile "$PROFILE" \
     --mode "$MODE" \
     --env "$ENVIRONMENT" \
@@ -130,7 +145,7 @@ if [[ "$MODE" == "live" && "$ENVIRONMENT" == "prod" ]]; then
     exit 1
   fi
 
-  if python -m v2.run \
+  if "$PYTHON_BIN" -m v2.run \
     --profile "$PROFILE" \
     --mode "$MODE" \
     --env "$ENVIRONMENT" \
@@ -141,7 +156,7 @@ if [[ "$MODE" == "live" && "$ENVIRONMENT" == "prod" ]]; then
     exit 1
   fi
 else
-  python -m v2.run \
+  "$PYTHON_BIN" -m v2.run \
     --profile "$PROFILE" \
     --mode "$MODE" \
     --env "$ENVIRONMENT" \

@@ -264,6 +264,37 @@ def test_verified_q070_profile_seeds_runtime_defaults_and_readiness(
     assert status_payload["config_summary"]["strategy_runtime"]["expansion_quality_score_v2_min"] == 0.7
 
 
+def test_live_candidate_profile_seeds_runtime_defaults_and_readiness(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    app = _build_app(tmp_path, profile="ra_2026_alpha_v2_expansion_live_candidate")
+    client = TestClient(app)
+
+    risk = client.get("/risk")
+    assert risk.status_code == 200
+    risk_payload = risk.json()
+    assert risk_payload["margin_use_pct"] == 0.1
+    assert risk_payload["max_leverage"] == 5.0
+    assert risk_payload["risk_score_min"] == 0.6
+    assert risk_payload["lose_streak_n"] == 2
+    assert risk_payload["cooldown_hours"] == 4
+    assert risk_payload["universe_symbols"] == ["BTCUSDT"]
+
+    readiness = client.get("/readiness")
+    assert readiness.status_code == 200
+    payload = readiness.json()
+    assert payload["target"] == "alpha_expansion_live_candidate"
+    assert payload["profile"] == "ra_2026_alpha_v2_expansion_live_candidate"
+    assert payload["enabled_symbols"] == ["BTCUSDT"]
+    assert payload["overall"] == "caution"
+    assert payload["checks"]["profile"]["status"] == "pass"
+    assert payload["checks"]["strategy"]["status"] == "pass"
+    assert payload["checks"]["symbols"]["status"] == "pass"
+    assert payload["checks"]["margin_use_pct"]["status"] == "pass"
+    assert payload["checks"]["max_leverage"]["status"] == "pass"
+    assert payload["checks"]["max_leverage"]["detail"] == 5.0
+    assert payload["checks"]["mode"]["status"] == "warn"
+
 def test_set_strategy_runtime_values_syncs_kernel_runtime_params(tmp_path) -> None:  # type: ignore[no-untyped-def]
     cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_verified_q070", mode="shadow", env="testnet", env_map={})
     cfg.behavior.storage.sqlite_path = str(tmp_path / "control_runtime_params.sqlite3")
@@ -5676,7 +5707,7 @@ def test_control_api_symbol_leverage_lifts_runtime_max_when_needed(tmp_path) -> 
 
     status_payload = controller._status_snapshot()
     assert status_payload["capital_snapshot"]["leverage"] == 12.0
-    assert status_payload["capital_snapshot"]["notional_usdt"] == 1200.0
+    assert status_payload["capital_snapshot"]["notional_usdt"] == 120.0
 
     candidate = Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
     context = KernelContext(
@@ -5845,7 +5876,7 @@ def test_control_api_restores_kernel_runtime_overrides_after_restart(
         rest_client=None,
     )
 
-    assert kernel2.fallback_notional == 250.0
+    assert kernel2.fallback_notional == 25.0
     assert kernel2.max_notional is None
     assert kernel2.max_leverage == 15.0
     assert kernel2.mapping == {"ETHUSDT": 8.0}

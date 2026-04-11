@@ -7,6 +7,7 @@ from v2.control.runtime_utils import to_bool as _to_bool
 from v2.control.runtime_utils import to_float as _to_float
 
 CANONICAL_LIVE_PROFILE = "ra_2026_alpha_v2_expansion_verified_q070"
+LIVE_CANDIDATE_PROFILE = "ra_2026_alpha_v2_expansion_live_candidate"
 PRIVATE_REST_UNSAFE_ERRORS = {
     "rest_client_unavailable",
     "balance_fetch_timeout",
@@ -62,6 +63,15 @@ def profile_runtime_risk_overrides(controller: Any, *, sched_sec: int) -> dict[s
             "lose_streak_n": 2,
             "cooldown_hours": 4,
         },
+        LIVE_CANDIDATE_PROFILE: {
+            "risk_score_min": 0.60,
+            "spread_max_pct": 0.35,
+            "margin_use_pct": 0.10,
+            "enable_watchdog": True,
+            "watchdog_interval_sec": max(5, min(int(sched_sec), 15)),
+            "lose_streak_n": 2,
+            "cooldown_hours": 4,
+        },
     }
     return dict(profile_overrides.get(profile, {}))
 
@@ -108,6 +118,19 @@ def build_live_readiness_snapshot(
             "margin_warn": 0.15,
             "leverage_pass": 50.0,
             "leverage_warn": 50.0,
+            "daily_pass": 0.015,
+            "daily_warn": 0.02,
+            "dd_pass": 0.12,
+            "dd_warn": 0.15,
+        },
+        LIVE_CANDIDATE_PROFILE: {
+            "target": "alpha_expansion_live_candidate",
+            "strategy": ["ra_2026_alpha_v2"],
+            "symbols": ["BTCUSDT"],
+            "margin_pass": 0.10,
+            "margin_warn": 0.15,
+            "leverage_pass": 5.0,
+            "leverage_warn": 8.0,
             "daily_pass": 0.015,
             "daily_warn": 0.02,
             "dd_pass": 0.12,

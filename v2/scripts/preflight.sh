@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$PROJECT_ROOT"
 
 PROJECT=auto-trader
 PROFILE="ra_2026_alpha_v2_expansion_verified_q070"
@@ -18,6 +18,17 @@ REPORT_PATH=""
 TIME_DRIFT_MS=5000
 TEST_SCOPE="runtime"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [[ -z "$PYTHON_BIN" ]]; then
+    if [[ -x "$PROJECT_ROOT/.venv/bin/python" ]]; then
+        PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+    elif command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v python3)"
+    else
+        PYTHON_BIN="$(command -v python)"
+    fi
+fi
 
 RUNTIME_PYTEST_TARGETS=(
     "v2/tests/test_v2_config_loader.py"
@@ -120,6 +131,18 @@ if [[ "$TEST_SCOPE" != "runtime" && "$TEST_SCOPE" != "full" ]]; then
     exit 1
 fi
 
+if [[ "$CONFIG_PATH" != /* ]]; then
+    CONFIG_PATH="$REPO_ROOT/${CONFIG_PATH#./}"
+fi
+
+if [[ "$REPORT_DIR" != /* ]]; then
+    REPORT_DIR="$REPO_ROOT/${REPORT_DIR#./}"
+fi
+
+if [[ -n "$REPORT_PATH" && "$REPORT_PATH" != /* ]]; then
+    REPORT_PATH="$REPO_ROOT/${REPORT_PATH#./}"
+fi
+
 if [[ ! -f "$CONFIG_PATH" ]]; then
     echo "Config file not found: $CONFIG_PATH"
     exit 1
@@ -136,7 +159,7 @@ cleanup_old_reports() {
         return 0
     fi
 
-    python - "$REPORT_DIR" "$keep" <<'PY'
+    "$PYTHON_BIN" - "$REPORT_DIR" "$keep" <<'PY'
 import sys
 from pathlib import Path
 
@@ -249,7 +272,7 @@ run_python_check() {
     tmp_out="$(mktemp)"
 
     printf "%s\n" "$code" > "$tmp_py"
-    if python "$tmp_py" > "$tmp_out" 2>&1; then
+    if "$PYTHON_BIN" "$tmp_py" > "$tmp_out" 2>&1; then
         append_result "$title" "PASS" "$tmp_out"
         rm -f "$tmp_py" "$tmp_out"
         return 0
@@ -272,13 +295,13 @@ run_pytest_suite() {
             printf "targets=%s\n" "${RUNTIME_PYTEST_TARGETS[*]}"
             (
                 cd "$PROJECT_ROOT"
-                python -m pytest -q "${RUNTIME_PYTEST_TARGETS[@]}"
+                "$PYTHON_BIN" -m pytest -q "${RUNTIME_PYTEST_TARGETS[@]}"
             )
         else
             echo "targets=v2/tests"
             (
                 cd "$PROJECT_ROOT"
-                python -m pytest -q v2/tests
+                "$PYTHON_BIN" -m pytest -q v2/tests
             )
         fi
     } > "$tmp_out" 2>&1
@@ -317,7 +340,7 @@ SECRETS_CHECK="${SECRETS_CHECK/__CONFIG_PATH__/$CONFIG_PATH}"
 run_python_check "1) secrets policy and config format" "$SECRETS_CHECK" || true
 
 echo "[step] ruff lint"
-run_shell_check "2) ruff check" bash -lc "cd '$PROJECT_ROOT' && python -m ruff check v2 v2/tests" || true
+run_shell_check "2) ruff check" bash -lc "cd '$PROJECT_ROOT' && '$PYTHON_BIN' -m ruff check v2 v2/tests" || true
 if [[ "$FAILED" -ne 0 ]]; then
     echo "preflight stopped: lint failed"
     finalize_report FAILED
