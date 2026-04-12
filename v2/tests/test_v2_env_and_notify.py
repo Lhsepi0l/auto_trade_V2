@@ -148,3 +148,39 @@ def test_notifier_suppresses_duplicate_dedupe_key_within_window(monkeypatch) -> 
     assert third.status == "sent"
     assert final_snapshot["last_status"] == "sent"
     assert final_snapshot["last_suppressed_count"] == 1
+
+
+def test_notifier_failed_provider_result_rolls_back_webpush_dedupe(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    now = {"value": 100.0}
+
+    monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
+    notifier = Notifier(enabled=True, provider="webpush")
+    message = NotificationMessage(
+        title="시장 데이터 상태",
+        body="stale 감지",
+        event_type="stale_transition",
+        dedupe_key="stale:market_data",
+        suppress_window_sec=180.0,
+    )
+
+    first = notifier.send_notification(message)
+    notifier.record_provider_result(
+        message=message,
+        provider="webpush",
+        sent=False,
+        error="webpush_no_subscriptions",
+        status="failed",
+    )
+    failed_snapshot = notifier.delivery_snapshot()
+
+    now["value"] = 140.0
+    second = notifier.send_notification(message)
+
+    assert first.sent is True
+    assert failed_snapshot["last_status"] == "failed"
+    assert failed_snapshot["last_error"] == "webpush_no_subscriptions"
+    assert failed_snapshot["last_sent_at"] is None
+    assert second.sent is True
+    assert second.status == "sent"

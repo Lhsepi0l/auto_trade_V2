@@ -210,6 +210,43 @@ class Notifier:
             )
         return Notifier.SendResult(sent=True, error=None, status="sent")
 
+    def record_provider_result(
+        self,
+        *,
+        message: NotificationMessage,
+        provider: str,
+        sent: bool,
+        error: str | None = None,
+        status: str | None = None,
+    ) -> None:
+        dedupe_key = self._normalized_dedupe_key(message.dedupe_key)
+        suppress_window_sec = self._normalized_suppress_window(message.suppress_window_sec)
+        normalized_status = str(status or ("sent" if sent else "failed")).strip() or (
+            "sent" if sent else "failed"
+        )
+        with self._delivery_lock:
+            if dedupe_key is not None and not sent:
+                self._last_sent_mono_by_key.pop(dedupe_key, None)
+            update_payload: dict[str, Any] = {
+                "enabled": bool(self.enabled),
+                "provider": str(provider or self.resolved_provider()).strip().lower()
+                or self.resolved_provider(),
+                "periodic_status_enabled": self.supports_periodic_status(),
+                "last_status": normalized_status,
+                "last_attempt_at": self._utcnow_iso(),
+                "last_event_type": message.event_type,
+                "last_title": str(message.title or "").strip() or None,
+                "last_body_preview": self._preview(message.body),
+                "last_error": error,
+                "last_dedupe_key": dedupe_key,
+                "last_suppress_window_sec": suppress_window_sec,
+            }
+            if sent:
+                update_payload["last_sent_at"] = self._utcnow_iso()
+            else:
+                update_payload["last_sent_at"] = None
+            self._last_delivery.update(update_payload)
+
     def _record_delivery(
         self,
         *,

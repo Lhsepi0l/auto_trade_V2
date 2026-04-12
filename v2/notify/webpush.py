@@ -36,7 +36,7 @@ class WebPushService:
     subject: str | None = None
     target_path: str = "/operator/"
     icon_url: str = "/operator/static/operator-icon.svg"
-    badge_url: str = "/operator/static/operator-badge.svg"
+    badge_url: str = "/operator/static/operator-icon.svg"
 
     def __post_init__(self) -> None:
         self.subject = self._normalized_subject(self.subject)

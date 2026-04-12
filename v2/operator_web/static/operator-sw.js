@@ -20,7 +20,7 @@ self.addEventListener("push", (event) => {
   const options = {
     body: payload.body || "",
     icon: payload.icon || "/operator/static/operator-icon.svg",
-    badge: payload.badge || "/operator/static/operator-badge.svg",
+    badge: payload.badge || "/operator/static/operator-icon.svg",
     tag: payload.tag || "operator-update",
     data: {
       path: payload.path || "/operator/",

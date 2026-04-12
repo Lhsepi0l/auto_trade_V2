@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from v2.control.controller_events import dispatch_webpush_notification
+from v2.control.controller_events import deliver_runtime_notification
 from v2.control.presentation import build_status_pnl_summary
 from v2.control.report_builders import build_daily_report_message, build_daily_report_payload
 from v2.notify.runtime_events import build_report_notification
@@ -123,8 +123,7 @@ def send_daily_report(controller: Any) -> dict[str, Any]:
         payload=payload,
         context=controller._notification_context(),
     )
-    result = controller.notifier.send_notification(notification)
-    dispatch_webpush_notification(controller, notification)
+    result = deliver_runtime_notification(controller, notification)
     payload["notifier_sent"] = bool(result.sent)
     if result.error and result.error != "disabled":
         payload["notifier_error"] = result.error

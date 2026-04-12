@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from v2.control.controller_events import dispatch_webpush_notification
+from v2.control.controller_events import deliver_runtime_notification
 from v2.control.mutating_responses import (
     build_trade_close_all_response,
     build_trade_close_response,
@@ -26,8 +26,7 @@ async def close_position(
         reason=notify_reason,
         context=controller._notification_context(),
     )
-    _ = controller.notifier.send_notification(notification)
-    dispatch_webpush_notification(controller, notification)
+    _ = deliver_runtime_notification(controller, notification)
     controller._log_event(
         "position_closed",
         symbol=result.symbol,

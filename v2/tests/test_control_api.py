@@ -25,7 +25,7 @@ from v2.kernel.contracts import (
     PortfolioCycleResult,
     SizePlan,
 )
-from v2.notify import NotificationMessage, Notifier
+from v2.notify import NotificationMessage, Notifier, WebPushDispatchResult
 from v2.ops import OpsController
 from v2.storage import RuntimeStorage
 
@@ -1399,6 +1399,12 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
     monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
 
     notifier = Notifier(enabled=True, provider="webpush")
+    webpush_service = MagicMock()
+    webpush_service.send.return_value = WebPushDispatchResult(
+        sent=True,
+        error=None,
+        status="sent",
+    )
     controller = build_runtime_controller(
         cfg=cfg,
         state_store=state_store,
@@ -1408,6 +1414,7 @@ def test_control_api_scheduler_position_open_heartbeat_is_suppressed_within_wind
         event_bus=event_bus,
         notifier=notifier,
         rest_client=None,
+        webpush_service=webpush_service,
     )
     controller._risk["notify_interval_sec"] = 1
 
@@ -1433,6 +1440,12 @@ def test_control_api_stale_transition_suppresses_duplicate_webpush_alert(
     monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
     notifier = Notifier(enabled=True, provider="webpush")
     controller.notifier = notifier
+    controller.webpush_service = MagicMock()
+    controller.webpush_service.send.return_value = WebPushDispatchResult(
+        sent=True,
+        error=None,
+        status="sent",
+    )
 
     controller._log_event(
         "stale_transition",
@@ -1452,6 +1465,66 @@ def test_control_api_stale_transition_suppresses_duplicate_webpush_alert(
     assert snapshot["last_status"] == "suppressed"
     assert snapshot["last_event_type"] == "stale_transition"
     assert snapshot["last_suppressed_count"] == 1
+
+
+def test_control_api_suppressed_webpush_notification_is_not_dispatched(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    now = {"value": 100.0}
+
+    monkeypatch.setattr("v2.notify.notifier.time.monotonic", lambda: now["value"])
+    controller.notifier = Notifier(enabled=True, provider="webpush")
+    controller.webpush_service = MagicMock()
+    controller.webpush_service.send.return_value = WebPushDispatchResult(
+        sent=True,
+        error=None,
+        status="sent",
+    )
+
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=95.0,
+    )
+    now["value"] = 120.0
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=115.0,
+    )
+
+    assert controller.webpush_service.send.call_count == 1
+
+
+def test_control_api_webpush_delivery_failure_updates_notification_snapshot(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    controller.notifier = Notifier(enabled=True, provider="webpush")
+    controller.webpush_service = MagicMock()
+    controller.webpush_service.send.return_value = WebPushDispatchResult(
+        sent=False,
+        error="webpush_no_subscriptions",
+        status="failed",
+    )
+
+    controller._log_event(
+        "stale_transition",
+        stale_type="market_data",
+        stale=True,
+        age_sec=95.0,
+    )
+
+    snapshot = controller._status_snapshot()["notification"]
+
+    assert controller.webpush_service.send.call_count == 1
+    assert snapshot["last_status"] == "failed"
+    assert snapshot["last_error"] == "webpush_no_subscriptions"
+    assert snapshot["last_sent_at"] is None
 
 
 def test_control_api_auto_risk_trip_emits_webpush_notification(

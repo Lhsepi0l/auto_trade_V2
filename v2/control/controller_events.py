@@ -7,6 +7,7 @@ from typing import Any
 
 from v2.control.live_balance_helpers import build_freshness_snapshot
 from v2.control.operator_events import build_operator_event_payload
+from v2.notify import WebPushDispatchResult
 from v2.notify.runtime_events import (
     RuntimeNotificationContext,
     build_runtime_event_notification,
@@ -89,23 +90,59 @@ def log_event(controller: Any, event: str, *, notify: bool = True, **fields: Any
         provider=controller.notifier.resolved_provider(),
     )
     if notification is not None and notify and not controller._boot_notification_muted:
-        _ = controller.notifier.send_notification(notification)
-        dispatch_webpush_notification(controller, notification)
+        _ = deliver_runtime_notification(controller, notification)
 
 
-def dispatch_webpush_notification(controller: Any, notification: Any) -> None:
+def deliver_runtime_notification(controller: Any, notification: Any) -> Any:
     if notification is None:
-        return
+        return None
+    notifier_result = controller.notifier.send_notification(notification)
+    if not bool(getattr(notifier_result, "sent", False)):
+        return notifier_result
+    if str(controller.notifier.resolved_provider() or "none").strip().lower() != "webpush":
+        return notifier_result
+    webpush_result = dispatch_webpush_notification(controller, notification)
+    controller.notifier.record_provider_result(
+        message=notification,
+        provider="webpush",
+        sent=bool(getattr(webpush_result, "sent", False)),
+        error=getattr(webpush_result, "error", None),
+        status=getattr(webpush_result, "status", None),
+    )
+    if not bool(getattr(webpush_result, "sent", False)):
+        logger.warning(
+            "webpush_delivery_failed event_type=%s error=%s",
+            getattr(notification, "event_type", None),
+            getattr(webpush_result, "error", None),
+        )
+    return webpush_result
+
+
+def dispatch_webpush_notification(controller: Any, notification: Any) -> WebPushDispatchResult:
+    if notification is None:
+        return WebPushDispatchResult(sent=False, error="notification_missing", status="failed")
     webpush_service = getattr(controller, "webpush_service", None)
     if webpush_service is None or not hasattr(webpush_service, "send"):
-        return
+        return WebPushDispatchResult(sent=False, error="webpush_unavailable", status="failed")
     try:
-        _ = webpush_service.send(notification)
-    except Exception:  # noqa: BLE001
+        result = webpush_service.send(notification)
+    except Exception as exc:  # noqa: BLE001
         logger.exception(
             "webpush_dispatch_failed event_type=%s",
             getattr(notification, "event_type", None),
         )
+        return WebPushDispatchResult(
+            sent=False,
+            error=f"webpush_dispatch_exception:{type(exc).__name__}",
+            status="failed",
+        )
+    if isinstance(result, WebPushDispatchResult):
+        return result
+    return WebPushDispatchResult(
+        sent=bool(getattr(result, "sent", False)),
+        error=getattr(result, "error", None),
+        status=getattr(result, "status", None) or ("sent" if bool(getattr(result, "sent", False)) else "failed"),
+    )
 
 
 def freshness_snapshot(controller: Any) -> dict[str, Any]:

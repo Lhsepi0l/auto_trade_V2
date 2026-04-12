@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from v2.control.controller_events import dispatch_webpush_notification
+from v2.control.controller_events import deliver_runtime_notification
 from v2.control.mutating_core_helpers import (
     apply_tick_busy_cycle_state,
     capture_last_cycle_snapshot,
@@ -131,8 +131,7 @@ async def panic_runtime(controller: Any) -> dict[str, Any]:
         reason="panic_close",
         context=controller._notification_context(),
     )
-    _ = controller.notifier.send_notification(notification)
-    dispatch_webpush_notification(controller, notification)
+    _ = deliver_runtime_notification(controller, notification)
     state = capture_runtime_state(controller.state_store)
     controller._report_stats["closes"] += 1
     return build_panic_response(
