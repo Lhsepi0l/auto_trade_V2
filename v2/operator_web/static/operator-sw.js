@@ -26,7 +26,7 @@ self.addEventListener("push", (event) => {
       path: payload.path || "/operator/",
       eventType: payload.event_type || null,
     },
-    renotify: false,
+    renotify: Boolean(payload.renotify),
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

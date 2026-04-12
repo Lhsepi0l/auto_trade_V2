@@ -141,7 +141,7 @@ class WebPushService:
                 title="웹 푸시 테스트",
                 body=f"{label}에서 Auto Trader 운영 푸시가 연결되었습니다.",
                 event_type="webpush_test",
-                metadata={"path": self.target_path},
+                metadata={"path": self.target_path, "renotify": True},
             )
         )
 
@@ -290,13 +290,22 @@ class WebPushService:
     def _notification_payload(self, message: NotificationMessage) -> dict[str, Any]:
         raw_data = dict(message.metadata or {})
         path = str(raw_data.get("path") or self.target_path).strip() or self.target_path
+        explicit_tag = str(raw_data.get("tag") or "").strip()
+        if explicit_tag:
+            notification_tag = explicit_tag
+        elif message.dedupe_key:
+            notification_tag = str(message.dedupe_key).strip()
+        else:
+            event_key = str(message.event_type or "operator-update").strip() or "operator-update"
+            notification_tag = f"{event_key}:{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         return {
             "title": str(message.title or "운영 알림").strip() or "운영 알림",
             "body": str(message.body or "").strip(),
             "path": path,
             "icon": str(raw_data.get("icon") or self.icon_url),
             "badge": str(raw_data.get("badge") or self.badge_url),
-            "tag": str(message.dedupe_key or message.event_type or "operator-update"),
+            "tag": notification_tag,
+            "renotify": bool(raw_data.get("renotify", True)),
             "event_type": message.event_type,
             "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
         }
