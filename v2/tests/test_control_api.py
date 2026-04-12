@@ -1217,6 +1217,12 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
     notifier.send_notification = MagicMock(  # type: ignore[method-assign]
         return_value=Notifier.SendResult(sent=True, error=None)
     )
+    webpush_service = MagicMock()
+    webpush_service.send.return_value = WebPushDispatchResult(
+        sent=True,
+        error=None,
+        status="sent",
+    )
     controller = build_runtime_controller(
         cfg=cfg,
         state_store=state_store,
@@ -1226,9 +1232,11 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
         event_bus=event_bus,
         notifier=notifier,
         rest_client=None,
+        webpush_service=webpush_service,
     )
     controller._risk["notify_interval_sec"] = 600
     notifier.send_notification.reset_mock()
+    webpush_service.send.reset_mock()
 
     first = controller._run_cycle_once_locked(trigger_source="scheduler")
     second = controller._run_cycle_once_locked(trigger_source="scheduler")
@@ -1236,6 +1244,7 @@ def test_scheduler_cycle_notification_respects_notify_interval_window(
     assert first["ok"] is True
     assert second["ok"] is True
     assert notifier.send_notification.call_count == 0
+    assert webpush_service.send.call_count == 0
     events = controller.state_store.runtime_storage().list_operator_events(limit=20)
     cycle_events = [row for row in events if row.get("event_type") == "cycle_result"]
     assert len(cycle_events) == 1
@@ -1629,14 +1638,68 @@ def test_status_loop_emits_while_running_without_cycle(tmp_path) -> None:  # typ
     controller._status_thread_stop.set()
     if controller._status_thread is not None:
         controller._status_thread.join(timeout=1.0)
+
+
+def test_status_loop_emits_webpush_periodic_status_while_running_without_cycle(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    cfg = load_effective_config(profile="ra_2026_alpha_v2_expansion_live_candidate", mode="shadow", env="testnet", env_map={})
+    cfg.behavior.storage.sqlite_path = str(tmp_path / "control_status_loop_webpush.sqlite3")
+    storage = RuntimeStorage(sqlite_path=cfg.behavior.storage.sqlite_path)
+    storage.ensure_schema()
+    state_store = EngineStateStore(storage=storage, mode=cfg.mode)
+    event_bus = EventBus()
+    scheduler = Scheduler(tick_seconds=cfg.behavior.scheduler.tick_seconds, event_bus=event_bus)
+    ops = OpsController(state_store=state_store, exchange=None)
+    kernel = build_default_kernel(
+        state_store=state_store,
+        behavior=cfg.behavior,
+        profile=cfg.profile,
+        mode=cfg.mode,
+        dry_run=True,
+        rest_client=None,
+    )
+
+    notifier = Notifier(enabled=True, provider="webpush")
+    webpush_service = MagicMock()
+    webpush_service.send.return_value = WebPushDispatchResult(
+        sent=True,
+        error=None,
+        status="sent",
+    )
+
+    controller = build_runtime_controller(
+        cfg=cfg,
+        state_store=state_store,
+        ops=ops,
+        kernel=kernel,
+        scheduler=scheduler,
+        event_bus=event_bus,
+        notifier=notifier,
+        rest_client=None,
+        webpush_service=webpush_service,
+    )
+
+    controller._risk["notify_interval_sec"] = 1
+    controller._status_thread_stop.set()
+    if controller._status_thread is not None:
+        controller._status_thread.join(timeout=1.0)
     controller._status_thread_stop.clear()
     controller._start_status_loop()
     controller._running = True
     controller._last_status_notify_at = datetime.now(timezone.utc)
-    notifier.send.reset_mock()
+    webpush_service.send.reset_mock()
 
     time.sleep(1.2)
-    assert notifier.send.call_count >= 1
+    snapshot = controller._status_snapshot()["notification"]
+
+    assert webpush_service.send.call_count >= 1
+    sent_notification = webpush_service.send.call_args[0][0]
+    assert isinstance(sent_notification, NotificationMessage)
+    assert sent_notification.title == "상태 알림"
+    assert sent_notification.event_type == "periodic_status"
+    assert snapshot["last_status"] == "sent"
+    assert snapshot["last_event_type"] == "periodic_status"
 
     controller._running = False
     controller._status_thread_stop.set()

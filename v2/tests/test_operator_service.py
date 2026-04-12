@@ -84,7 +84,7 @@ def test_build_operator_console_payload_humanizes_blocking_state() -> None:
             "notification": {
                 "enabled": True,
                 "provider": "webpush",
-                "periodic_status_enabled": False,
+                "periodic_status_enabled": True,
                 "last_status": "sent",
                 "last_attempt_at": "2026-03-19T00:09:00+00:00",
                 "last_sent_at": "2026-03-19T00:09:00+00:00",

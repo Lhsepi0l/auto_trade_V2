@@ -555,3 +555,23 @@ def build_runtime_boot_notification(
             "env": context.env,
         },
     )
+
+
+def build_status_notification(
+    *,
+    summary: str,
+    context: RuntimeNotificationContext,
+) -> NotificationMessage | None:
+    summary_text = str(summary or "").strip()
+    if summary_text.startswith("상태 알림:"):
+        summary_text = summary_text.split(":", 1)[1].strip()
+    return _message_from_parts(
+        title="상태 알림",
+        main_text=summary_text,
+        sub_text=None,
+        context=context,
+        priority=2,
+        tags=(),
+        event_type="periodic_status",
+        metadata={"kind": "periodic_status"},
+    )

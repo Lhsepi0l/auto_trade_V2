@@ -109,7 +109,7 @@ def test_notifier_webpush_provider_records_success() -> None:
     assert snapshot["last_status"] == "sent"
     assert snapshot["provider"] == "webpush"
     assert snapshot["last_title"] == "패닉 청산"
-    assert snapshot["periodic_status_enabled"] is False
+    assert snapshot["periodic_status_enabled"] is True
 
 
 def test_notifier_suppresses_duplicate_dedupe_key_within_window(monkeypatch) -> None:  # type: ignore[no-untyped-def]

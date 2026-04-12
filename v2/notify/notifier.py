@@ -45,7 +45,7 @@ class Notifier:
         return str(self.provider or "none").strip().lower() or "none"
 
     def supports_periodic_status(self) -> bool:
-        return self.resolved_provider() == "none"
+        return self.resolved_provider() in {"none", "webpush"}
 
     def delivery_snapshot(self) -> dict[str, Any]:
         with self._delivery_lock:

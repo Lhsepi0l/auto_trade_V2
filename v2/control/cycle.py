@@ -487,7 +487,7 @@ def run_cycle_once_locked(
         ok = False
         controller._cycle_done_seq = cycle_seq
 
-    controller._emit_status_update()
+    controller._emit_status_update(source="cycle")
 
     out: dict[str, Any] = {
         "ok": ok,

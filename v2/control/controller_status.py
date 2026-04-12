@@ -8,7 +8,7 @@ from typing import Any
 from v2.control.controller_events import deliver_runtime_notification
 from v2.control.presentation import build_status_pnl_summary
 from v2.control.report_builders import build_daily_report_message, build_daily_report_payload
-from v2.notify.runtime_events import build_report_notification
+from v2.notify.runtime_events import build_report_notification, build_status_notification
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,11 @@ def status_pnl_summary(controller: Any) -> tuple[str, str]:
     )
 
 
-def emit_status_update(controller: Any, *, force: bool = False) -> bool:
+def emit_status_update(controller: Any, *, force: bool = False, source: str = "generic") -> bool:
     if not controller.notifier.supports_periodic_status():
+        return False
+    provider = controller.notifier.resolved_provider()
+    if provider == "webpush" and (not force) and str(source or "").strip().lower() != "status_loop":
         return False
     notify_interval = max(
         1,
@@ -80,7 +83,18 @@ def emit_status_update(controller: Any, *, force: bool = False) -> bool:
     if not should_notify:
         return False
     try:
-        controller.notifier.send(controller._status_summary())
+        if provider == "webpush":
+            notification = build_status_notification(
+                summary=controller._status_summary(),
+                context=controller._notification_context(),
+            )
+            if notification is None:
+                return False
+            result = deliver_runtime_notification(controller, notification)
+            if not bool(getattr(result, "sent", False)):
+                return False
+        else:
+            controller.notifier.send(controller._status_summary())
         controller._last_status_notify_at = now
         return True
     except Exception:  # noqa: BLE001
@@ -100,7 +114,7 @@ def start_status_loop(controller: Any) -> None:
             )
             if controller._status_thread_stop.wait(timeout=float(interval)):
                 break
-            emit_status_update(controller, force=False)
+            emit_status_update(controller, force=False, source="status_loop")
 
     controller._status_thread = threading.Thread(target=_worker, daemon=True)
     controller._status_thread.start()

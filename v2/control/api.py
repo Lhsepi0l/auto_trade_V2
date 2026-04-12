@@ -994,8 +994,8 @@ class RuntimeController:
     def _translate_status_token(raw: str, labels: dict[str, str]) -> str:
         return translate_status_token(raw, labels)
 
-    def _emit_status_update(self, *, force: bool = False) -> bool:
-        return emit_status_update(self, force=force)
+    def _emit_status_update(self, *, force: bool = False, source: str = "generic") -> bool:
+        return emit_status_update(self, force=force, source=source)
 
     def _start_status_loop(self) -> None:
         start_status_loop(self)
