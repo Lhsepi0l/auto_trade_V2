@@ -48,6 +48,43 @@ def _extract_client_algo_id(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_algo_id(row: dict[str, Any]) -> str | None:
+    raw = row.get("algoId")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if text:
+        return text
+    return None
+
+
+def _algo_cancel_params(
+    *,
+    symbol: str,
+    row: dict[str, Any] | None = None,
+    client_algo_id: str | None = None,
+) -> dict[str, Any] | None:
+    symbol_u = str(symbol).upper()
+    if row is not None:
+        matched_client_algo_id = _extract_client_algo_id(row)
+        if matched_client_algo_id is not None:
+            return {"symbol": symbol_u, "clientAlgoId": matched_client_algo_id}
+        algo_id = row.get("algoId")
+        if algo_id is not None and str(algo_id).strip():
+            return {"symbol": symbol_u, "algoId": algo_id}
+
+    fallback_client_algo_id = str(client_algo_id or "").strip()
+    if fallback_client_algo_id:
+        return {"symbol": symbol_u, "clientAlgoId": fallback_client_algo_id}
+    return None
+
+
+def _cancel_param_key(params: dict[str, Any]) -> tuple[str, str]:
+    if params.get("clientAlgoId") is not None:
+        return ("clientAlgoId", str(params.get("clientAlgoId") or ""))
+    return ("algoId", str(params.get("algoId") or ""))
+
+
 @dataclass
 class BracketConfig:
     method: BracketMethod = "percent"
@@ -259,17 +296,71 @@ class BracketService:
             state=runtime.state,
         )
 
+    async def _open_algo_orders_for_symbol(self, *, symbol: str) -> list[dict[str, Any]]:
+        if self._mode != "live" or self._rest is None:
+            return []
+        symbol_u = str(symbol).upper()
+        rows = await self._rest.get_open_algo_orders(symbol=symbol_u)
+        open_orders: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_symbol = str(row.get("symbol") or symbol_u).strip().upper()
+            if row_symbol and row_symbol != symbol_u:
+                continue
+            open_orders.append(row)
+        return open_orders
+
+    async def _cancel_algo_order_match(
+        self,
+        *,
+        symbol: str,
+        open_orders: list[dict[str, Any]],
+        client_algo_id: str | None,
+    ) -> None:
+        if self._mode != "live" or self._rest is None:
+            return
+        fallback_client_algo_id = str(client_algo_id or "").strip()
+        cancel_params: dict[str, Any] | None = None
+        if fallback_client_algo_id:
+            matched_row = next(
+                (
+                    row
+                    for row in open_orders
+                    if _extract_client_algo_id(row) == fallback_client_algo_id
+                ),
+                None,
+            )
+            if matched_row is not None:
+                cancel_params = _algo_cancel_params(symbol=symbol, row=matched_row)
+            else:
+                unidentified_rows = [
+                    row for row in open_orders if _extract_client_algo_id(row) is None
+                ]
+                if len(unidentified_rows) == 1 and _extract_algo_id(unidentified_rows[0]) is not None:
+                    cancel_params = _algo_cancel_params(symbol=symbol, row=unidentified_rows[0])
+
+        if cancel_params is None:
+            cancel_params = _algo_cancel_params(symbol=symbol, client_algo_id=fallback_client_algo_id)
+        if cancel_params is None:
+            return
+        await self._rest.cancel_algo_order(params=cancel_params)
+
     async def _cancel_runtime_orders(self, *, symbol: str, runtime: BracketRuntime | None) -> None:
         if self._mode != "live" or self._rest is None or runtime is None:
             return
-        cancel_targets = {
+        open_orders = await self._open_algo_orders_for_symbol(symbol=symbol)
+        cancel_targets = [
             str(runtime.tp_order_client_id or "").strip(),
             str(runtime.sl_order_client_id or "").strip(),
-        }
-        cancel_targets = {cid for cid in cancel_targets if cid}
-        for cid in sorted(cancel_targets):
-            await self._rest.cancel_algo_order(
-                params={"symbol": symbol.upper(), "clientAlgoId": cid}
+        ]
+        for cid in cancel_targets:
+            if not cid:
+                continue
+            await self._cancel_algo_order_match(
+                symbol=symbol,
+                open_orders=open_orders,
+                client_algo_id=cid,
             )
 
     async def _place_bracket_orders(
@@ -535,8 +626,11 @@ class BracketService:
             return runtime
 
         if self._mode == "live" and self._rest is not None and counterpart:
-            await self._rest.cancel_algo_order(
-                params={"symbol": symbol.upper(), "clientAlgoId": counterpart}
+            open_orders = await self._open_algo_orders_for_symbol(symbol=symbol)
+            await self._cancel_algo_order_match(
+                symbol=symbol,
+                open_orders=open_orders,
+                client_algo_id=counterpart,
             )
 
         cleaned = BracketRuntime(
@@ -554,18 +648,24 @@ class BracketService:
 
         if self._mode == "live" and self._rest is not None:
             symbol_u = symbol.upper()
-            open_orders = await self._rest.get_open_algo_orders(symbol=symbol_u)
-            cancel_targets: set[str] = set()
+            open_orders = await self._open_algo_orders_for_symbol(symbol=symbol_u)
+            cancel_params_by_key: dict[tuple[str, str], dict[str, Any]] = {}
             for row in open_orders:
-                cid = _extract_client_algo_id(row)
-                if cid is not None:
-                    cancel_targets.add(cid)
-            if runtime.tp_order_client_id:
-                cancel_targets.add(runtime.tp_order_client_id)
-            if runtime.sl_order_client_id:
-                cancel_targets.add(runtime.sl_order_client_id)
-            for cid in sorted(cancel_targets):
-                await self._rest.cancel_algo_order(params={"symbol": symbol_u, "clientAlgoId": cid})
+                cancel_params = _algo_cancel_params(symbol=symbol_u, row=row)
+                if cancel_params is None:
+                    continue
+                cancel_params_by_key[_cancel_param_key(cancel_params)] = cancel_params
+            if not cancel_params_by_key:
+                for cid in (runtime.tp_order_client_id, runtime.sl_order_client_id):
+                    text = str(cid or "").strip()
+                    if not text:
+                        continue
+                    cancel_params = _algo_cancel_params(symbol=symbol_u, client_algo_id=text)
+                    if cancel_params is None:
+                        continue
+                    cancel_params_by_key.setdefault(_cancel_param_key(cancel_params), cancel_params)
+            for cancel_params in cancel_params_by_key.values():
+                await self._rest.cancel_algo_order(params=cancel_params)
 
         cleaned = BracketRuntime(
             symbol=symbol.upper(), tp_order_client_id=None, sl_order_client_id=None, state="CLEANED"

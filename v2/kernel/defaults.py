@@ -44,6 +44,17 @@ def _clamp(value: float, low: float, high: float) -> float:
     return value
 
 
+def _candidate_stop_frac(candidate: Candidate) -> float | None:
+    entry_price = float(candidate.entry_price or 0.0)
+    if entry_price <= 0.0:
+        return None
+    if candidate.stop_distance_frac is not None and float(candidate.stop_distance_frac) > 0.0:
+        return max(float(candidate.stop_distance_frac), 0.0)
+    if candidate.stop_price_hint is not None and float(candidate.stop_price_hint) > 0.0:
+        return max(abs(entry_price - float(candidate.stop_price_hint)) / entry_price, 0.0)
+    return None
+
+
 def _parse_iso_timestamp(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -149,6 +160,22 @@ class LiveRuntimeRiskGate:
                 size_factor=0.0,
             )
 
+        min_rr = max(float(context.min_reward_risk_ratio or 0.0), 0.0)
+        if min_rr > 0.0:
+            entry_price = float(candidate.entry_price or 0.0)
+            take_profit = float(candidate.take_profit_hint or 0.0)
+            stop_frac = _candidate_stop_frac(candidate)
+            if entry_price > 0.0 and take_profit > 0.0 and stop_frac is not None and stop_frac > 0.0:
+                reward_frac = max(abs(take_profit - entry_price) / entry_price, 0.0)
+                reward_risk_ratio = reward_frac / max(float(stop_frac), 1e-9)
+                if reward_risk_ratio < min_rr:
+                    return RiskDecision(
+                        allow=False,
+                        reason="reward_risk_block",
+                        max_notional=0.0,
+                        size_factor=0.0,
+                    )
+
         daily_limit = _normalize_pct(context.daily_loss_limit_pct, default=self.daily_loss_limit_pct)
         daily_used = max(float(context.daily_loss_used_pct or 0.0), 0.0)
         if daily_limit > 0.0 and daily_used >= daily_limit:
@@ -189,6 +216,23 @@ class LiveRuntimeRiskGate:
         lose_streak = max(int(context.lose_streak or 0), 0)
         if lose_streak >= 2:
             size_factor = min(size_factor, max(0.4, 1.0 - (0.15 * float(lose_streak - 1))))
+
+        trade_cap = max(int(context.max_trades_per_day_per_symbol or 0), 0)
+        if trade_cap > 0:
+            counts = (
+                dict(context.daily_trade_entry_counts)
+                if isinstance(context.daily_trade_entry_counts, dict)
+                else {}
+            )
+            symbol_key = str(candidate.symbol or "").strip().upper()
+            today_count = max(int(counts.get(symbol_key, 0) or 0), 0)
+            if symbol_key and today_count >= trade_cap:
+                return RiskDecision(
+                    allow=False,
+                    reason="daily_trade_cap",
+                    max_notional=0.0,
+                    size_factor=0.0,
+                )
 
         if size_factor < 1.0:
             return RiskDecision(

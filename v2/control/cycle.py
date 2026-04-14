@@ -425,6 +425,10 @@ def run_cycle_once_locked(
         controller._report_stats["total_records"] += 1
         if cycle.state in {"executed", "dry_run"}:
             controller._report_stats["entries"] += 1
+            if cycle.candidate is not None:
+                controller._record_daily_entry(
+                    symbol=str(getattr(cycle.candidate, "symbol", "") or "")
+                )
         if cycle.state == "execution_failed":
             controller._report_stats["errors"] += 1
         if cycle.state in {"blocked", "risk_rejected"}:

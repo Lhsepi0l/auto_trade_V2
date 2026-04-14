@@ -8,6 +8,22 @@ from v2.backtest.snapshots import _FundingRateRow, _Kline15m, _ReplayFrame
 from v2.strategies.alpha_shared import _Bar
 
 
+def _interval_to_ms(interval: str) -> int:
+    normalized = str(interval).strip().lower()
+    mapping = {
+        "5m": 5 * 60 * 1000,
+        "10m": 10 * 60 * 1000,
+        "15m": 15 * 60 * 1000,
+        "30m": 30 * 60 * 1000,
+        "1h": 60 * 60 * 1000,
+        "2h": 2 * 60 * 60 * 1000,
+        "4h": 4 * 60 * 60 * 1000,
+        "12h": 12 * 60 * 60 * 1000,
+        "1d": 24 * 60 * 60 * 1000,
+    }
+    return mapping.get(normalized, 15 * 60 * 1000)
+
+
 def _zscore_latest(values: list[float], lookback: int) -> float | None:
     window = [float(item) for item in values[-max(int(lookback), 1) :]]
     if len(window) < max(int(lookback), 2):
@@ -264,8 +280,11 @@ class _HistoricalPortfolioSnapshotProvider:
             str(symbol).strip().upper() for symbol in candles_by_symbol.keys() if str(symbol).strip()
         )
         configured_intervals = list(market_intervals or ["15m", "1h", "4h"])
-        if "15m" not in configured_intervals:
-            configured_intervals.insert(0, "15m")
+        self._base_interval = str(configured_intervals[0]).strip() if configured_intervals else "15m"
+        if not self._base_interval:
+            self._base_interval = "15m"
+        if self._base_interval not in configured_intervals:
+            configured_intervals.insert(0, self._base_interval)
         seen_intervals: set[str] = set()
         self._intervals: list[str] = []
         for interval in configured_intervals:
@@ -310,7 +329,7 @@ class _HistoricalPortfolioSnapshotProvider:
                 rows = sorted(list(raw.get(interval, [])), key=lambda row: int(row.open_time_ms))
                 self._sources[symbol][interval] = rows
                 self._source_index[symbol][interval] = -1
-                if interval == "15m":
+                if interval == self._base_interval:
                     for row in rows:
                         timeline.add(int(row.open_time_ms))
 
@@ -336,20 +355,20 @@ class _HistoricalPortfolioSnapshotProvider:
         if len(history) > self._limit:
             del history[0]
 
-    def _advance_symbol_15m(self, *, symbol: str, open_time_ms: int) -> None:
-        rows = self._sources[symbol].get("15m", [])
-        idx = int(self._source_index[symbol].get("15m", -1))
+    def _advance_base_interval(self, *, symbol: str, open_time_ms: int) -> None:
+        rows = self._sources[symbol].get(self._base_interval, [])
+        idx = int(self._source_index[symbol].get(self._base_interval, -1))
         while idx + 1 < len(rows):
             nxt = rows[idx + 1]
             nxt_open_time = int(nxt.open_time_ms)
             if nxt_open_time > int(open_time_ms):
                 break
             idx += 1
-            self._append_history(symbol=symbol, interval="15m", row=nxt)
+            self._append_history(symbol=symbol, interval=self._base_interval, row=nxt)
             self._latest_rows[symbol] = nxt
             if nxt_open_time == int(open_time_ms):
                 break
-        self._source_index[symbol]["15m"] = idx
+        self._source_index[symbol][self._base_interval] = idx
 
     def _advance_interval(
         self,
@@ -411,16 +430,16 @@ class _HistoricalPortfolioSnapshotProvider:
         if self._idx >= len(self._timeline):
             return {}
         open_time_ms = int(self._timeline[self._idx])
-        close_time_ms = open_time_ms + (15 * 60 * 1000)
+        close_time_ms = open_time_ms + _interval_to_ms(self._base_interval)
 
         for symbol in self._symbols:
-            self._advance_symbol_15m(symbol=symbol, open_time_ms=open_time_ms)
+            self._advance_base_interval(symbol=symbol, open_time_ms=open_time_ms)
             latest = self._latest_rows.get(symbol)
             if latest is None:
                 continue
             current_close_ms = int(latest.close_time_ms)
             for interval in self._intervals:
-                if interval == "15m":
+                if interval == self._base_interval:
                     continue
                 self._advance_interval(
                     symbol=symbol,

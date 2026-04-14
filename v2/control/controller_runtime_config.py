@@ -248,10 +248,15 @@ def sync_kernel_runtime_overrides(
             lose_streak=int(controller._risk.get("lose_streak") or 0),
             cooldown_until=controller._risk.get("cooldown_until"),
             risk_score_min=controller._risk.get("risk_score_min"),
+            min_reward_risk_ratio=controller._risk.get("min_reward_risk_ratio"),
             spread_max_pct=controller._risk.get("spread_max_pct"),
             dd_scale_start_pct=controller._risk.get("dd_scale_start_pct"),
             dd_scale_max_pct=controller._risk.get("dd_scale_max_pct"),
             dd_scale_min_factor=controller._risk.get("dd_scale_min_factor"),
+            max_trades_per_day_per_symbol=int(
+                controller._risk.get("max_trades_per_day_per_symbol") or 0
+            ),
+            daily_trade_entry_counts=dict(controller._risk.get("daily_trade_entry_counts") or {}),
             recent_blocks=dict(controller._risk.get("recent_blocks") or {}),
         )
 
@@ -281,6 +286,8 @@ def initial_risk_config(
         "lose_streak": 0,
         "cooldown_until": None,
         "risk_day": day_key,
+        "max_trades_per_day_per_symbol": 0,
+        "daily_trade_entry_counts": {},
         "recent_blocks": {},
         "daily_lock": False,
         "dd_lock": False,
@@ -293,6 +300,7 @@ def initial_risk_config(
         "auto_safe_mode_on_risk": True,
         "auto_flatten_on_risk": True,
         "risk_score_min": None,
+        "min_reward_risk_ratio": None,
         "dd_scale_start_pct": 0.12,
         "dd_scale_max_pct": 0.32,
         "dd_scale_min_factor": 0.35,

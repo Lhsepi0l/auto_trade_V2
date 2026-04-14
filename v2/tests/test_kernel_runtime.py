@@ -12,6 +12,7 @@ from v2.kernel import (
     FixedNotionalSizer,
     KernelContext,
     KernelCycleResult,
+    LiveRuntimeRiskGate,
     RiskDecision,
     TradeKernel,
     TradeKernelConfig,
@@ -194,6 +195,50 @@ def test_risk_reject_prevents_execute(tmp_path) -> None:  # type: ignore[no-unty
     result = kernel.run_once()
     assert result.state == "risk_rejected"
     assert executor.calls == 0
+
+
+def test_live_runtime_risk_gate_blocks_when_daily_trade_cap_reached() -> None:
+    gate = LiveRuntimeRiskGate()
+    candidate = Candidate(symbol="BTCUSDT", side="BUY", score=1.0, entry_price=100.0)
+    context = KernelContext(
+        mode="shadow",
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        symbol="BTCUSDT",
+        tick=1,
+        dry_run=True,
+        max_trades_per_day_per_symbol=1,
+        daily_trade_entry_counts={"BTCUSDT": 1},
+    )
+
+    decision = gate.evaluate(candidate=candidate, context=context)
+
+    assert decision.allow is False
+    assert decision.reason == "daily_trade_cap"
+
+
+def test_live_runtime_risk_gate_blocks_when_reward_risk_below_threshold() -> None:
+    gate = LiveRuntimeRiskGate()
+    candidate = Candidate(
+        symbol="BTCUSDT",
+        side="BUY",
+        score=1.0,
+        entry_price=100.0,
+        stop_distance_frac=0.02,
+        take_profit_hint=102.0,
+    )
+    context = KernelContext(
+        mode="shadow",
+        profile="ra_2026_alpha_v2_expansion_live_candidate",
+        symbol="BTCUSDT",
+        tick=1,
+        dry_run=True,
+        min_reward_risk_ratio=2.0,
+    )
+
+    decision = gate.evaluate(candidate=candidate, context=context)
+
+    assert decision.allow is False
+    assert decision.reason == "reward_risk_block"
 
 
 def test_default_kernel_runs_shadow_as_dry_run(tmp_path) -> None:

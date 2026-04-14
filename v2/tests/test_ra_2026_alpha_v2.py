@@ -67,25 +67,52 @@ def _market_for_pullback() -> dict[str, list[dict[str, float]]]:
 def _market_for_expansion() -> dict[str, list[dict[str, float]]]:
     closes_4h = [100.0 + ((idx % 4) * 0.05) for idx in range(220)]
     closes_1h = [220.0 + (idx * 0.18) for idx in range(90)]
-    closes_15m = [300.0 + ((idx % 2) * 0.01) for idx in range(78)] + [300.0, 300.0, 303.5]
+    closes_15m = [300.0 + ((idx % 2) * 0.02) for idx in range(78)] + [300.0, 300.62, 300.50]
     market = {
         "4h": _bars(closes_4h, wick=0.25, body_shift=0.03, volume_base=1600.0, volume_step=0.0),
         "1h": _bars(closes_1h, wick=0.55, body_shift=0.14, volume_base=1300.0, volume_step=2.0),
-        "15m": _bars(closes_15m, wick=0.05, body_shift=0.02, volume_base=700.0, volume_step=0.5),
+        "15m": _bars(closes_15m, wick=0.22, body_shift=0.08, volume_base=700.0, volume_step=0.5),
     }
-    market["15m"][-1]["high"] = 305.2
-    market["15m"][-1]["low"] = 298.8
-    market["15m"][-1]["volume"] = 2600.0
+    market["15m"][-2]["open"] = 300.10
+    market["15m"][-2]["close"] = 300.62
+    market["15m"][-2]["high"] = 300.88
+    market["15m"][-2]["low"] = 300.06
+    market["15m"][-2]["volume"] = 2600.0
+    market["15m"][-1]["open"] = 300.58
+    market["15m"][-1]["close"] = 300.50
+    market["15m"][-1]["high"] = 300.60
+    market["15m"][-1]["low"] = 300.32
+    market["15m"][-1]["volume"] = 2200.0
+    return market
+
+
+def _market_for_strong_immediate_expansion() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_expansion()
+    market["15m"][-2]["open"] = 300.10
+    market["15m"][-2]["close"] = 300.24
+    market["15m"][-2]["high"] = 300.28
+    market["15m"][-2]["low"] = 300.06
+    market["15m"][-2]["volume"] = 1800.0
+    market["15m"][-1]["open"] = 300.22
+    market["15m"][-1]["close"] = 300.72
+    market["15m"][-1]["high"] = 300.82
+    market["15m"][-1]["low"] = 300.16
+    market["15m"][-1]["volume"] = 2800.0
     return market
 
 
 def _market_for_unstable_expansion() -> dict[str, list[dict[str, float]]]:
     market = _market_for_expansion()
-    market["15m"][-1]["open"] = 300.2
-    market["15m"][-1]["close"] = 303.5
-    market["15m"][-1]["high"] = 306.4
-    market["15m"][-1]["low"] = 299.8
-    market["15m"][-1]["volume"] = 2600.0
+    market["15m"][-2]["open"] = 300.10
+    market["15m"][-2]["close"] = 300.52
+    market["15m"][-2]["high"] = 301.25
+    market["15m"][-2]["low"] = 300.05
+    market["15m"][-2]["volume"] = 2600.0
+    market["15m"][-1]["open"] = 300.49
+    market["15m"][-1]["close"] = 300.44
+    market["15m"][-1]["high"] = 300.50
+    market["15m"][-1]["low"] = 300.30
+    market["15m"][-1]["volume"] = 2200.0
     return market
 
 
@@ -93,40 +120,78 @@ def _market_for_borderline_expansion() -> dict[str, list[dict[str, float]]]:
     market = _market_for_expansion()
     for bar in market["15m"]:
         bar["volume"] = 2000.0
-    market["15m"][-1]["volume"] = 1800.0
-    market["15m"][-1]["open"] = 302.9
-    market["15m"][-1]["close"] = 303.5
-    market["15m"][-1]["high"] = 305.0
-    market["15m"][-1]["low"] = 299.2
+    market["15m"][-2]["volume"] = 1850.0
+    market["15m"][-1]["volume"] = 1900.0
+    market["15m"][-2]["close"] = 300.56
+    market["15m"][-2]["high"] = 300.80
+    market["15m"][-1]["open"] = 300.53
+    market["15m"][-1]["close"] = 300.46
+    market["15m"][-1]["high"] = 300.55
+    market["15m"][-1]["low"] = 300.31
     return market
 
 
 def _market_for_weak_expansion_after_relaxation() -> dict[str, list[dict[str, float]]]:
     market = _market_for_borderline_expansion()
-    market["15m"][-1]["close"] = 300.4
-    market["15m"][-1]["high"] = 301.0
-    market["15m"][-1]["low"] = 299.9
+    market["15m"][-1]["close"] = 300.34
+    market["15m"][-1]["high"] = 300.36
+    market["15m"][-1]["low"] = 300.26
+    return market
+
+
+def _market_for_overextended_long_expansion() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_expansion()
+    market["15m"][-1]["open"] = 300.55
+    market["15m"][-1]["close"] = 301.60
+    market["15m"][-1]["high"] = 301.66
+    market["15m"][-1]["low"] = 300.52
+    market["15m"][-1]["volume"] = 2300.0
     return market
 
 
 def _market_for_short_expansion() -> dict[str, list[dict[str, float]]]:
     closes_4h = [400.0 - (idx * 0.7) for idx in range(220)]
     closes_1h = [250.0 - (idx * 0.10) for idx in range(90)]
-    closes_15m = [300.0 + (((idx % 3) - 1) * 0.08) for idx in range(78)] + [300.0, 299.9, 298.7]
+    closes_15m = [300.0 - ((idx % 2) * 0.02) for idx in range(78)] + [300.0, 299.38, 299.50]
     market = {
         "4h": _bars(closes_4h, wick=0.6, body_shift=0.20, volume_base=1600.0, volume_step=2.0),
         "1h": _bars(closes_1h, wick=0.35, body_shift=0.12, volume_base=1300.0, volume_step=2.0),
-        "15m": _bars(closes_15m, wick=0.35, body_shift=0.06, volume_base=900.0, volume_step=1.0),
+        "15m": _bars(closes_15m, wick=0.22, body_shift=0.08, volume_base=900.0, volume_step=1.0),
     }
-    market["15m"][-1]["volume"] = 2600.0
+    market["15m"][-2]["open"] = 299.90
+    market["15m"][-2]["close"] = 299.38
+    market["15m"][-2]["high"] = 299.94
+    market["15m"][-2]["low"] = 299.12
+    market["15m"][-2]["volume"] = 2600.0
+    market["15m"][-1]["open"] = 299.42
+    market["15m"][-1]["close"] = 299.50
+    market["15m"][-1]["high"] = 299.68
+    market["15m"][-1]["low"] = 299.40
+    market["15m"][-1]["volume"] = 2200.0
+    return market
+
+
+def _market_for_strong_immediate_short_expansion() -> dict[str, list[dict[str, float]]]:
+    market = _market_for_short_expansion()
+    market["15m"][-2]["open"] = 299.88
+    market["15m"][-2]["close"] = 299.76
+    market["15m"][-2]["high"] = 299.92
+    market["15m"][-2]["low"] = 299.70
+    market["15m"][-2]["volume"] = 1800.0
+    market["15m"][-1]["open"] = 299.70
+    market["15m"][-1]["close"] = 299.21
+    market["15m"][-1]["high"] = 299.74
+    market["15m"][-1]["low"] = 299.14
+    market["15m"][-1]["volume"] = 2800.0
     return market
 
 
 def _market_for_overextended_short_expansion() -> dict[str, list[dict[str, float]]]:
-    market = _market_for_short_expansion()
-    market["15m"][-1]["close"] = 298.2
-    market["15m"][-1]["high"] = 298.95
-    market["15m"][-1]["low"] = 297.95
+    market = _market_for_strong_immediate_short_expansion()
+    market["15m"][-1]["open"] = 299.30
+    market["15m"][-1]["close"] = 298.40
+    market["15m"][-1]["high"] = 299.34
+    market["15m"][-1]["low"] = 298.34
     return market
 
 
@@ -308,6 +373,36 @@ def test_alpha_v2_expansion_signal_emits_expansion_alpha() -> None:
     assert decision["side"] == "BUY"
     assert decision["alpha_id"] == "alpha_expansion"
     assert decision["entry_family"] == "expansion"
+    assert decision["entry_tier"] == "B"
+
+
+def test_alpha_v2_expansion_allows_strong_immediate_entry_tier_a() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.8,
+            "expansion_range_atr_min": 0.5,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_strong_immediate_body_ratio_min": 0.55,
+            "expansion_strong_immediate_close_location_min": 0.72,
+            "expansion_strong_immediate_quality_score_v2_min": 0.72,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.90,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_strong_immediate_expansion()}
+    )
+
+    assert decision["intent"] == "LONG"
+    assert decision["alpha_id"] == "alpha_expansion"
+    assert decision["entry_tier"] == "A"
 
 
 def test_alpha_v2_expansion_accepts_borderline_momentum_breakout() -> None:
@@ -406,6 +501,144 @@ def test_alpha_v2_expansion_short_signal_survives_moderate_breakout_distance() -
     assert decision["intent"] == "SHORT"
     assert decision["side"] == "SELL"
     assert decision["alpha_id"] == "alpha_expansion"
+    assert decision["entry_tier"] == "B"
+
+
+def test_alpha_v2_expansion_short_confirm_filter_blocks_shallow_breakdown() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_confirm_break_distance_atr_min": 0.8,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_short_expansion()})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "short_confirm_distance_missing"
+
+
+def test_alpha_v2_expansion_short_confirm_filter_blocks_weak_close_location() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_confirm_break_distance_atr_min": 0.5,
+            "expansion_short_confirm_close_location_min": 0.8,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_short_expansion()})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "short_confirm_close_missing"
+
+
+def test_alpha_v2_expansion_allows_strong_immediate_short_entry_tier_a() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.90,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_strong_immediate_short_expansion()}
+    )
+
+    assert decision["intent"] == "SHORT"
+    assert decision["side"] == "SELL"
+    assert decision["alpha_id"] == "alpha_expansion"
+    assert decision["entry_tier"] == "A"
+
+
+def test_alpha_v2_expansion_immediate_tier_requires_regime_alignment_when_enabled() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.8,
+            "expansion_range_atr_min": 0.5,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_strong_immediate_body_ratio_min": 0.55,
+            "expansion_strong_immediate_close_location_min": 0.72,
+            "expansion_strong_immediate_quality_score_v2_min": 0.72,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.90,
+            "expansion_strong_immediate_require_regime_alignment": True,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_strong_immediate_expansion()}
+    )
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "trigger_missing"
+
+
+def test_alpha_v2_expansion_immediate_short_can_be_disabled_by_side_mode() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 0.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_short_break_distance_atr_max": 1.3,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.90,
+            "expansion_strong_immediate_side_mode": "LONG",
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_strong_immediate_short_expansion()}
+    )
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "trigger_missing"
 
 
 def test_alpha_v2_expansion_rejects_overextended_short_chase() -> None:
@@ -421,6 +654,7 @@ def test_alpha_v2_expansion_rejects_overextended_short_chase() -> None:
             "min_volume_ratio_15m": 0.8,
             "expansion_quality_score_v2_min": 0.62,
             "expansion_short_break_distance_atr_max": 1.3,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.85,
             "min_stop_distance_frac": 0.0005,
             "expected_move_cost_mult": 1.0,
         }
@@ -432,6 +666,34 @@ def test_alpha_v2_expansion_rejects_overextended_short_chase() -> None:
 
     assert decision["intent"] == "NONE"
     assert decision["alpha_blocks"]["alpha_expansion"] == "short_overextension_risk"
+
+
+def test_alpha_v2_expansion_rejects_overextended_long_chase() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 2.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.8,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_long_break_distance_atr_max": 1.1,
+            "expansion_retest_band_atr_mult": 0.35,
+            "expansion_strong_immediate_breakout_distance_atr_max": 0.85,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide(
+        {"symbol": "BTCUSDT", "market": _market_for_overextended_long_expansion()}
+    )
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "long_overextension_risk"
 
 
 def test_alpha_v2_drift_signal_emits_drift_alpha() -> None:

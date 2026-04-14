@@ -288,6 +288,11 @@ def build_operator_event_payload(*, event: str, fields: dict[str, Any]) -> dict[
         if outcome:
             parts.append(f"outcome={outcome}")
         sub_text = " / ".join(parts) if parts else None
+    elif raw_event == "client_log":
+        category = str(fields.get("category") or "action").strip().lower() or "action"
+        title = str(fields.get("title") or "클라이언트 로그").strip() or "클라이언트 로그"
+        main_text = str(fields.get("main_text") or "").strip() or "브라우저 클라이언트 로그"
+        sub_text = str(fields.get("sub_text") or "").strip() or None
     else:
         if reason:
             main_text = humanize_reason_token(str(reason))

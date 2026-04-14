@@ -306,6 +306,7 @@ def _simulate_symbol_metrics(
                 "side": "LONG" if open_trade.side == "BUY" else "SHORT",
                 "regime": open_trade.regime,
                 "alpha_id": open_trade.alpha_id,
+                "entry_tier": open_trade.entry_tier,
                 "entry_price": open_trade.entry_price,
                 "exit_price": exit_fill,
                 "quantity": float(open_trade.initial_quantity),
@@ -1122,6 +1123,7 @@ def _simulate_symbol_metrics(
                         profit_exit_cooldown_bars=profit_exit_cooldown_bars,
                         alpha_id=alpha_id,
                         entry_family=entry_family,
+                        entry_tier=str((decision or {}).get("entry_tier") or "").strip() or None,
                         regime_lost_exit_required=regime_lost_exit_required,
                         tp_partial_ratio=tp_partial_ratio,
                         tp_partial_price=tp_partial_price,
@@ -1364,6 +1366,7 @@ def _simulate_portfolio_metrics(
                 "side": "LONG" if trade.side == "BUY" else "SHORT",
                 "regime": trade.regime,
                 "alpha_id": trade.alpha_id,
+                "entry_tier": trade.entry_tier,
                 "entry_price": trade.entry_price,
                 "exit_price": exit_fill,
                 "quantity": float(trade.initial_quantity),
@@ -1652,6 +1655,20 @@ def _simulate_portfolio_metrics(
                 time_stop_bars=_to_int((decision.get("execution") or {}).get("time_stop_bars"))
                 if isinstance(decision.get("execution"), dict)
                 else None,
+                progress_check_bars=_to_int((decision.get("execution") or {}).get("progress_check_bars"))
+                if isinstance(decision.get("execution"), dict)
+                else 0,
+                progress_min_mfe_r=_to_float((decision.get("execution") or {}).get("progress_min_mfe_r"))
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                progress_extend_trigger_r=_to_float(
+                    (decision.get("execution") or {}).get("progress_extend_trigger_r")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                progress_extend_bars=_to_int((decision.get("execution") or {}).get("progress_extend_bars"))
+                if isinstance(decision.get("execution"), dict)
+                else 0,
                 effective_leverage=float(max_effective_leverage),
                 regime=str(decision.get("regime") or "").strip().upper() or None,
                 entry_tick=int(tick),
@@ -1665,6 +1682,59 @@ def _simulate_portfolio_metrics(
                 alpha_id=str(candidate.alpha_id or decision.get("alpha_id") or "").strip() or None,
                 entry_family=str(candidate.entry_family or decision.get("entry_family") or "").strip()
                 or None,
+                entry_tier=str(decision.get("entry_tier") or "").strip() or None,
+                entry_quality_score_v2=_to_float((decision.get("execution") or {}).get("entry_quality_score_v2"))
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                entry_regime_strength=_to_float((decision.get("execution") or {}).get("entry_regime_strength"))
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                entry_bias_strength=_to_float((decision.get("execution") or {}).get("entry_bias_strength"))
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                quality_exit_applied=bool((decision.get("execution") or {}).get("quality_exit_applied"))
+                if isinstance(decision.get("execution"), dict)
+                else False,
+                selective_extension_proof_bars=_to_int(
+                    (decision.get("execution") or {}).get("selective_extension_proof_bars")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0,
+                selective_extension_min_mfe_r=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_min_mfe_r")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                selective_extension_min_regime_strength=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_min_regime_strength")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                selective_extension_min_bias_strength=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_min_bias_strength")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                selective_extension_min_quality_score_v2=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_min_quality_score_v2")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                selective_extension_time_stop_bars=_to_int(
+                    (decision.get("execution") or {}).get("selective_extension_time_stop_bars")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0,
+                selective_extension_take_profit_r=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_take_profit_r")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
+                selective_extension_move_stop_to_be_at_r=_to_float(
+                    (decision.get("execution") or {}).get("selective_extension_move_stop_to_be_at_r")
+                )
+                if isinstance(decision.get("execution"), dict)
+                else 0.0,
             )
             open_symbols.add(symbol)
             day_trade_counter[(day_key, symbol)] = int(day_trade_counter.get((day_key, symbol), 0)) + 1

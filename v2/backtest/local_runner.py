@@ -60,29 +60,29 @@ def _local_backtest_strategy_runtime_params(
     *,
     active_strategy_name: str,
     enabled_alphas_override: str | None = None,
-    alpha_squeeze_percentile_max: float,
-    alpha_expansion_buffer_bps: float,
-    alpha_expansion_range_atr_min: float,
-    alpha_expansion_body_ratio_min: float,
-    alpha_expansion_close_location_min: float,
-    alpha_expansion_width_expansion_min: float,
-    alpha_expansion_break_distance_atr_min: float,
-    alpha_expansion_breakout_efficiency_min: float,
-    alpha_expansion_breakout_stability_score_min: float,
-    alpha_expansion_breakout_stability_edge_score_min: float,
-    alpha_expansion_quality_score_min: float,
+    alpha_squeeze_percentile_max: float | None,
+    alpha_expansion_buffer_bps: float | None,
+    alpha_expansion_range_atr_min: float | None,
+    alpha_expansion_body_ratio_min: float | None,
+    alpha_expansion_close_location_min: float | None,
+    alpha_expansion_width_expansion_min: float | None,
+    alpha_expansion_break_distance_atr_min: float | None,
+    alpha_expansion_breakout_efficiency_min: float | None,
+    alpha_expansion_breakout_stability_score_min: float | None,
+    alpha_expansion_breakout_stability_edge_score_min: float | None,
+    alpha_expansion_quality_score_min: float | None,
     alpha_expansion_quality_score_v2_min: float | None,
-    alpha_min_volume_ratio: float,
-    alpha_take_profit_r: float,
-    alpha_time_stop_bars: int,
-    alpha_trend_adx_min_4h: float,
-    alpha_trend_adx_max_4h: float,
-    alpha_trend_adx_rising_lookback_4h: int,
-    alpha_trend_adx_rising_min_delta_4h: float,
-    alpha_expected_move_cost_mult: float,
-    drift_side_mode: str,
-    drift_take_profit_r: float,
-    drift_time_stop_bars: int,
+    alpha_min_volume_ratio: float | None,
+    alpha_take_profit_r: float | None,
+    alpha_time_stop_bars: int | None,
+    alpha_trend_adx_min_4h: float | None,
+    alpha_trend_adx_max_4h: float | None,
+    alpha_trend_adx_rising_lookback_4h: int | None,
+    alpha_trend_adx_rising_min_delta_4h: float | None,
+    alpha_expected_move_cost_mult: float | None,
+    drift_side_mode: str | None,
+    drift_take_profit_r: float | None,
+    drift_time_stop_bars: int | None,
     fb_failed_break_buffer_bps: float,
     fb_wick_ratio_min: float,
     fb_take_profit_r: float,
@@ -105,60 +105,81 @@ def _local_backtest_strategy_runtime_params(
     pfd_take_profit_r: float,
 ) -> dict[str, Any]:
     if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
-        params = {
-            "squeeze_percentile_threshold": min(
+        params: dict[str, Any] = {}
+        if alpha_squeeze_percentile_max is not None:
+            params["squeeze_percentile_threshold"] = min(
                 max(float(alpha_squeeze_percentile_max), 0.05),
                 0.95,
-            ),
-            "expansion_buffer_bps": max(float(alpha_expansion_buffer_bps), 0.0),
-            "expansion_range_atr_min": max(float(alpha_expansion_range_atr_min), 0.0),
-            "expansion_body_ratio_min": min(
+            )
+        if alpha_expansion_buffer_bps is not None:
+            params["expansion_buffer_bps"] = max(float(alpha_expansion_buffer_bps), 0.0)
+        if alpha_expansion_range_atr_min is not None:
+            params["expansion_range_atr_min"] = max(float(alpha_expansion_range_atr_min), 0.0)
+        if alpha_expansion_body_ratio_min is not None:
+            params["expansion_body_ratio_min"] = min(
                 max(float(alpha_expansion_body_ratio_min), 0.0),
                 1.0,
-            ),
-            "expansion_close_location_min": min(
+            )
+        if alpha_expansion_close_location_min is not None:
+            params["expansion_close_location_min"] = min(
                 max(float(alpha_expansion_close_location_min), 0.0),
                 1.0,
-            ),
-            "expansion_width_expansion_min": max(
+            )
+        if alpha_expansion_width_expansion_min is not None:
+            params["expansion_width_expansion_min"] = max(
                 float(alpha_expansion_width_expansion_min),
                 0.0,
-            ),
-            "expansion_break_distance_atr_min": max(
+            )
+        if alpha_expansion_break_distance_atr_min is not None:
+            params["expansion_break_distance_atr_min"] = max(
                 float(alpha_expansion_break_distance_atr_min),
                 0.0,
-            ),
-            "expansion_breakout_efficiency_min": max(
+            )
+        if alpha_expansion_breakout_efficiency_min is not None:
+            params["expansion_breakout_efficiency_min"] = max(
                 float(alpha_expansion_breakout_efficiency_min),
                 0.0,
-            ),
-            "expansion_breakout_stability_score_min": min(
+            )
+        if alpha_expansion_breakout_stability_score_min is not None:
+            params["expansion_breakout_stability_score_min"] = min(
                 max(float(alpha_expansion_breakout_stability_score_min), 0.0),
                 1.0,
-            ),
-            "expansion_breakout_stability_edge_score_min": min(
+            )
+        if alpha_expansion_breakout_stability_edge_score_min is not None:
+            params["expansion_breakout_stability_edge_score_min"] = min(
                 max(float(alpha_expansion_breakout_stability_edge_score_min), 0.0),
                 1.0,
-            ),
-            "expansion_quality_score_min": min(
+            )
+        if alpha_expansion_quality_score_min is not None:
+            params["expansion_quality_score_min"] = min(
                 max(float(alpha_expansion_quality_score_min), 0.0),
                 1.0,
-            ),
-            "min_volume_ratio_15m": max(float(alpha_min_volume_ratio), 0.0),
-            "take_profit_r": max(float(alpha_take_profit_r), 0.5),
-            "time_stop_bars": max(int(alpha_time_stop_bars), 1),
-            "trend_adx_min_4h": max(float(alpha_trend_adx_min_4h), 0.0),
-            "trend_adx_max_4h": max(float(alpha_trend_adx_max_4h), 0.0),
-            "trend_adx_rising_lookback_4h": max(int(alpha_trend_adx_rising_lookback_4h), 0),
-            "trend_adx_rising_min_delta_4h": max(
+            )
+        if alpha_min_volume_ratio is not None:
+            params["min_volume_ratio_15m"] = max(float(alpha_min_volume_ratio), 0.0)
+        if alpha_take_profit_r is not None:
+            params["take_profit_r"] = max(float(alpha_take_profit_r), 0.5)
+        if alpha_time_stop_bars is not None:
+            params["time_stop_bars"] = max(int(alpha_time_stop_bars), 1)
+        if alpha_trend_adx_min_4h is not None:
+            params["trend_adx_min_4h"] = max(float(alpha_trend_adx_min_4h), 0.0)
+        if alpha_trend_adx_max_4h is not None:
+            params["trend_adx_max_4h"] = max(float(alpha_trend_adx_max_4h), 0.0)
+        if alpha_trend_adx_rising_lookback_4h is not None:
+            params["trend_adx_rising_lookback_4h"] = max(int(alpha_trend_adx_rising_lookback_4h), 0)
+        if alpha_trend_adx_rising_min_delta_4h is not None:
+            params["trend_adx_rising_min_delta_4h"] = max(
                 float(alpha_trend_adx_rising_min_delta_4h),
                 0.0,
-            ),
-            "expected_move_cost_mult": max(float(alpha_expected_move_cost_mult), 0.1),
-            "drift_side_mode": str(drift_side_mode).strip().upper() or "BOTH",
-            "drift_take_profit_r": max(float(drift_take_profit_r), 0.5),
-            "drift_time_stop_bars": max(int(drift_time_stop_bars), 1),
-        }
+            )
+        if alpha_expected_move_cost_mult is not None:
+            params["expected_move_cost_mult"] = max(float(alpha_expected_move_cost_mult), 0.1)
+        if drift_side_mode is not None:
+            params["drift_side_mode"] = str(drift_side_mode).strip().upper() or "BOTH"
+        if drift_take_profit_r is not None:
+            params["drift_take_profit_r"] = max(float(drift_take_profit_r), 0.5)
+        if drift_time_stop_bars is not None:
+            params["drift_time_stop_bars"] = max(int(drift_time_stop_bars), 1)
         if enabled_alphas_override is not None and str(enabled_alphas_override).strip():
             params["enabled_alphas"] = [
                 token.strip().lower()
@@ -174,85 +195,32 @@ def _local_backtest_strategy_runtime_params(
     return {}
 
 
-def _local_backtest_profile_alpha_overrides(profile_name: str) -> dict[str, Any]:
-    normalized = str(profile_name).strip().lower()
-    mapping: dict[str, dict[str, Any]] = {
-        "ra_2026_alpha_v2_expansion": {"enabled_alphas": ["alpha_expansion"]},
-        "ra_2026_alpha_v2_expansion_verified_candidate": {
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.30,
-            "expansion_buffer_bps": 2.0,
-            "expansion_range_atr_min": 0.7,
-            "expansion_body_ratio_min": 0.18,
-            "expansion_close_location_min": 0.35,
-            "expansion_width_expansion_min": 0.02,
-            "min_volume_ratio_15m": 0.9,
-            "take_profit_r": 2.0,
-            "time_stop_bars": 18,
-            "trend_adx_min_4h": 14.0,
-            "expected_move_cost_mult": 1.6,
-        },
-        "ra_2026_alpha_v2_expansion_verified_q070": {
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.35,
-            "expansion_buffer_bps": 1.5,
-            "expansion_range_atr_min": 0.7,
-            "expansion_body_ratio_min": 0.18,
-            "expansion_close_location_min": 0.35,
-            "expansion_width_expansion_min": 0.02,
-            "min_volume_ratio_15m": 0.8,
-            "take_profit_r": 2.0,
-            "time_stop_bars": 18,
-            "trend_adx_min_4h": 14.0,
-            "expected_move_cost_mult": 1.6,
-            "expansion_quality_score_v2_min": 0.70,
-        },
-        "ra_2026_alpha_v2_expansion_champion_candidate": {
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.30,
-            "expansion_buffer_bps": 2.0,
-            "expansion_range_atr_min": 0.7,
-            "expansion_body_ratio_min": 0.18,
-            "expansion_close_location_min": 0.35,
-            "expansion_width_expansion_min": 0.02,
-            "min_volume_ratio_15m": 0.9,
-            "take_profit_r": 2.0,
-            "time_stop_bars": 18,
-            "trend_adx_min_4h": 14.0,
-            "expected_move_cost_mult": 1.6,
-            "expansion_quality_score_v2_min": 0.70,
-        },
-        "ra_2026_alpha_v2_expansion_candidate": {
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.30,
-            "expansion_buffer_bps": 2.0,
-            "expansion_range_atr_min": 0.7,
-            "expansion_body_ratio_min": 0.18,
-            "expansion_close_location_min": 0.35,
-            "expansion_width_expansion_min": 0.02,
-            "min_volume_ratio_15m": 0.9,
-            "take_profit_r": 2.0,
-            "time_stop_bars": 18,
-            "trend_adx_min_4h": 14.0,
-            "expected_move_cost_mult": 1.6,
-        },
-        "ra_2026_alpha_v2_expansion_live_candidate": {
-            "enabled_alphas": ["alpha_expansion"],
-            "squeeze_percentile_threshold": 0.30,
-            "expansion_buffer_bps": 2.0,
-            "expansion_range_atr_min": 0.7,
-            "expansion_body_ratio_min": 0.18,
-            "expansion_close_location_min": 0.35,
-            "expansion_width_expansion_min": 0.02,
-            "min_volume_ratio_15m": 0.9,
-            "take_profit_r": 2.0,
-            "time_stop_bars": 18,
-            "trend_adx_min_4h": 14.0,
-            "expected_move_cost_mult": 1.6,
-            "expansion_quality_score_v2_min": 0.62,
-        },
-    }
-    return dict(mapping.get(normalized, {}))
+def _local_backtest_profile_alpha_overrides(
+    profile_name: str,
+    *,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    try:
+        cfg = load_effective_config(
+            profile=str(profile_name),
+            mode="shadow",
+            env="prod",
+            env_file_path=".env",
+            config_path=config_path,
+        )
+    except Exception:
+        return {}
+
+    for entry in cfg.behavior.strategies:
+        if not bool(getattr(entry, "enabled", False)):
+            continue
+        if not str(getattr(entry, "name", "")).strip().startswith("ra_2026_alpha_v2"):
+            continue
+        params = getattr(entry, "params", None)
+        if isinstance(params, dict):
+            return dict(params)
+        return {}
+    return {}
 
 
 def _merge_local_backtest_profile_alpha_overrides(
@@ -260,10 +228,16 @@ def _merge_local_backtest_profile_alpha_overrides(
     profile_name: str,
     active_strategy_name: str,
     strategy_runtime_params: dict[str, Any],
+    config_path: str | None = None,
 ) -> dict[str, Any]:
     merged = {}
     if str(active_strategy_name).startswith("ra_2026_alpha_v2"):
-        merged.update(_local_backtest_profile_alpha_overrides(profile_name))
+        merged.update(
+            _local_backtest_profile_alpha_overrides(
+                profile_name,
+                config_path=config_path,
+            )
+        )
     merged.update({key: value for key, value in strategy_runtime_params.items() if value is not None})
     return merged
 
@@ -277,6 +251,7 @@ def _run_local_backtest_symbol_replay_worker(
     years: int,
     start_ms: int,
     end_ms: int,
+    config_path: str | None,
     cache_root: str,
     sqlite_path: str,
     initial_capital: float,
@@ -304,29 +279,29 @@ def _run_local_backtest_symbol_replay_worker(
     stoploss_streak_trigger: int,
     stoploss_cooldown_bars: int,
     loss_cooldown_bars: int,
-    alpha_squeeze_percentile_max: float,
-    alpha_expansion_buffer_bps: float,
-    alpha_expansion_range_atr_min: float,
-    alpha_expansion_body_ratio_min: float,
-    alpha_expansion_close_location_min: float,
-    alpha_expansion_width_expansion_min: float,
-    alpha_expansion_break_distance_atr_min: float,
-    alpha_expansion_breakout_efficiency_min: float,
-    alpha_expansion_breakout_stability_score_min: float,
-    alpha_expansion_breakout_stability_edge_score_min: float,
-    alpha_expansion_quality_score_min: float,
+    alpha_squeeze_percentile_max: float | None,
+    alpha_expansion_buffer_bps: float | None,
+    alpha_expansion_range_atr_min: float | None,
+    alpha_expansion_body_ratio_min: float | None,
+    alpha_expansion_close_location_min: float | None,
+    alpha_expansion_width_expansion_min: float | None,
+    alpha_expansion_break_distance_atr_min: float | None,
+    alpha_expansion_breakout_efficiency_min: float | None,
+    alpha_expansion_breakout_stability_score_min: float | None,
+    alpha_expansion_breakout_stability_edge_score_min: float | None,
+    alpha_expansion_quality_score_min: float | None,
     alpha_expansion_quality_score_v2_min: float | None,
-    alpha_min_volume_ratio: float,
-    alpha_take_profit_r: float,
-    alpha_time_stop_bars: int,
-    alpha_trend_adx_min_4h: float,
-    alpha_trend_adx_max_4h: float,
-    alpha_trend_adx_rising_lookback_4h: int,
-    alpha_trend_adx_rising_min_delta_4h: float,
-    alpha_expected_move_cost_mult: float,
-    drift_side_mode: str,
-    drift_take_profit_r: float,
-    drift_time_stop_bars: int,
+    alpha_min_volume_ratio: float | None,
+    alpha_take_profit_r: float | None,
+    alpha_time_stop_bars: int | None,
+    alpha_trend_adx_min_4h: float | None,
+    alpha_trend_adx_max_4h: float | None,
+    alpha_trend_adx_rising_lookback_4h: int | None,
+    alpha_trend_adx_rising_min_delta_4h: float | None,
+    alpha_expected_move_cost_mult: float | None,
+    drift_side_mode: str | None,
+    drift_take_profit_r: float | None,
+    drift_time_stop_bars: int | None,
     fb_failed_break_buffer_bps: float,
     fb_wick_ratio_min: float,
     fb_take_profit_r: float,
@@ -355,7 +330,7 @@ def _run_local_backtest_symbol_replay_worker(
         mode=mode,
         env=env,
         env_file_path=".env",
-        config_path=None,
+        config_path=config_path,
     )
     cache_dir = Path(cache_root)
 
@@ -464,37 +439,95 @@ def _run_local_backtest_symbol_replay_worker(
     strategy_runtime_params = _local_backtest_strategy_runtime_params(
         active_strategy_name=active_strategy_name,
         enabled_alphas_override=enabled_alphas_override,
-        alpha_squeeze_percentile_max=float(alpha_squeeze_percentile_max),
-        alpha_expansion_buffer_bps=float(alpha_expansion_buffer_bps),
-        alpha_expansion_range_atr_min=float(alpha_expansion_range_atr_min),
-        alpha_expansion_body_ratio_min=float(alpha_expansion_body_ratio_min),
-        alpha_expansion_close_location_min=float(alpha_expansion_close_location_min),
-        alpha_expansion_width_expansion_min=float(alpha_expansion_width_expansion_min),
-        alpha_expansion_break_distance_atr_min=float(alpha_expansion_break_distance_atr_min),
-        alpha_expansion_breakout_efficiency_min=float(alpha_expansion_breakout_efficiency_min),
-        alpha_expansion_breakout_stability_score_min=float(
-            alpha_expansion_breakout_stability_score_min
+        alpha_squeeze_percentile_max=(
+            None if alpha_squeeze_percentile_max is None else float(alpha_squeeze_percentile_max)
         ),
-        alpha_expansion_breakout_stability_edge_score_min=float(
-            alpha_expansion_breakout_stability_edge_score_min
+        alpha_expansion_buffer_bps=(
+            None if alpha_expansion_buffer_bps is None else float(alpha_expansion_buffer_bps)
         ),
-        alpha_expansion_quality_score_min=float(alpha_expansion_quality_score_min),
+        alpha_expansion_range_atr_min=(
+            None if alpha_expansion_range_atr_min is None else float(alpha_expansion_range_atr_min)
+        ),
+        alpha_expansion_body_ratio_min=(
+            None if alpha_expansion_body_ratio_min is None else float(alpha_expansion_body_ratio_min)
+        ),
+        alpha_expansion_close_location_min=(
+            None
+            if alpha_expansion_close_location_min is None
+            else float(alpha_expansion_close_location_min)
+        ),
+        alpha_expansion_width_expansion_min=(
+            None
+            if alpha_expansion_width_expansion_min is None
+            else float(alpha_expansion_width_expansion_min)
+        ),
+        alpha_expansion_break_distance_atr_min=(
+            None
+            if alpha_expansion_break_distance_atr_min is None
+            else float(alpha_expansion_break_distance_atr_min)
+        ),
+        alpha_expansion_breakout_efficiency_min=(
+            None
+            if alpha_expansion_breakout_efficiency_min is None
+            else float(alpha_expansion_breakout_efficiency_min)
+        ),
+        alpha_expansion_breakout_stability_score_min=(
+            None
+            if alpha_expansion_breakout_stability_score_min is None
+            else float(alpha_expansion_breakout_stability_score_min)
+        ),
+        alpha_expansion_breakout_stability_edge_score_min=(
+            None
+            if alpha_expansion_breakout_stability_edge_score_min is None
+            else float(alpha_expansion_breakout_stability_edge_score_min)
+        ),
+        alpha_expansion_quality_score_min=(
+            None
+            if alpha_expansion_quality_score_min is None
+            else float(alpha_expansion_quality_score_min)
+        ),
         alpha_expansion_quality_score_v2_min=(
             None
             if alpha_expansion_quality_score_v2_min is None
             else float(alpha_expansion_quality_score_v2_min)
         ),
-        alpha_min_volume_ratio=float(alpha_min_volume_ratio),
-        alpha_take_profit_r=float(alpha_take_profit_r),
-        alpha_time_stop_bars=int(alpha_time_stop_bars),
-        alpha_trend_adx_min_4h=float(alpha_trend_adx_min_4h),
-        alpha_trend_adx_max_4h=float(alpha_trend_adx_max_4h),
-        alpha_trend_adx_rising_lookback_4h=int(alpha_trend_adx_rising_lookback_4h),
-        alpha_trend_adx_rising_min_delta_4h=float(alpha_trend_adx_rising_min_delta_4h),
-        alpha_expected_move_cost_mult=float(alpha_expected_move_cost_mult),
-        drift_side_mode=str(drift_side_mode),
-        drift_take_profit_r=float(drift_take_profit_r),
-        drift_time_stop_bars=int(drift_time_stop_bars),
+        alpha_min_volume_ratio=(
+            None if alpha_min_volume_ratio is None else float(alpha_min_volume_ratio)
+        ),
+        alpha_take_profit_r=(
+            None if alpha_take_profit_r is None else float(alpha_take_profit_r)
+        ),
+        alpha_time_stop_bars=(
+            None if alpha_time_stop_bars is None else int(alpha_time_stop_bars)
+        ),
+        alpha_trend_adx_min_4h=(
+            None if alpha_trend_adx_min_4h is None else float(alpha_trend_adx_min_4h)
+        ),
+        alpha_trend_adx_max_4h=(
+            None if alpha_trend_adx_max_4h is None else float(alpha_trend_adx_max_4h)
+        ),
+        alpha_trend_adx_rising_lookback_4h=(
+            None
+            if alpha_trend_adx_rising_lookback_4h is None
+            else int(alpha_trend_adx_rising_lookback_4h)
+        ),
+        alpha_trend_adx_rising_min_delta_4h=(
+            None
+            if alpha_trend_adx_rising_min_delta_4h is None
+            else float(alpha_trend_adx_rising_min_delta_4h)
+        ),
+        alpha_expected_move_cost_mult=(
+            None
+            if alpha_expected_move_cost_mult is None
+            else float(alpha_expected_move_cost_mult)
+        ),
+        drift_side_mode=None if drift_side_mode is None else str(drift_side_mode),
+        drift_take_profit_r=(
+            None if drift_take_profit_r is None else float(drift_take_profit_r)
+        ),
+        drift_time_stop_bars=(
+            None if drift_time_stop_bars is None else int(drift_time_stop_bars)
+        ),
         fb_failed_break_buffer_bps=float(fb_failed_break_buffer_bps),
         fb_wick_ratio_min=float(fb_wick_ratio_min),
         fb_take_profit_r=float(fb_take_profit_r),
@@ -520,6 +553,7 @@ def _run_local_backtest_symbol_replay_worker(
         profile_name=profile,
         active_strategy_name=active_strategy_name,
         strategy_runtime_params=strategy_runtime_params,
+        config_path=config_path,
     )
     if strategy_runtime_params:
         kernel.set_strategy_runtime_params(**strategy_runtime_params)
@@ -801,6 +835,7 @@ def _run_local_backtest_portfolio_replay(
 def _run_local_backtest(
     cfg: EffectiveConfig,
     *,
+    config_path: str | None,
     symbols: list[str],
     years: int,
     initial_capital: float,
@@ -923,51 +958,74 @@ def _run_local_backtest(
     stoploss_streak_trigger = max(int(stoploss_streak_trigger), 0)
     stoploss_cooldown_bars = max(int(stoploss_cooldown_bars), 0)
     loss_cooldown_bars = max(int(loss_cooldown_bars), 0)
-    alpha_squeeze_percentile_max = min(max(float(alpha_squeeze_percentile_max), 0.05), 0.95)
-    alpha_expansion_buffer_bps = max(float(alpha_expansion_buffer_bps), 0.0)
-    alpha_expansion_range_atr_min = max(float(alpha_expansion_range_atr_min), 0.0)
-    alpha_expansion_body_ratio_min = min(max(float(alpha_expansion_body_ratio_min), 0.0), 1.0)
-    alpha_expansion_close_location_min = min(
-        max(float(alpha_expansion_close_location_min), 0.0),
-        1.0,
-    )
-    alpha_expansion_width_expansion_min = max(float(alpha_expansion_width_expansion_min), 0.0)
-    alpha_expansion_break_distance_atr_min = max(
-        float(alpha_expansion_break_distance_atr_min),
-        0.0,
-    )
-    alpha_expansion_breakout_efficiency_min = max(
-        float(alpha_expansion_breakout_efficiency_min),
-        0.0,
-    )
-    alpha_expansion_breakout_stability_score_min = min(
-        max(float(alpha_expansion_breakout_stability_score_min), 0.0),
-        1.0,
-    )
-    alpha_expansion_breakout_stability_edge_score_min = min(
-        max(float(alpha_expansion_breakout_stability_edge_score_min), 0.0),
-        1.0,
-    )
-    alpha_expansion_quality_score_min = min(
-        max(float(alpha_expansion_quality_score_min), 0.0),
-        1.0,
-    )
+    if alpha_squeeze_percentile_max is not None:
+        alpha_squeeze_percentile_max = min(max(float(alpha_squeeze_percentile_max), 0.05), 0.95)
+    if alpha_expansion_buffer_bps is not None:
+        alpha_expansion_buffer_bps = max(float(alpha_expansion_buffer_bps), 0.0)
+    if alpha_expansion_range_atr_min is not None:
+        alpha_expansion_range_atr_min = max(float(alpha_expansion_range_atr_min), 0.0)
+    if alpha_expansion_body_ratio_min is not None:
+        alpha_expansion_body_ratio_min = min(max(float(alpha_expansion_body_ratio_min), 0.0), 1.0)
+    if alpha_expansion_close_location_min is not None:
+        alpha_expansion_close_location_min = min(
+            max(float(alpha_expansion_close_location_min), 0.0),
+            1.0,
+        )
+    if alpha_expansion_width_expansion_min is not None:
+        alpha_expansion_width_expansion_min = max(float(alpha_expansion_width_expansion_min), 0.0)
+    if alpha_expansion_break_distance_atr_min is not None:
+        alpha_expansion_break_distance_atr_min = max(
+            float(alpha_expansion_break_distance_atr_min),
+            0.0,
+        )
+    if alpha_expansion_breakout_efficiency_min is not None:
+        alpha_expansion_breakout_efficiency_min = max(
+            float(alpha_expansion_breakout_efficiency_min),
+            0.0,
+        )
+    if alpha_expansion_breakout_stability_score_min is not None:
+        alpha_expansion_breakout_stability_score_min = min(
+            max(float(alpha_expansion_breakout_stability_score_min), 0.0),
+            1.0,
+        )
+    if alpha_expansion_breakout_stability_edge_score_min is not None:
+        alpha_expansion_breakout_stability_edge_score_min = min(
+            max(float(alpha_expansion_breakout_stability_edge_score_min), 0.0),
+            1.0,
+        )
+    if alpha_expansion_quality_score_min is not None:
+        alpha_expansion_quality_score_min = min(
+            max(float(alpha_expansion_quality_score_min), 0.0),
+            1.0,
+        )
     if alpha_expansion_quality_score_v2_min is not None:
         alpha_expansion_quality_score_v2_min = min(
             max(float(alpha_expansion_quality_score_v2_min), 0.0),
             1.0,
         )
-    alpha_min_volume_ratio = max(float(alpha_min_volume_ratio), 0.0)
-    alpha_take_profit_r = max(float(alpha_take_profit_r), 0.5)
-    alpha_time_stop_bars = max(int(alpha_time_stop_bars), 1)
-    alpha_trend_adx_min_4h = max(float(alpha_trend_adx_min_4h), 0.0)
-    alpha_trend_adx_max_4h = max(float(alpha_trend_adx_max_4h), 0.0)
-    alpha_trend_adx_rising_lookback_4h = max(int(alpha_trend_adx_rising_lookback_4h), 0)
-    alpha_trend_adx_rising_min_delta_4h = max(
-        float(alpha_trend_adx_rising_min_delta_4h),
-        0.0,
-    )
-    alpha_expected_move_cost_mult = max(float(alpha_expected_move_cost_mult), 0.1)
+    if alpha_min_volume_ratio is not None:
+        alpha_min_volume_ratio = max(float(alpha_min_volume_ratio), 0.0)
+    if alpha_take_profit_r is not None:
+        alpha_take_profit_r = max(float(alpha_take_profit_r), 0.5)
+    if alpha_time_stop_bars is not None:
+        alpha_time_stop_bars = max(int(alpha_time_stop_bars), 1)
+    if alpha_trend_adx_min_4h is not None:
+        alpha_trend_adx_min_4h = max(float(alpha_trend_adx_min_4h), 0.0)
+    if alpha_trend_adx_max_4h is not None:
+        alpha_trend_adx_max_4h = max(float(alpha_trend_adx_max_4h), 0.0)
+    if alpha_trend_adx_rising_lookback_4h is not None:
+        alpha_trend_adx_rising_lookback_4h = max(int(alpha_trend_adx_rising_lookback_4h), 0)
+    if alpha_trend_adx_rising_min_delta_4h is not None:
+        alpha_trend_adx_rising_min_delta_4h = max(
+            float(alpha_trend_adx_rising_min_delta_4h),
+            0.0,
+        )
+    if alpha_expected_move_cost_mult is not None:
+        alpha_expected_move_cost_mult = max(float(alpha_expected_move_cost_mult), 0.1)
+    if drift_take_profit_r is not None:
+        drift_take_profit_r = max(float(drift_take_profit_r), 0.5)
+    if drift_time_stop_bars is not None:
+        drift_time_stop_bars = max(int(drift_time_stop_bars), 1)
     fb_failed_break_buffer_bps = max(float(fb_failed_break_buffer_bps), 0.0)
     fb_wick_ratio_min = max(float(fb_wick_ratio_min), 0.1)
     fb_take_profit_r = max(float(fb_take_profit_r), 0.5)
@@ -995,37 +1053,95 @@ def _run_local_backtest(
     strategy_runtime_params = _local_backtest_strategy_runtime_params(
         active_strategy_name=active_strategy_name,
         enabled_alphas_override=enabled_alphas_override,
-        alpha_squeeze_percentile_max=float(alpha_squeeze_percentile_max),
-        alpha_expansion_buffer_bps=float(alpha_expansion_buffer_bps),
-        alpha_expansion_range_atr_min=float(alpha_expansion_range_atr_min),
-        alpha_expansion_body_ratio_min=float(alpha_expansion_body_ratio_min),
-        alpha_expansion_close_location_min=float(alpha_expansion_close_location_min),
-        alpha_expansion_width_expansion_min=float(alpha_expansion_width_expansion_min),
-        alpha_expansion_break_distance_atr_min=float(alpha_expansion_break_distance_atr_min),
-        alpha_expansion_breakout_efficiency_min=float(alpha_expansion_breakout_efficiency_min),
-        alpha_expansion_breakout_stability_score_min=float(
-            alpha_expansion_breakout_stability_score_min
+        alpha_squeeze_percentile_max=(
+            None if alpha_squeeze_percentile_max is None else float(alpha_squeeze_percentile_max)
         ),
-        alpha_expansion_breakout_stability_edge_score_min=float(
-            alpha_expansion_breakout_stability_edge_score_min
+        alpha_expansion_buffer_bps=(
+            None if alpha_expansion_buffer_bps is None else float(alpha_expansion_buffer_bps)
         ),
-        alpha_expansion_quality_score_min=float(alpha_expansion_quality_score_min),
+        alpha_expansion_range_atr_min=(
+            None if alpha_expansion_range_atr_min is None else float(alpha_expansion_range_atr_min)
+        ),
+        alpha_expansion_body_ratio_min=(
+            None if alpha_expansion_body_ratio_min is None else float(alpha_expansion_body_ratio_min)
+        ),
+        alpha_expansion_close_location_min=(
+            None
+            if alpha_expansion_close_location_min is None
+            else float(alpha_expansion_close_location_min)
+        ),
+        alpha_expansion_width_expansion_min=(
+            None
+            if alpha_expansion_width_expansion_min is None
+            else float(alpha_expansion_width_expansion_min)
+        ),
+        alpha_expansion_break_distance_atr_min=(
+            None
+            if alpha_expansion_break_distance_atr_min is None
+            else float(alpha_expansion_break_distance_atr_min)
+        ),
+        alpha_expansion_breakout_efficiency_min=(
+            None
+            if alpha_expansion_breakout_efficiency_min is None
+            else float(alpha_expansion_breakout_efficiency_min)
+        ),
+        alpha_expansion_breakout_stability_score_min=(
+            None
+            if alpha_expansion_breakout_stability_score_min is None
+            else float(alpha_expansion_breakout_stability_score_min)
+        ),
+        alpha_expansion_breakout_stability_edge_score_min=(
+            None
+            if alpha_expansion_breakout_stability_edge_score_min is None
+            else float(alpha_expansion_breakout_stability_edge_score_min)
+        ),
+        alpha_expansion_quality_score_min=(
+            None
+            if alpha_expansion_quality_score_min is None
+            else float(alpha_expansion_quality_score_min)
+        ),
         alpha_expansion_quality_score_v2_min=(
             None
             if alpha_expansion_quality_score_v2_min is None
             else float(alpha_expansion_quality_score_v2_min)
         ),
-        alpha_min_volume_ratio=float(alpha_min_volume_ratio),
-        alpha_take_profit_r=float(alpha_take_profit_r),
-        alpha_time_stop_bars=int(alpha_time_stop_bars),
-        alpha_trend_adx_min_4h=float(alpha_trend_adx_min_4h),
-        alpha_trend_adx_max_4h=float(alpha_trend_adx_max_4h),
-        alpha_trend_adx_rising_lookback_4h=int(alpha_trend_adx_rising_lookback_4h),
-        alpha_trend_adx_rising_min_delta_4h=float(alpha_trend_adx_rising_min_delta_4h),
-        alpha_expected_move_cost_mult=float(alpha_expected_move_cost_mult),
-        drift_side_mode=str(drift_side_mode),
-        drift_take_profit_r=float(drift_take_profit_r),
-        drift_time_stop_bars=int(drift_time_stop_bars),
+        alpha_min_volume_ratio=(
+            None if alpha_min_volume_ratio is None else float(alpha_min_volume_ratio)
+        ),
+        alpha_take_profit_r=(
+            None if alpha_take_profit_r is None else float(alpha_take_profit_r)
+        ),
+        alpha_time_stop_bars=(
+            None if alpha_time_stop_bars is None else int(alpha_time_stop_bars)
+        ),
+        alpha_trend_adx_min_4h=(
+            None if alpha_trend_adx_min_4h is None else float(alpha_trend_adx_min_4h)
+        ),
+        alpha_trend_adx_max_4h=(
+            None if alpha_trend_adx_max_4h is None else float(alpha_trend_adx_max_4h)
+        ),
+        alpha_trend_adx_rising_lookback_4h=(
+            None
+            if alpha_trend_adx_rising_lookback_4h is None
+            else int(alpha_trend_adx_rising_lookback_4h)
+        ),
+        alpha_trend_adx_rising_min_delta_4h=(
+            None
+            if alpha_trend_adx_rising_min_delta_4h is None
+            else float(alpha_trend_adx_rising_min_delta_4h)
+        ),
+        alpha_expected_move_cost_mult=(
+            None
+            if alpha_expected_move_cost_mult is None
+            else float(alpha_expected_move_cost_mult)
+        ),
+        drift_side_mode=None if drift_side_mode is None else str(drift_side_mode),
+        drift_take_profit_r=(
+            None if drift_take_profit_r is None else float(drift_take_profit_r)
+        ),
+        drift_time_stop_bars=(
+            None if drift_time_stop_bars is None else int(drift_time_stop_bars)
+        ),
         fb_failed_break_buffer_bps=float(fb_failed_break_buffer_bps),
         fb_wick_ratio_min=float(fb_wick_ratio_min),
         fb_take_profit_r=float(fb_take_profit_r),
@@ -1051,7 +1167,11 @@ def _run_local_backtest(
         profile_name=cfg.profile,
         active_strategy_name=active_strategy_name,
         strategy_runtime_params=strategy_runtime_params,
+        config_path=config_path,
     )
+    def _runtime_override(key: str, fallback: Any = None) -> Any:
+        return strategy_runtime_params.get(key, fallback)
+
     effective_alpha_expansion_quality_score_v2_min = float(
         _to_float(strategy_runtime_params.get("expansion_quality_score_v2_min")) or 0.0
     )
@@ -1620,6 +1740,7 @@ def _run_local_backtest(
                 "years": years,
                 "start_ms": start_ms,
                 "end_ms": end_ms,
+                "config_path": config_path,
                 "cache_root": str(cache_root),
                 "sqlite_path": str(sqlite_path),
                 "initial_capital": per_symbol_initial_capital,
@@ -1937,54 +2058,81 @@ def _run_local_backtest(
                 "min_signal_score": round(float(min_signal_score), 6),
                 "reverse_exit_min_profit_pct": round(float(reverse_exit_min_profit_pct), 6),
                 "reverse_exit_min_signal_score": round(float(reverse_exit_min_signal_score), 6),
-                "alpha_squeeze_percentile_max": round(float(alpha_squeeze_percentile_max), 6),
-                "alpha_expansion_buffer_bps": round(float(alpha_expansion_buffer_bps), 6),
-                "alpha_expansion_range_atr_min": round(float(alpha_expansion_range_atr_min), 6),
-                "alpha_expansion_body_ratio_min": round(float(alpha_expansion_body_ratio_min), 6),
+                "alpha_squeeze_percentile_max": round(
+                    float(_runtime_override("squeeze_percentile_threshold", alpha_squeeze_percentile_max) or 0.0),
+                    6,
+                ),
+                "alpha_expansion_buffer_bps": round(
+                    float(_runtime_override("expansion_buffer_bps", alpha_expansion_buffer_bps) or 0.0),
+                    6,
+                ),
+                "alpha_expansion_range_atr_min": round(
+                    float(_runtime_override("expansion_range_atr_min", alpha_expansion_range_atr_min) or 0.0),
+                    6,
+                ),
+                "alpha_expansion_body_ratio_min": round(
+                    float(_runtime_override("expansion_body_ratio_min", alpha_expansion_body_ratio_min) or 0.0),
+                    6,
+                ),
                 "alpha_expansion_close_location_min": round(
-                    float(alpha_expansion_close_location_min),
+                    float(_runtime_override("expansion_close_location_min", alpha_expansion_close_location_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_width_expansion_min": round(
-                    float(alpha_expansion_width_expansion_min),
+                    float(_runtime_override("expansion_width_expansion_min", alpha_expansion_width_expansion_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_break_distance_atr_min": round(
-                    float(alpha_expansion_break_distance_atr_min),
+                    float(_runtime_override("expansion_break_distance_atr_min", alpha_expansion_break_distance_atr_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_breakout_efficiency_min": round(
-                    float(alpha_expansion_breakout_efficiency_min),
+                    float(_runtime_override("expansion_breakout_efficiency_min", alpha_expansion_breakout_efficiency_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_breakout_stability_score_min": round(
-                    float(alpha_expansion_breakout_stability_score_min),
+                    float(_runtime_override("expansion_breakout_stability_score_min", alpha_expansion_breakout_stability_score_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_breakout_stability_edge_score_min": round(
-                    float(alpha_expansion_breakout_stability_edge_score_min),
+                    float(_runtime_override("expansion_breakout_stability_edge_score_min", alpha_expansion_breakout_stability_edge_score_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_quality_score_min": round(
-                    float(alpha_expansion_quality_score_min),
+                    float(_runtime_override("expansion_quality_score_min", alpha_expansion_quality_score_min) or 0.0),
                     6,
                 ),
                 "alpha_expansion_quality_score_v2_min": round(
                     float(effective_alpha_expansion_quality_score_v2_min),
                     6,
                 ),
-                "alpha_min_volume_ratio": round(float(alpha_min_volume_ratio), 6),
-                "alpha_take_profit_r": round(float(alpha_take_profit_r), 6),
-                "alpha_time_stop_bars": int(alpha_time_stop_bars),
-                "alpha_trend_adx_min_4h": round(float(alpha_trend_adx_min_4h), 6),
-                "alpha_trend_adx_max_4h": round(float(alpha_trend_adx_max_4h), 6),
-                "alpha_trend_adx_rising_lookback_4h": int(alpha_trend_adx_rising_lookback_4h),
+                "alpha_min_volume_ratio": round(
+                    float(_runtime_override("min_volume_ratio_15m", alpha_min_volume_ratio) or 0.0),
+                    6,
+                ),
+                "alpha_take_profit_r": round(
+                    float(_runtime_override("take_profit_r", alpha_take_profit_r) or 0.0),
+                    6,
+                ),
+                "alpha_time_stop_bars": int(_runtime_override("time_stop_bars", alpha_time_stop_bars) or 0),
+                "alpha_trend_adx_min_4h": round(
+                    float(_runtime_override("trend_adx_min_4h", alpha_trend_adx_min_4h) or 0.0),
+                    6,
+                ),
+                "alpha_trend_adx_max_4h": round(
+                    float(_runtime_override("trend_adx_max_4h", alpha_trend_adx_max_4h) or 0.0),
+                    6,
+                ),
+                "alpha_trend_adx_rising_lookback_4h": int(
+                    _runtime_override("trend_adx_rising_lookback_4h", alpha_trend_adx_rising_lookback_4h)
+                    or 0
+                ),
                 "alpha_trend_adx_rising_min_delta_4h": round(
-                    float(alpha_trend_adx_rising_min_delta_4h),
+                    float(_runtime_override("trend_adx_rising_min_delta_4h", alpha_trend_adx_rising_min_delta_4h) or 0.0),
                     6,
                 ),
                 "alpha_expected_move_cost_mult": round(
-                    float(alpha_expected_move_cost_mult),
+                    float(_runtime_override("expected_move_cost_mult", alpha_expected_move_cost_mult) or 0.0),
                     6,
                 ),
                 "fb_failed_break_buffer_bps": round(float(fb_failed_break_buffer_bps), 6),

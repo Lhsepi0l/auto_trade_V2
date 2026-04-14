@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from v2.config.loader import EffectiveConfig
 
-LOCAL_BACKTEST_INITIAL_CAPITAL_USDT = 30.0
+LOCAL_BACKTEST_INITIAL_CAPITAL_USDT = 100.0
 _VOL_TARGET_STRATEGIES = frozenset(
     {
         "ra_2026_alpha_v2",
         "ebc_v1_continuation",
     }
 )
-_LEGACY_PORTFOLIO_BACKTEST_STRATEGIES: frozenset[str] = frozenset()
+_LEGACY_PORTFOLIO_BACKTEST_STRATEGIES: frozenset[str] = frozenset(
+    {
+        "ebc_v1_continuation",
+    }
+)
 
 _BASE_INTERVAL_CANDIDATES = ("5m", "10m", "15m", "30m", "1h", "2h", "4h", "12h", "1d")
 

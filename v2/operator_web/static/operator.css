@@ -1360,66 +1360,88 @@ textarea {
   color: var(--text-dark-muted);
 }
 
+.operator-section-dark .event-mainline {
+  color: var(--text-dark-muted);
+}
+
 .activity-card .card-head {
   margin-bottom: 8px;
 }
 
 .activity-card .event-feed-scroll {
-  max-height: 420px;
+  gap: 8px;
+  max-height: min(72vh, 620px);
+  padding-right: 8px;
 }
 
 .activity-card .event-row {
-  gap: 3px;
-  padding: 10px 12px;
-  border-radius: 14px;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 16px;
 }
 
 .activity-card .event-badge {
-  min-height: 22px;
-  padding: 0 8px 0 16px;
-  font-size: 10px;
+  min-height: 24px;
+  padding: 0 10px 0 18px;
+  font-size: 11px;
 }
 
 .activity-card .event-badge::before {
-  left: 7px;
-  width: 4px;
-  height: 4px;
+  left: 8px;
+  width: 5px;
+  height: 5px;
+}
+
+.activity-card .event-copy {
+  gap: 4px;
+}
+
+.activity-card .event-summaryline {
+  display: grid;
+  gap: 3px;
+  align-items: start;
 }
 
 .activity-card .event-title {
-  font-size: 11px;
+  font-size: 14px;
+  line-height: 1.32;
 }
 
 .activity-card .event-mainline {
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.42;
+  -webkit-line-clamp: 2;
 }
 
 .activity-card .event-subline {
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.38;
+  -webkit-line-clamp: 2;
 }
 
 .activity-card .event-time-absolute {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .activity-card .event-time-relative {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .activity-card .event-legend {
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .activity-card .event-legend-item {
-  min-height: 24px;
-  padding: 0 8px 0 16px;
-  font-size: 10px;
+  min-height: 26px;
+  padding: 0 10px 0 18px;
+  font-size: 11px;
 }
 
 .activity-card .event-legend-item::before {
-  left: 7px;
-  width: 4px;
-  height: 4px;
+  left: 8px;
+  width: 5px;
+  height: 5px;
 }
 
 .event-empty {

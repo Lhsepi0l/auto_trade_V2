@@ -32,6 +32,7 @@ class _ReplayDecisionBySymbol:
             "regime",
             "alpha_id",
             "entry_family",
+            "entry_tier",
             "entry_price",
             "risk_per_trade_pct",
             "max_effective_leverage",
@@ -67,6 +68,14 @@ class _ReplayDecisionBySymbol:
                 for key, value in alpha_blocks.items()
                 if str(key).strip() and str(value).strip()
             }
+        indicators = payload.get("indicators")
+        if isinstance(indicators, dict):
+            keep = {}
+            for key in ("volume_ratio_15m", "close_30m", "ema20_30m", "close_1h", "ema20_1h"):
+                if key in indicators:
+                    keep[key] = indicators.get(key)
+            if keep:
+                compact["indicators"] = keep
         return compact
 
     def __call__(self, payload: dict[str, Any]) -> None:

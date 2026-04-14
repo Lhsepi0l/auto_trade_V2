@@ -64,7 +64,7 @@ python -m v2.run \
   --local-backtest \
   --backtest-symbols BTCUSDT,ETHUSDT \
   --backtest-years 3 \
-  --backtest-initial-capital 30 \
+  --backtest-initial-capital 100 \
   --backtest-fee-bps 4.0 \
   --backtest-slippage-bps 2.0 \
   --backtest-funding-bps-8h 0.5 \

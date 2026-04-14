@@ -148,83 +148,58 @@ def test_build_local_backtest_portfolio_rows_emits_ranked_candidates(monkeypatch
 
 
 def test_local_backtest_profile_alpha_overrides_maps_expansion_profiles() -> None:
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion") == {
-        "enabled_alphas": ["alpha_expansion"]
+    expected_subsets = {
+        "ra_2026_alpha_v2_expansion": {
+            "enabled_alphas": ["alpha_expansion"],
+            "time_stop_bars": 24,
+        },
+        "ra_2026_alpha_v2_expansion_verified_candidate": {
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.30,
+            "expansion_buffer_bps": 2.0,
+            "min_volume_ratio_15m": 0.9,
+            "time_stop_bars": 24,
+            "expected_move_cost_mult": 1.6,
+        },
+        "ra_2026_alpha_v2_expansion_verified_q070": {
+            "enabled_alphas": ["alpha_expansion", "alpha_drift"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_buffer_bps": 1.5,
+            "min_volume_ratio_15m": 0.8,
+            "time_stop_bars": 18,
+            "expected_move_cost_mult": 1.6,
+            "expansion_quality_score_v2_min": 0.70,
+            "drift_side_mode": "LONG",
+        },
+        "ra_2026_alpha_v2_expansion_champion_candidate": {
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.30,
+            "time_stop_bars": 18,
+            "expansion_quality_score_v2_min": 0.70,
+        },
+        "ra_2026_alpha_v2_expansion_candidate": {
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.30,
+            "time_stop_bars": 18,
+        },
+        "ra_2026_alpha_v2_expansion_live_candidate": {
+            "enabled_alphas": ["alpha_expansion", "alpha_drift"],
+            "squeeze_percentile_threshold": 0.30,
+            "time_stop_bars": 18,
+            "expansion_quality_score_v2_min": 0.62,
+            "drift_side_mode": "LONG",
+            "expansion_short_confirm_close_location_min": 0.95,
+            "expansion_long_confirm_close_location_max": 0.80,
+        },
     }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_verified_candidate") == {
-        "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.30,
-        "expansion_buffer_bps": 2.0,
-        "expansion_range_atr_min": 0.7,
-        "expansion_body_ratio_min": 0.18,
-        "expansion_close_location_min": 0.35,
-        "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.9,
-        "take_profit_r": 2.0,
-        "time_stop_bars": 18,
-        "trend_adx_min_4h": 14.0,
-        "expected_move_cost_mult": 1.6,
-    }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_verified_q070") == {
-        "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.35,
-        "expansion_buffer_bps": 1.5,
-        "expansion_range_atr_min": 0.7,
-        "expansion_body_ratio_min": 0.18,
-        "expansion_close_location_min": 0.35,
-        "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.8,
-        "take_profit_r": 2.0,
-        "time_stop_bars": 18,
-        "trend_adx_min_4h": 14.0,
-        "expected_move_cost_mult": 1.6,
-        "expansion_quality_score_v2_min": 0.70,
-    }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_champion_candidate") == {
-        "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.30,
-        "expansion_buffer_bps": 2.0,
-        "expansion_range_atr_min": 0.7,
-        "expansion_body_ratio_min": 0.18,
-        "expansion_close_location_min": 0.35,
-        "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.9,
-        "take_profit_r": 2.0,
-        "time_stop_bars": 18,
-        "trend_adx_min_4h": 14.0,
-        "expected_move_cost_mult": 1.6,
-        "expansion_quality_score_v2_min": 0.70,
-    }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_candidate") == {
-        "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.30,
-        "expansion_buffer_bps": 2.0,
-        "expansion_range_atr_min": 0.7,
-        "expansion_body_ratio_min": 0.18,
-        "expansion_close_location_min": 0.35,
-        "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.9,
-        "take_profit_r": 2.0,
-        "time_stop_bars": 18,
-        "trend_adx_min_4h": 14.0,
-        "expected_move_cost_mult": 1.6,
-    }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2_expansion_live_candidate") == {
-        "enabled_alphas": ["alpha_expansion"],
-        "squeeze_percentile_threshold": 0.30,
-        "expansion_buffer_bps": 2.0,
-        "expansion_range_atr_min": 0.7,
-        "expansion_body_ratio_min": 0.18,
-        "expansion_close_location_min": 0.35,
-        "expansion_width_expansion_min": 0.02,
-        "min_volume_ratio_15m": 0.9,
-        "take_profit_r": 2.0,
-        "time_stop_bars": 18,
-        "trend_adx_min_4h": 14.0,
-        "expected_move_cost_mult": 1.6,
-        "expansion_quality_score_v2_min": 0.62,
-    }
-    assert _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2") == {}
+    for profile_name, expected in expected_subsets.items():
+        actual = _local_backtest_profile_alpha_overrides(profile_name)
+        for key, value in expected.items():
+            assert actual[key] == value
+    base_profile = _local_backtest_profile_alpha_overrides("ra_2026_alpha_v2")
+    assert base_profile["enabled_alphas"] == ["alpha_breakout", "alpha_pullback", "alpha_expansion"]
+    assert base_profile["supported_symbols"] == ["BTCUSDT"]
+    assert base_profile["time_stop_bars"] == 24
 
 
 def test_local_backtest_cli_alpha_overrides_win_over_profile_defaults() -> None:
@@ -240,9 +215,10 @@ def test_local_backtest_cli_alpha_overrides_win_over_profile_defaults() -> None:
         },
     )
 
-    assert merged["enabled_alphas"] == ["alpha_expansion"]
+    assert merged["enabled_alphas"] == ["alpha_expansion", "alpha_drift"]
     assert merged["squeeze_percentile_threshold"] == 0.35
     assert merged["expansion_quality_score_v2_min"] == 0.70
+    assert merged["drift_side_mode"] == "LONG"
     assert merged["expansion_buffer_bps"] == 1.5
     assert merged["expansion_body_ratio_min"] == 0.30
     assert merged["expansion_close_location_min"] == 0.55

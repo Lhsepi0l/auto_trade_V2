@@ -165,6 +165,46 @@ async def test_live_leg_fill_cancels_counterpart_and_cleans(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_live_leg_fill_cancels_counterpart_with_algo_id_only_open_order(
+    tmp_path: Path,
+) -> None:
+    class _AlgoIdOnlyCounterpartREST(_FakeAlgoREST):
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            self.cancel_calls.append(dict(params))
+            if params.get("algoId") == 9002:
+                self.open_orders = []
+                return {"msg": "success"}
+            raise RuntimeError("client_algo_cancel_rejected")
+
+    store = _storage(tmp_path)
+    rest = _AlgoIdOnlyCounterpartREST()
+    service = BracketService(
+        planner=BracketPlanner(cfg=BracketConfig()),
+        storage=store,
+        rest_client=rest,
+        mode="live",
+    )
+
+    created = await service.create_and_place(
+        symbol="BTCUSDT",
+        entry_side="BUY",
+        position_side="BOTH",
+        entry_price=100.0,
+        quantity=0.01,
+    )
+    rest.open_orders = [{"symbol": "BTCUSDT", "algoId": 9002}]
+
+    tp_id = str(created["planned"]["tp_client_algo_id"])
+    await service.on_leg_filled(symbol="BTCUSDT", filled_client_algo_id=tp_id)
+
+    assert any(call.get("algoId") == 9002 for call in rest.cancel_calls)
+    rows = store.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+    assert rows[0]["tp_order_client_id"] is None
+    assert rows[0]["sl_order_client_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_live_create_and_place_cleans_partial_leg_when_second_order_fails(
     tmp_path: Path,
 ) -> None:
@@ -237,6 +277,40 @@ async def test_cleanup_if_flat_cancels_all_open_algo_orders_for_symbol(tmp_path:
 
     canceled_ids = {str(call.get("clientAlgoId") or "") for call in rest.cancel_calls}
     assert {tp_id, sl_id, "x-extra"}.issubset(canceled_ids)
+    rows = store.list_bracket_states()
+    assert rows[0]["state"] == "CLEANED"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_if_flat_cancels_algo_id_only_open_order(tmp_path: Path) -> None:
+    class _AlgoIdOnlyOpenOrderREST(_FakeAlgoREST):
+        async def cancel_algo_order(self, *, params: dict[str, Any]) -> dict[str, Any]:
+            self.cancel_calls.append(dict(params))
+            if params.get("algoId") == 9101:
+                self.open_orders = []
+                return {"msg": "success"}
+            raise RuntimeError("client_algo_cancel_rejected")
+
+    store = _storage(tmp_path)
+    rest = _AlgoIdOnlyOpenOrderREST()
+    service = BracketService(
+        planner=BracketPlanner(cfg=BracketConfig()),
+        storage=store,
+        rest_client=rest,
+        mode="live",
+    )
+    await service.create_and_place(
+        symbol="BTCUSDT",
+        entry_side="BUY",
+        position_side="BOTH",
+        entry_price=100.0,
+        quantity=0.01,
+    )
+    rest.open_orders = [{"symbol": "BTCUSDT", "algoId": 9101}]
+
+    await service.cleanup_if_flat(symbol="BTCUSDT", position_amt=0.0)
+
+    assert any(call.get("algoId") == 9101 for call in rest.cancel_calls)
     rows = store.list_bracket_states()
     assert rows[0]["state"] == "CLEANED"
 

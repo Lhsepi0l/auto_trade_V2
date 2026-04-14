@@ -10,7 +10,7 @@ from v2.run import (
 def test_local_backtest_initial_capital_is_hard_locked() -> None:
     assert _locked_local_backtest_initial_capital(1.0) == LOCAL_BACKTEST_INITIAL_CAPITAL_USDT
     assert _locked_local_backtest_initial_capital(9999.0) == LOCAL_BACKTEST_INITIAL_CAPITAL_USDT
-    assert _locked_local_backtest_initial_capital(None) == 30.0
+    assert _locked_local_backtest_initial_capital(None) == 100.0
 
 
 def test_markdown_includes_english_initial_capital_line(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -19,11 +19,11 @@ def test_markdown_includes_english_initial_capital_line(tmp_path) -> None:  # ty
         "backtest": {
             "symbols": ["BTCUSDT", "ETHUSDT"],
             "years": 3,
-            "initial_capital_usdt": 30.0,
+            "initial_capital_usdt": 100.0,
         },
         "summary": {
-            "total_initial_capital": 30.0,
-            "total_final_equity": 31.0,
+            "total_initial_capital": 100.0,
+            "total_final_equity": 101.0,
             "total_net_profit": 1.0,
             "gross_trade_pnl": 1.2,
             "gross_profit": 2.0,
@@ -44,4 +44,4 @@ def test_markdown_includes_english_initial_capital_line(tmp_path) -> None:  # ty
     target.write_text("{}", encoding="utf-8")
     md_path = _write_local_backtest_markdown(report_payload=payload, target_json=target)
     rendered = md_path.read_text(encoding="utf-8")
-    assert "Initial Capital (USDT): 30.00" in rendered
+    assert "Initial Capital (USDT): 100.00" in rendered

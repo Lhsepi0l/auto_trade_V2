@@ -40,6 +40,17 @@ class RA2026AlphaV2Params:
     expansion_close_location_min: float = 0.0
     expansion_width_expansion_min: float = 0.0
     expansion_break_distance_atr_min: float = 0.0
+    expansion_long_break_distance_atr_max: float = 1.1
+    expansion_retest_band_atr_mult: float = 0.35
+    expansion_strong_immediate_body_ratio_min: float = 0.55
+    expansion_strong_immediate_close_location_min: float = 0.72
+    expansion_strong_immediate_quality_score_v2_min: float = 0.72
+    expansion_strong_immediate_breakout_distance_atr_max: float = 0.85
+    expansion_strong_immediate_require_regime_alignment: bool = False
+    expansion_strong_immediate_side_mode: str = "BOTH"
+    expansion_short_confirm_break_distance_atr_min: float = 0.0
+    expansion_short_confirm_close_location_min: float = 0.0
+    expansion_long_confirm_close_location_max: float = 1.0
     expansion_short_break_distance_atr_max: float = 0.0
     expansion_breakout_efficiency_min: float = 0.0
     expansion_breakout_stability_score_min: float = 0.0
@@ -124,6 +135,17 @@ class RA2026AlphaV2Params:
             except (TypeError, ValueError):
                 return float(default)
 
+        def _b(name: str, default: bool) -> bool:
+            value = source.get(name, default)
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "y", "on"}:
+                return True
+            if text in {"0", "false", "no", "n", "off"}:
+                return False
+            return bool(default)
+
         def _symbols(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
             raw_symbols = source.get(name, default)
             if isinstance(raw_symbols, str):
@@ -186,6 +208,21 @@ class RA2026AlphaV2Params:
             expansion_close_location_min=min(max(_f("expansion_close_location_min", cls.expansion_close_location_min), 0.0), 1.0),
             expansion_width_expansion_min=max(_f("expansion_width_expansion_min", cls.expansion_width_expansion_min), 0.0),
             expansion_break_distance_atr_min=max(_f("expansion_break_distance_atr_min", cls.expansion_break_distance_atr_min), 0.0),
+            expansion_long_break_distance_atr_max=max(_f("expansion_long_break_distance_atr_max", cls.expansion_long_break_distance_atr_max), 0.0),
+            expansion_retest_band_atr_mult=max(_f("expansion_retest_band_atr_mult", cls.expansion_retest_band_atr_mult), 0.0),
+            expansion_strong_immediate_body_ratio_min=min(max(_f("expansion_strong_immediate_body_ratio_min", cls.expansion_strong_immediate_body_ratio_min), 0.0), 1.0),
+            expansion_strong_immediate_close_location_min=min(max(_f("expansion_strong_immediate_close_location_min", cls.expansion_strong_immediate_close_location_min), 0.0), 1.0),
+            expansion_strong_immediate_quality_score_v2_min=min(max(_f("expansion_strong_immediate_quality_score_v2_min", cls.expansion_strong_immediate_quality_score_v2_min), 0.0), 1.0),
+            expansion_strong_immediate_breakout_distance_atr_max=max(_f("expansion_strong_immediate_breakout_distance_atr_max", cls.expansion_strong_immediate_breakout_distance_atr_max), 0.0),
+            expansion_strong_immediate_require_regime_alignment=_b("expansion_strong_immediate_require_regime_alignment", cls.expansion_strong_immediate_require_regime_alignment),
+            expansion_strong_immediate_side_mode=(
+                str(source.get("expansion_strong_immediate_side_mode", cls.expansion_strong_immediate_side_mode)).strip().upper()
+                if str(source.get("expansion_strong_immediate_side_mode", cls.expansion_strong_immediate_side_mode)).strip().upper() in {"BOTH", "LONG", "SHORT"}
+                else str(cls.expansion_strong_immediate_side_mode)
+            ),
+            expansion_short_confirm_break_distance_atr_min=max(_f("expansion_short_confirm_break_distance_atr_min", cls.expansion_short_confirm_break_distance_atr_min), 0.0),
+            expansion_short_confirm_close_location_min=min(max(_f("expansion_short_confirm_close_location_min", cls.expansion_short_confirm_close_location_min), 0.0), 1.0),
+            expansion_long_confirm_close_location_max=min(max(_f("expansion_long_confirm_close_location_max", cls.expansion_long_confirm_close_location_max), 0.0), 1.0),
             expansion_short_break_distance_atr_max=max(_f("expansion_short_break_distance_atr_max", cls.expansion_short_break_distance_atr_max), 0.0),
             expansion_breakout_efficiency_min=max(_f("expansion_breakout_efficiency_min", cls.expansion_breakout_efficiency_min), 0.0),
             expansion_breakout_stability_score_min=min(max(_f("expansion_breakout_stability_score_min", cls.expansion_breakout_stability_score_min), 0.0), 1.0),

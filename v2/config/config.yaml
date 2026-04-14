@@ -58,6 +58,17 @@ base:
         squeeze_percentile_threshold: 0.40
         pullback_touch_atr_mult: 0.40
         expansion_range_atr_min: 1.0
+        expansion_long_break_distance_atr_max: 1.1
+        expansion_retest_band_atr_mult: 0.35
+        expansion_strong_immediate_body_ratio_min: 0.55
+        expansion_strong_immediate_close_location_min: 0.72
+        expansion_strong_immediate_quality_score_v2_min: 0.72
+        expansion_strong_immediate_breakout_distance_atr_max: 0.85
+        expansion_strong_immediate_require_regime_alignment: false
+        expansion_strong_immediate_side_mode: BOTH
+        expansion_short_confirm_break_distance_atr_min: 0.0
+        expansion_short_confirm_close_location_min: 0.0
+        expansion_long_confirm_close_location_max: 1.0
         taker_fee: 0.0006
         slippage_bps: 2.0
         max_spread_bps: 8.0
@@ -126,6 +137,17 @@ profiles:
           squeeze_percentile_threshold: 0.40
           pullback_touch_atr_mult: 0.40
           expansion_range_atr_min: 1.0
+          expansion_long_break_distance_atr_max: 1.1
+          expansion_retest_band_atr_mult: 0.35
+          expansion_strong_immediate_body_ratio_min: 0.55
+          expansion_strong_immediate_close_location_min: 0.72
+          expansion_strong_immediate_quality_score_v2_min: 0.72
+          expansion_strong_immediate_breakout_distance_atr_max: 0.85
+          expansion_strong_immediate_require_regime_alignment: false
+          expansion_strong_immediate_side_mode: BOTH
+          expansion_short_confirm_break_distance_atr_min: 0.0
+          expansion_short_confirm_close_location_min: 0.0
+          expansion_long_confirm_close_location_max: 1.0
           taker_fee: 0.0006
           slippage_bps: 2.0
           max_spread_bps: 8.0
@@ -164,7 +186,7 @@ profiles:
           expansion_width_expansion_min: 0.02
           min_volume_ratio_15m: 0.9
           take_profit_r: 2.0
-          time_stop_bars: 18
+          time_stop_bars: 24
           trend_adx_min_4h: 14.0
           expected_move_cost_mult: 1.6
   ra_2026_alpha_v2_expansion_verified_q070:
@@ -258,6 +280,13 @@ profiles:
           expected_move_cost_mult: 1.6
           expansion_quality_score_v2_min: 0.62
           expansion_short_break_distance_atr_max: 1.3
+          expansion_strong_immediate_quality_score_v2_min: 0.75
+          expansion_strong_immediate_breakout_distance_atr_max: 0.80
+          expansion_strong_immediate_require_regime_alignment: true
+          expansion_strong_immediate_side_mode: LONG
+          expansion_short_confirm_break_distance_atr_min: 0.80
+          expansion_short_confirm_close_location_min: 0.95
+          expansion_long_confirm_close_location_max: 0.80
           drift_side_mode: LONG
           drift_range_atr_min: 1.2
           drift_body_ratio_min: 0.5
@@ -286,7 +315,7 @@ profiles:
       - name: ebc_v1_continuation
         enabled: true
         params:
-          supported_symbols: [BTCUSDT]
+          supported_symbols: [BTCUSDT, ETHUSDT]
           side_mode: SHORT
           ema_period_12h: 50
           ema_period_2h: 34
@@ -298,8 +327,48 @@ profiles:
           cci_period_5m: 20
           cci_pullback_floor: 0.0
           cci_trigger_level: 50.0
+          bias_max_distance_frac_2h: 0.012
+          bias_cci_extreme_cap: 180.0
           squeeze_width_frac_max: 0.020
           stop_loss_pct: 0.006
           take_profit_r: 1.8
           time_stop_bars: 24
-          min_entry_score: 0.79
+          min_entry_score: 0.62
+          risk_per_trade_pct: 0.010
+          max_effective_leverage: 5.0
+          stop_exit_cooldown_bars: 18
+          profit_exit_cooldown_bars: 0
+          regime_min_slope_12h: 0.0002
+          bias_min_slope_2h: 0.0004
+          squeeze_lookback_30m: 48
+          squeeze_percentile_threshold_30m: 0.35
+          reexpand_ratio_min_30m: 1.10
+          recent_pullback_lookback_30m: 8
+          trigger_cross_lookback_5m: 4
+          trigger_max_chase_frac_5m: 0.0025
+          trigger_cci_reset_level: 0.0
+          band_location_min_long: 0.55
+          band_location_max_long: 0.92
+          band_location_min_short: 0.08
+          band_location_max_short: 0.45
+          max_extension_risk: 0.58
+          progress_check_bars: 6
+          progress_min_mfe_r: 0.45
+          progress_extend_trigger_r: 0.95
+          progress_extend_bars: 8
+          selective_extension_proof_bars: 8
+          selective_extension_min_mfe_r: 0.95
+          selective_extension_min_regime_strength: 0.60
+          selective_extension_min_bias_strength: 0.55
+          selective_extension_min_quality_score_v2: 0.72
+          selective_extension_time_stop_bars: 32
+          selective_extension_take_profit_r: 2.2
+          selective_extension_move_stop_to_be_at_r: 1.0
+          stalled_trend_timeout_bars: 10
+          stalled_volume_ratio_floor: 0.90
+          volume_sma_period_5m: 20
+          rotation_regime_weight: 0.20
+          rotation_bias_weight: 0.15
+          rotation_trigger_weight: 0.10
+          rotation_relative_weight: 0.20
+          rotation_extension_penalty_weight: 0.12

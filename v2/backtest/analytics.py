@@ -38,6 +38,7 @@ class _OpenTrade:
     profit_exit_cooldown_bars: int = 0
     alpha_id: str | None = None
     entry_family: str | None = None
+    entry_tier: str | None = None
     regime_lost_exit_required: bool = False
     tp_partial_ratio: float = 0.0
     tp_partial_price: float | None = None

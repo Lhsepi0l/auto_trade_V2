@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from v2.operator.actions import wrap_operator_action
@@ -14,6 +15,9 @@ from v2.operator.universe_scoring import parse_universe_symbols, validate_scorin
 
 if TYPE_CHECKING:
     from v2.control.api import RuntimeController
+
+
+logger = logging.getLogger(__name__)
 
 
 class OperatorService:
@@ -146,13 +150,23 @@ class OperatorService:
         sub_text: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self._controller._log_event(
-            "client_log",
-            category=str(category or "action"),
-            title=str(title or "client_log"),
-            main_text=str(main_text or ""),
-            sub_text=sub_text,
-            client_context=dict(context or {}),
+        normalized_category = str(category or "action").strip().lower() or "action"
+        normalized_title = str(title or "client_log").strip() or "client_log"
+        normalized_main_text = str(main_text or "").strip()
+        normalized_sub_text = str(sub_text or "").strip() or None
+        normalized_context = dict(context or {})
+        level = logging.WARNING if any(
+            token in f"{normalized_title} {normalized_main_text}".lower()
+            for token in ("error", "failed", "exception", "rejection", "timeout", "denied", "blocked", "missing")
+        ) else logging.INFO
+        logger.log(
+            level,
+            "operator_client_log category=%s title=%s main_text=%s sub_text=%s context=%s",
+            normalized_category,
+            normalized_title,
+            normalized_main_text or "-",
+            normalized_sub_text or "-",
+            normalized_context if normalized_context else {},
         )
         return wrap_operator_action(
             action="client_log",
@@ -492,6 +506,7 @@ class OperatorService:
             category=category,
             query=query,
             offset=offset,
+            exclude_event_types=("client_log",),
         )
 
     def count_operator_events(
@@ -503,4 +518,5 @@ class OperatorService:
         return self._controller.state_store.runtime_storage().count_operator_events(
             category=category,
             query=query,
+            exclude_event_types=("client_log",),
         )

@@ -133,6 +133,8 @@ def record_recent_block(controller: Any, reason: str) -> None:
 def refresh_runtime_risk_context(controller: Any) -> None:
     state = controller.state_store.get()
     today = datetime.now(timezone.utc).date().isoformat()
+    if str(controller._risk.get("risk_day") or "") != today:
+        controller._risk["daily_trade_entry_counts"] = {}
     _symbols, _mapping, effective_margin, _leverage, _expected_notional = runtime_budget_context(controller)
     capital_base = max(float(effective_margin), 1e-9)
     live_equity_basis_ok = controller.cfg.mode != "live"
@@ -224,6 +226,22 @@ def refresh_runtime_risk_context(controller: Any) -> None:
     controller._risk["runtime_equity_peak_usdt"] = float(equity_peak)
     if not isinstance(controller._risk.get("recent_blocks"), dict):
         controller._risk["recent_blocks"] = {}
+    if not isinstance(controller._risk.get("daily_trade_entry_counts"), dict):
+        controller._risk["daily_trade_entry_counts"] = {}
+
+
+def record_daily_entry(controller: Any, *, symbol: str) -> None:
+    symbol_u = str(symbol or "").strip().upper()
+    if not symbol_u:
+        return
+    today = datetime.now(timezone.utc).date().isoformat()
+    if str(controller._risk.get("risk_day") or "") != today:
+        controller._risk["risk_day"] = today
+        controller._risk["daily_trade_entry_counts"] = {}
+    counts_raw = controller._risk.get("daily_trade_entry_counts")
+    counts = dict(counts_raw) if isinstance(counts_raw, dict) else {}
+    counts[symbol_u] = int(_to_float(counts.get(symbol_u), default=0.0)) + 1
+    controller._risk["daily_trade_entry_counts"] = counts
 
 
 def maybe_apply_auto_risk_circuit(controller: Any, cycle: KernelCycleResult) -> None:

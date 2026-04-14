@@ -1313,6 +1313,7 @@ def _run_local_backtest(*args, **kwargs):
             "drift_time_stop_bars",
             int(params.get("drift_time_stop_bars") or 16),
         )
+        kwargs.setdefault("config_path", None)
     return _lazy_impl("v2.backtest.local_runner", "_run_local_backtest")(*args, **kwargs)
 
 
@@ -1535,6 +1536,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return _run_local_backtest(
             effective,
+            config_path=args.config,
             symbols=_parse_symbols(args.backtest_symbols),
             years=max(int(args.backtest_years), 0),
             initial_capital=float(args.backtest_initial_capital),
@@ -1565,51 +1567,121 @@ def main(argv: Sequence[str] | None = None) -> int:
             stoploss_streak_trigger=int(args.backtest_stoploss_streak_trigger),
             stoploss_cooldown_bars=int(args.backtest_stoploss_cooldown_bars),
             loss_cooldown_bars=int(args.backtest_loss_cooldown_bars),
-            alpha_squeeze_percentile_max=float(args.backtest_alpha_squeeze_percentile_max),
-            alpha_expansion_buffer_bps=float(args.backtest_alpha_expansion_buffer_bps),
-            alpha_expansion_range_atr_min=float(args.backtest_alpha_expansion_range_atr_min),
-            alpha_expansion_body_ratio_min=float(args.backtest_alpha_expansion_body_ratio_min),
-            alpha_expansion_close_location_min=float(
-                args.backtest_alpha_expansion_close_location_min
+            alpha_squeeze_percentile_max=(
+                None
+                if args.backtest_alpha_squeeze_percentile_max is None
+                else float(args.backtest_alpha_squeeze_percentile_max)
             ),
-            alpha_expansion_width_expansion_min=float(
-                args.backtest_alpha_expansion_width_expansion_min
+            alpha_expansion_buffer_bps=(
+                None
+                if args.backtest_alpha_expansion_buffer_bps is None
+                else float(args.backtest_alpha_expansion_buffer_bps)
             ),
-            alpha_expansion_break_distance_atr_min=float(
-                args.backtest_alpha_expansion_break_distance_atr_min
+            alpha_expansion_range_atr_min=(
+                None
+                if args.backtest_alpha_expansion_range_atr_min is None
+                else float(args.backtest_alpha_expansion_range_atr_min)
             ),
-            alpha_expansion_breakout_efficiency_min=float(
-                args.backtest_alpha_expansion_breakout_efficiency_min
+            alpha_expansion_body_ratio_min=(
+                None
+                if args.backtest_alpha_expansion_body_ratio_min is None
+                else float(args.backtest_alpha_expansion_body_ratio_min)
             ),
-            alpha_expansion_breakout_stability_score_min=float(
-                args.backtest_alpha_expansion_breakout_stability_score_min
+            alpha_expansion_close_location_min=(
+                None
+                if args.backtest_alpha_expansion_close_location_min is None
+                else float(args.backtest_alpha_expansion_close_location_min)
             ),
-            alpha_expansion_breakout_stability_edge_score_min=float(
-                args.backtest_alpha_expansion_breakout_stability_edge_score_min
+            alpha_expansion_width_expansion_min=(
+                None
+                if args.backtest_alpha_expansion_width_expansion_min is None
+                else float(args.backtest_alpha_expansion_width_expansion_min)
             ),
-            alpha_expansion_quality_score_min=float(
-                args.backtest_alpha_expansion_quality_score_min
+            alpha_expansion_break_distance_atr_min=(
+                None
+                if args.backtest_alpha_expansion_break_distance_atr_min is None
+                else float(args.backtest_alpha_expansion_break_distance_atr_min)
+            ),
+            alpha_expansion_breakout_efficiency_min=(
+                None
+                if args.backtest_alpha_expansion_breakout_efficiency_min is None
+                else float(args.backtest_alpha_expansion_breakout_efficiency_min)
+            ),
+            alpha_expansion_breakout_stability_score_min=(
+                None
+                if args.backtest_alpha_expansion_breakout_stability_score_min is None
+                else float(args.backtest_alpha_expansion_breakout_stability_score_min)
+            ),
+            alpha_expansion_breakout_stability_edge_score_min=(
+                None
+                if args.backtest_alpha_expansion_breakout_stability_edge_score_min is None
+                else float(args.backtest_alpha_expansion_breakout_stability_edge_score_min)
+            ),
+            alpha_expansion_quality_score_min=(
+                None
+                if args.backtest_alpha_expansion_quality_score_min is None
+                else float(args.backtest_alpha_expansion_quality_score_min)
             ),
             alpha_expansion_quality_score_v2_min=(
                 None
                 if args.backtest_alpha_expansion_quality_score_v2_min is None
                 else float(args.backtest_alpha_expansion_quality_score_v2_min)
             ),
-            alpha_min_volume_ratio=float(args.backtest_alpha_min_volume_ratio),
-            alpha_take_profit_r=float(args.backtest_alpha_take_profit_r),
-            alpha_time_stop_bars=int(args.backtest_alpha_time_stop_bars),
-            alpha_trend_adx_min_4h=float(args.backtest_alpha_trend_adx_min_4h),
-            alpha_trend_adx_max_4h=float(args.backtest_alpha_trend_adx_max_4h),
-            alpha_trend_adx_rising_lookback_4h=int(
-                args.backtest_alpha_trend_adx_rising_lookback_4h
+            alpha_min_volume_ratio=(
+                None
+                if args.backtest_alpha_min_volume_ratio is None
+                else float(args.backtest_alpha_min_volume_ratio)
             ),
-            alpha_trend_adx_rising_min_delta_4h=float(
-                args.backtest_alpha_trend_adx_rising_min_delta_4h
+            alpha_take_profit_r=(
+                None
+                if args.backtest_alpha_take_profit_r is None
+                else float(args.backtest_alpha_take_profit_r)
             ),
-            alpha_expected_move_cost_mult=float(args.backtest_alpha_expected_move_cost_mult),
-            drift_side_mode=str(args.backtest_drift_side_mode),
-            drift_take_profit_r=float(args.backtest_drift_take_profit_r),
-            drift_time_stop_bars=int(args.backtest_drift_time_stop_bars),
+            alpha_time_stop_bars=(
+                None
+                if args.backtest_alpha_time_stop_bars is None
+                else int(args.backtest_alpha_time_stop_bars)
+            ),
+            alpha_trend_adx_min_4h=(
+                None
+                if args.backtest_alpha_trend_adx_min_4h is None
+                else float(args.backtest_alpha_trend_adx_min_4h)
+            ),
+            alpha_trend_adx_max_4h=(
+                None
+                if args.backtest_alpha_trend_adx_max_4h is None
+                else float(args.backtest_alpha_trend_adx_max_4h)
+            ),
+            alpha_trend_adx_rising_lookback_4h=(
+                None
+                if args.backtest_alpha_trend_adx_rising_lookback_4h is None
+                else int(args.backtest_alpha_trend_adx_rising_lookback_4h)
+            ),
+            alpha_trend_adx_rising_min_delta_4h=(
+                None
+                if args.backtest_alpha_trend_adx_rising_min_delta_4h is None
+                else float(args.backtest_alpha_trend_adx_rising_min_delta_4h)
+            ),
+            alpha_expected_move_cost_mult=(
+                None
+                if args.backtest_alpha_expected_move_cost_mult is None
+                else float(args.backtest_alpha_expected_move_cost_mult)
+            ),
+            drift_side_mode=(
+                None
+                if args.backtest_drift_side_mode is None
+                else str(args.backtest_drift_side_mode)
+            ),
+            drift_take_profit_r=(
+                None
+                if args.backtest_drift_take_profit_r is None
+                else float(args.backtest_drift_take_profit_r)
+            ),
+            drift_time_stop_bars=(
+                None
+                if args.backtest_drift_time_stop_bars is None
+                else int(args.backtest_drift_time_stop_bars)
+            ),
             fb_failed_break_buffer_bps=float(args.backtest_fb_failed_break_buffer_bps),
             fb_wick_ratio_min=float(args.backtest_fb_wick_ratio_min),
             fb_take_profit_r=float(args.backtest_fb_take_profit_r),

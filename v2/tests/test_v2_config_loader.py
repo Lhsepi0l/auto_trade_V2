@@ -113,9 +113,13 @@ def test_ebc_research_profile_loads() -> None:
     enabled = [entry for entry in cfg.behavior.strategies if entry.enabled]
     assert [entry.name for entry in enabled] == ["ebc_v1_continuation"]
     assert cfg.behavior.exchange.market_intervals == ["5m", "30m", "2h", "12h"]
+    assert enabled[0].params["supported_symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert enabled[0].params["side_mode"] == "SHORT"
     assert enabled[0].params["cci_pullback_floor"] == 0.0
     assert enabled[0].params["cci_trigger_level"] == 50.0
     assert enabled[0].params["squeeze_width_frac_max"] == 0.020
+    assert enabled[0].params["risk_per_trade_pct"] == 0.010
+    assert enabled[0].params["max_effective_leverage"] == 5.0
 
 
 def test_shadow_mode_does_not_require_keys() -> None:

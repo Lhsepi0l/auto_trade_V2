@@ -660,6 +660,7 @@ class RuntimeStorage:
         category: str | None = None,
         query: str | None = None,
         offset: int = 0,
+        exclude_event_types: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -667,6 +668,15 @@ class RuntimeStorage:
         if normalized_category:
             clauses.append("category = ?")
             params.append(normalized_category)
+        normalized_excludes = tuple(
+            value
+            for value in (str(item).strip() for item in exclude_event_types)
+            if value
+        )
+        if normalized_excludes:
+            placeholders = ", ".join("?" for _ in normalized_excludes)
+            clauses.append(f"event_type NOT IN ({placeholders})")
+            params.extend(normalized_excludes)
         normalized_query = str(query or "").strip()
         if normalized_query:
             like = f"%{normalized_query}%"
@@ -705,6 +715,7 @@ class RuntimeStorage:
         *,
         category: str | None = None,
         query: str | None = None,
+        exclude_event_types: tuple[str, ...] = (),
     ) -> int:
         clauses: list[str] = []
         params: list[Any] = []
@@ -712,6 +723,15 @@ class RuntimeStorage:
         if normalized_category:
             clauses.append("category = ?")
             params.append(normalized_category)
+        normalized_excludes = tuple(
+            value
+            for value in (str(item).strip() for item in exclude_event_types)
+            if value
+        )
+        if normalized_excludes:
+            placeholders = ", ".join("?" for _ in normalized_excludes)
+            clauses.append(f"event_type NOT IN ({placeholders})")
+            params.extend(normalized_excludes)
         normalized_query = str(query or "").strip()
         if normalized_query:
             like = f"%{normalized_query}%"

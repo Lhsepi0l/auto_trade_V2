@@ -120,6 +120,7 @@ from v2.control.controller_risk import (
 from v2.control.controller_risk_runtime import (
     effective_budget_leverage,
     maybe_apply_auto_risk_circuit,
+    record_daily_entry,
     record_recent_block,
     refresh_runtime_risk_context,
     runtime_budget_context,
@@ -226,6 +227,17 @@ _ALPHA_V2_RUNTIME_PARAM_KEYS = (
     "expansion_close_location_min",
     "expansion_width_expansion_min",
     "expansion_break_distance_atr_min",
+    "expansion_long_break_distance_atr_max",
+    "expansion_retest_band_atr_mult",
+    "expansion_strong_immediate_body_ratio_min",
+    "expansion_strong_immediate_close_location_min",
+    "expansion_strong_immediate_quality_score_v2_min",
+    "expansion_strong_immediate_breakout_distance_atr_max",
+    "expansion_strong_immediate_require_regime_alignment",
+    "expansion_strong_immediate_side_mode",
+    "expansion_short_confirm_break_distance_atr_min",
+    "expansion_short_confirm_close_location_min",
+    "expansion_long_confirm_close_location_max",
     "expansion_breakout_efficiency_min",
     "expansion_breakout_stability_score_min",
     "expansion_breakout_stability_edge_score_min",
@@ -687,6 +699,9 @@ class RuntimeController:
 
     def _record_recent_block(self, reason: str) -> None:
         record_recent_block(self, reason)
+
+    def _record_daily_entry(self, *, symbol: str) -> None:
+        record_daily_entry(self, symbol=symbol)
 
     def _refresh_runtime_risk_context(self) -> None:
         refresh_runtime_risk_context(self)

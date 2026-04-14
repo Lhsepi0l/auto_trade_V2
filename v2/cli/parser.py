@@ -175,67 +175,67 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backtest-alpha-squeeze-percentile-max",
         type=float,
-        default=0.40,
+        default=None,
         help="15m squeeze percentile threshold override for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-buffer-bps",
         type=float,
-        default=2.0,
+        default=None,
         help="expansion breakout confirmation buffer in basis points for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-range-atr-min",
         type=float,
-        default=1.0,
+        default=None,
         help="minimum 15m expansion range in ATR for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-body-ratio-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum candle body/range ratio for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-close-location-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum favored close location within candle range for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-width-expansion-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum bollinger bandwidth expansion fraction for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-break-distance-atr-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum breakout distance beyond donchian channel in ATR units for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-breakout-efficiency-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum breakout efficiency beyond donchian channel relative to candle range for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-breakout-stability-score-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum penalty-based breakout stability score for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-breakout-stability-edge-score-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum breakout stability score after cost-edge interaction for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expansion-quality-score-min",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum composite expansion quality score for alpha_expansion in ra_2026_alpha_v2",
     )
     parser.add_argument(
@@ -247,66 +247,66 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backtest-alpha-min-volume-ratio",
         type=float,
-        default=1.0,
+        default=None,
         help="minimum 15m volume ratio for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-take-profit-r",
         type=float,
-        default=2.0,
+        default=None,
         help="take-profit R multiple override for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-time-stop-bars",
         type=int,
-        default=24,
+        default=None,
         help="time-stop bars override for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-trend-adx-min-4h",
         type=float,
-        default=14.0,
+        default=None,
         help="4h trend ADX floor override for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-trend-adx-max-4h",
         type=float,
-        default=0.0,
+        default=None,
         help="optional 4h trend ADX cap override for ra_2026_alpha_v2 (0 disables)",
     )
     parser.add_argument(
         "--backtest-alpha-trend-adx-rising-lookback-4h",
         type=int,
-        default=0,
+        default=None,
         help="optional 4h ADX rising lookback bars for ra_2026_alpha_v2 (0 disables)",
     )
     parser.add_argument(
         "--backtest-alpha-trend-adx-rising-min-delta-4h",
         type=float,
-        default=0.0,
+        default=None,
         help="minimum 4h ADX increase over lookback for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-alpha-expected-move-cost-mult",
         type=float,
-        default=2.0,
+        default=None,
         help="expected move cost multiplier override for ra_2026_alpha_v2",
     )
     parser.add_argument(
         "--backtest-drift-side-mode",
-        default="BOTH",
+        default=None,
         help="drift side mode override for alpha_drift (BOTH, LONG, SHORT)",
     )
     parser.add_argument(
         "--backtest-drift-take-profit-r",
         type=float,
-        default=1.8,
+        default=None,
         help="take-profit R override for alpha_drift",
     )
     parser.add_argument(
         "--backtest-drift-time-stop-bars",
         type=int,
-        default=16,
+        default=None,
         help="time-stop bars override for alpha_drift",
     )
     parser.add_argument(

@@ -218,6 +218,26 @@ def test_operator_event_payload_humanizes_position_entry_and_close() -> None:
     assert entry["main_text"] == "alpha_expansion / expansion"
     assert "qty=0.012300" in str(entry["sub_text"])
 
+
+def test_operator_event_payload_preserves_client_log_fields() -> None:
+    payload = build_operator_event_payload(
+        event="client_log",
+        fields={
+            "category": "action",
+            "title": "push_subscribe_error",
+            "main_text": "TypeError",
+            "sub_text": "sw_ready_timeout",
+            "event_time": "2026-04-14T00:00:00+00:00",
+        },
+    )
+
+    assert payload is not None
+    assert payload["event_type"] == "client_log"
+    assert payload["category"] == "action"
+    assert payload["title"] == "push_subscribe_error"
+    assert payload["main_text"] == "TypeError"
+    assert payload["sub_text"] == "sw_ready_timeout"
+
     close = build_operator_event_payload(
         event="position_closed",
         fields={
@@ -499,6 +519,46 @@ def test_operator_service_lists_persisted_operator_events(tmp_path) -> None:  # 
 
     assert events
     assert events[0]["event_type"] == "runtime_start"
+
+
+def test_operator_service_hides_legacy_client_logs_from_event_views(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+    storage = controller.state_store.runtime_storage()
+
+    storage.append_operator_event(
+        event_type="client_log",
+        category="action",
+        title="push_subscribe_error",
+        main_text="TypeError",
+        sub_text="sw_ready_timeout",
+        event_time="2026-04-14T00:00:00+00:00",
+        context={},
+    )
+    controller._log_event("runtime_start", running=True, event_time="2026-04-14T00:00:01+00:00")
+
+    events = service.list_operator_events(limit=20)
+
+    assert events
+    assert all(row["event_type"] != "client_log" for row in events)
+    assert service.count_operator_events() == len(events)
+
+
+def test_operator_service_record_client_log_does_not_persist_operator_event(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    controller = _build_controller(tmp_path)
+    service = OperatorService(controller=controller)
+
+    result = service.record_client_log(
+        category="action",
+        title="push_subscribe_error",
+        main_text="TypeError",
+        sub_text="sw_ready_timeout",
+        context={"error": "TypeError: sw_ready_timeout"},
+    )
+
+    assert result["ok"] is True
+    events = controller.state_store.runtime_storage().list_operator_events(limit=20)
+    assert all(row["event_type"] != "client_log" for row in events)
 
 
 def test_operator_event_payload_humanizes_boot_and_readiness_transitions() -> None:

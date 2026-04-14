@@ -29,10 +29,13 @@ class KernelContext:
     lose_streak: int | None = None
     cooldown_until: float | None = None
     risk_score_min: float | None = None
+    min_reward_risk_ratio: float | None = None
     spread_max_pct: float | None = None
     dd_scale_start_pct: float | None = None
     dd_scale_max_pct: float | None = None
     dd_scale_min_factor: float | None = None
+    max_trades_per_day_per_symbol: int | None = None
+    daily_trade_entry_counts: dict[str, int] | None = None
     recent_blocks: dict[str, int] | None = None
 
 

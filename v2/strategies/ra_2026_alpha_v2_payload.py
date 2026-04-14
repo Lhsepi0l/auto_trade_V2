@@ -72,6 +72,7 @@ def _build_entry_payload(
 ) -> dict[str, Any]:
     meta = entry_meta or {}
     quality_score_v2 = max(float(_to_float(meta.get("quality_score_v2")) or 0.0), 0.0)
+    entry_tier = str(meta.get("entry_tier") or "").strip().upper()
     management_policy = normalize_management_policy(cfg.management_policy) or "tp1_runner"
     effective_take_profit_r = max(
         float(_to_float(meta.get("take_profit_r_override")) or float(cfg.take_profit_r)),
@@ -146,6 +147,8 @@ def _build_entry_payload(
     payload["regime_strength"] = float(ctx.regime_strength)
     payload["bias_strength"] = float(ctx.bias_strength)
     payload["entry_quality_score_v2"] = float(quality_score_v2)
+    if entry_tier:
+        payload["entry_tier"] = entry_tier
     payload["alpha_diagnostics"] = copy.deepcopy(alpha_diagnostics)
     payload["alpha_blocks"] = {
         str(alpha_id_key): str(meta.get("reason") or "").strip()
@@ -199,6 +202,8 @@ def _build_entry_payload(
             cfg.selective_extension_move_stop_to_be_at_r
         ),
     ).to_execution_hints()
+    if entry_tier:
+        payload["execution"]["entry_tier"] = entry_tier
     drift_setup_open_time_ms = _to_float(meta.get("setup_open_time_ms"))
     if (
         alpha_id == "alpha_drift"
