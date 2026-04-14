@@ -238,6 +238,7 @@ _ALPHA_V2_RUNTIME_PARAM_KEYS = (
     "expansion_short_confirm_break_distance_atr_min",
     "expansion_short_confirm_close_location_min",
     "expansion_long_confirm_close_location_max",
+    "expansion_long_confirm_entry_break_distance_atr_min",
     "expansion_breakout_efficiency_min",
     "expansion_breakout_stability_score_min",
     "expansion_breakout_stability_edge_score_min",

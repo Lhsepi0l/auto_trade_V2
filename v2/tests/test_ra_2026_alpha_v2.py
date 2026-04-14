@@ -376,6 +376,30 @@ def test_alpha_v2_expansion_signal_emits_expansion_alpha() -> None:
     assert decision["entry_tier"] == "B"
 
 
+def test_alpha_v2_expansion_long_confirm_filter_blocks_shallow_reclaim_close() -> None:
+    strategy = RA2026AlphaV2(
+        params={
+            "enabled_alphas": ["alpha_expansion"],
+            "squeeze_percentile_threshold": 0.35,
+            "expansion_range_atr_min": 0.7,
+            "expansion_buffer_bps": 2.0,
+            "expansion_body_ratio_min": 0.18,
+            "expansion_close_location_min": 0.35,
+            "expansion_width_expansion_min": 0.02,
+            "min_volume_ratio_15m": 0.9,
+            "expansion_quality_score_v2_min": 0.62,
+            "expansion_long_confirm_entry_break_distance_atr_min": 0.15,
+            "min_stop_distance_frac": 0.0005,
+            "expected_move_cost_mult": 1.0,
+        }
+    )
+
+    decision = strategy.decide({"symbol": "BTCUSDT", "market": _market_for_borderline_expansion()})
+
+    assert decision["intent"] == "NONE"
+    assert decision["alpha_blocks"]["alpha_expansion"] == "long_confirm_entry_distance_missing"
+
+
 def test_alpha_v2_expansion_allows_strong_immediate_entry_tier_a() -> None:
     strategy = RA2026AlphaV2(
         params={

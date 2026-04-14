@@ -281,12 +281,13 @@ profiles:
           expansion_quality_score_v2_min: 0.62
           expansion_short_break_distance_atr_max: 1.3
           expansion_strong_immediate_quality_score_v2_min: 0.75
-          expansion_strong_immediate_breakout_distance_atr_max: 0.80
+          expansion_strong_immediate_breakout_distance_atr_max: 0.50
           expansion_strong_immediate_require_regime_alignment: true
           expansion_strong_immediate_side_mode: LONG
           expansion_short_confirm_break_distance_atr_min: 0.80
           expansion_short_confirm_close_location_min: 0.95
           expansion_long_confirm_close_location_max: 0.80
+          expansion_long_confirm_entry_break_distance_atr_min: 0.15
           drift_side_mode: LONG
           drift_range_atr_min: 1.2
           drift_body_ratio_min: 0.5

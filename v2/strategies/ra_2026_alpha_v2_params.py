@@ -51,6 +51,7 @@ class RA2026AlphaV2Params:
     expansion_short_confirm_break_distance_atr_min: float = 0.0
     expansion_short_confirm_close_location_min: float = 0.0
     expansion_long_confirm_close_location_max: float = 1.0
+    expansion_long_confirm_entry_break_distance_atr_min: float = 0.0
     expansion_short_break_distance_atr_max: float = 0.0
     expansion_breakout_efficiency_min: float = 0.0
     expansion_breakout_stability_score_min: float = 0.0
@@ -223,6 +224,7 @@ class RA2026AlphaV2Params:
             expansion_short_confirm_break_distance_atr_min=max(_f("expansion_short_confirm_break_distance_atr_min", cls.expansion_short_confirm_break_distance_atr_min), 0.0),
             expansion_short_confirm_close_location_min=min(max(_f("expansion_short_confirm_close_location_min", cls.expansion_short_confirm_close_location_min), 0.0), 1.0),
             expansion_long_confirm_close_location_max=min(max(_f("expansion_long_confirm_close_location_max", cls.expansion_long_confirm_close_location_max), 0.0), 1.0),
+            expansion_long_confirm_entry_break_distance_atr_min=max(_f("expansion_long_confirm_entry_break_distance_atr_min", cls.expansion_long_confirm_entry_break_distance_atr_min), 0.0),
             expansion_short_break_distance_atr_max=max(_f("expansion_short_break_distance_atr_max", cls.expansion_short_break_distance_atr_max), 0.0),
             expansion_breakout_efficiency_min=max(_f("expansion_breakout_efficiency_min", cls.expansion_breakout_efficiency_min), 0.0),
             expansion_breakout_stability_score_min=min(max(_f("expansion_breakout_stability_score_min", cls.expansion_breakout_stability_score_min), 0.0), 1.0),

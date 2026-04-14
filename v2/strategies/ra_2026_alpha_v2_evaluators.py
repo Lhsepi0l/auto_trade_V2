@@ -601,12 +601,16 @@ def evaluate_alpha_expansion(*, ctx: _SharedContext, cfg: RA2026AlphaV2Params) -
     long_confirm_close_location_ready = float(setup_favored_close_long) <= float(
         cfg.expansion_long_confirm_close_location_max
     )
+    long_confirm_entry_distance_ready = float(entry_breakout_distance_atr_long) >= float(
+        cfg.expansion_long_confirm_entry_break_distance_atr_min
+    )
     long_confirm_ready = (
         long_setup_ready
         and long_retest_window_hit
         and long_level_hold
         and long_confirm_close
         and long_confirm_close_location_ready
+        and long_confirm_entry_distance_ready
     )
     short_confirm_distance_ready = float(setup_breakout_distance_atr_short) >= float(
         cfg.expansion_short_confirm_break_distance_atr_min
@@ -663,6 +667,28 @@ def evaluate_alpha_expansion(*, ctx: _SharedContext, cfg: RA2026AlphaV2Params) -
                 ),
                 "entry_breakout_distance_atr_short": float(entry_breakout_distance_atr_short),
                 "range_atr": float(setup_range_atr),
+            },
+        )
+    if (
+        not long_trigger
+        and not short_trigger
+        and long_setup_ready
+        and long_retest_window_hit
+        and long_level_hold
+        and long_confirm_close
+        and long_confirm_close_location_ready
+        and not long_confirm_entry_distance_ready
+    ):
+        return _AlphaEvaluation(
+            alpha_id="alpha_expansion",
+            reason="long_confirm_entry_distance_missing",
+            diagnostics={
+                "entry_breakout_distance_atr_long": float(entry_breakout_distance_atr_long),
+                "expansion_long_confirm_entry_break_distance_atr_min": float(
+                    cfg.expansion_long_confirm_entry_break_distance_atr_min
+                ),
+                "setup_breakout_distance_atr_long": float(setup_breakout_distance_atr_long),
+                "setup_breakout_level_long": float(setup_long_breakout_level),
             },
         )
     if (
@@ -726,6 +752,7 @@ def evaluate_alpha_expansion(*, ctx: _SharedContext, cfg: RA2026AlphaV2Params) -
                 "long_level_hold": bool(long_level_hold),
                 "long_confirm_close": bool(long_confirm_close),
                 "long_confirm_close_location_ready": bool(long_confirm_close_location_ready),
+                "long_confirm_entry_distance_ready": bool(long_confirm_entry_distance_ready),
                 "entry_breakout_distance_atr_long": float(entry_breakout_distance_atr_long),
                 "short_retest_window_hit": bool(short_retest_window_hit),
                 "short_level_hold": bool(short_level_hold),
