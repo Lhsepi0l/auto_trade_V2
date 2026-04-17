@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_NAME="v2-stack"
 RUN_USER="$(id -un)"
 WORKDIR="$PROJECT_ROOT"
-PROFILE="ra_2026_alpha_v2_expansion_verified_q070"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="live"
 ENVIRONMENT="prod"
 ENV_FILE=".env"
@@ -26,7 +26,7 @@ Options:
   --service-name <name>         (default: v2-stack)
   --user <linux-user>           (default: current user)
   --workdir <absolute-path>     (default: current repo root)
-  --profile <profile-name>      (default: ra_2026_alpha_v2_expansion_verified_q070)
+  --profile <profile-name>      (default: ra_2026_alpha_v2_expansion_live_candidate)
   --mode <shadow|live>          (default: live)
   --env <testnet|prod>          (default: prod)
   --env-file <path>             (default: .env)
@@ -37,8 +37,8 @@ Options:
   --help
 
 Examples:
-  bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_verified_q070
-  bash v2/scripts/install_systemd_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet --port 8101
+  bash v2/scripts/install_systemd_stack.sh --user bot --workdir /home/bot/autotrade/auto_trade_V2 --profile ra_2026_alpha_v2_expansion_live_candidate
+  bash v2/scripts/install_systemd_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet --port 8101
   bash v2/scripts/install_systemd_stack.sh --mode shadow --env testnet
 EOF
 }

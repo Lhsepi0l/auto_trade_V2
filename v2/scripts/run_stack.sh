@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-PROFILE="ra_2026_alpha_v2_expansion_verified_q070"
+PROFILE="ra_2026_alpha_v2_expansion_live_candidate"
 MODE="shadow"
 ENVIRONMENT="testnet"
 ENV_FILE=".env"
@@ -36,8 +36,8 @@ Options:
 
 Examples:
   bash v2/scripts/run_stack.sh
-  bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode shadow --env testnet
-  bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_verified_q070 --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
+  bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode shadow --env testnet
+  bash v2/scripts/run_stack.sh --profile ra_2026_alpha_v2_expansion_live_candidate --mode live --env prod --env-file .env --host 127.0.0.1 --port 8101
   bash v2/scripts/run_stack.sh --mode shadow --env testnet
 EOF
 }

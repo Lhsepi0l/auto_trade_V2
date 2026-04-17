@@ -65,7 +65,7 @@ def profile_runtime_risk_overrides(controller: Any, *, sched_sec: int) -> dict[s
         },
         LIVE_CANDIDATE_PROFILE: {
             "risk_score_min": 0.60,
-            "min_reward_risk_ratio": 2.0,
+            "min_reward_risk_ratio": 1.8,
             "spread_max_pct": 0.35,
             "margin_use_pct": 0.10,
             "max_trades_per_day_per_symbol": 1,
