@@ -515,6 +515,28 @@ def _build_market_snapshot_provider(
     }
     cache_updated_at: datetime | None = None
 
+    def _row_close_time_ms(row: Any) -> int | None:
+        if isinstance(row, dict):
+            raw = row.get("close_time") or row.get("closeTime") or row.get("T")
+        elif isinstance(row, (list, tuple)) and len(row) >= 7:
+            raw = row[6]
+        else:
+            return None
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def _completed_klines(rows: list[Any], *, now_ms: int) -> list[Any]:
+        completed: list[Any] = []
+        for row in rows:
+            close_time_ms = _row_close_time_ms(row)
+            if close_time_ms is None:
+                continue
+            if close_time_ms <= int(now_ms):
+                completed.append(row)
+        return completed
+
     def _provider() -> dict[str, Any]:
         nonlocal cache, cache_updated_at
 
@@ -538,9 +560,14 @@ def _build_market_snapshot_provider(
                         )
                         payload = []
                     if isinstance(payload, list):
-                        cache[sym][interval] = [
+                        raw_rows = [
                             row for row in payload if isinstance(row, (list, tuple, dict))
                         ]
+                        completed_rows = _completed_klines(
+                            raw_rows,
+                            now_ms=int(now.timestamp() * 1000),
+                        )
+                        cache[sym][interval] = completed_rows if completed_rows else raw_rows
                     else:
                         cache[sym][interval] = []
                 try:
